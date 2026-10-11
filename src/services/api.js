@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import * as FileSystem from 'expo-file-system/legacy';
 import { normalizeImageUrl } from '../utils/imageResolver';
 
 const getBaseUrl = () => {
@@ -470,19 +471,75 @@ function normalizeStats(stats) {
  * Submit founder pitch deck to POST /api/pitch
  */
 export async function submitFounderPitch({ email, oneLine, file }) {
+  const targetUrl = `${API_BASE_URL}/pitch`;
+
+  // 1. Native platform (Android / iOS): Use FileSystem.uploadAsync
+  // This bypasses React Native C++ FormDataPart restrictions completely and streams natively via OkHttp / NSURLSession.
+  if (Platform.OS !== 'web' && file?.uri) {
+    try {
+      const uploadRes = await FileSystem.uploadAsync(targetUrl, file.uri, {
+        fieldName: 'pitch_deck',
+        httpMethod: 'POST',
+        uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+        mimeType: file.mimeType || 'application/pdf',
+        parameters: {
+          contact_email: email,
+          one_line: oneLine,
+        },
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+
+      let json = {};
+      try {
+        json = JSON.parse(uploadRes.body);
+      } catch {
+        json = { message: uploadRes.body };
+      }
+
+      if (uploadRes.status >= 200 && uploadRes.status < 300) {
+        return json;
+      }
+
+      const errorMsg =
+        json?.message ||
+        (json?.errors ? Object.values(json.errors).flat().join(' ') : null) ||
+        `Submission failed (status ${uploadRes.status})`;
+      throw new Error(errorMsg);
+    } catch (err) {
+      // If server returned a clear validation error or status, rethrow it directly
+      if (err.message && (err.message.includes('pitch deck') || err.message.includes('Submission failed') || err.message.includes('status'))) {
+        throw err;
+      }
+      console.log('FileSystem upload error, falling back to Blob:', err);
+    }
+  }
+
+  // 2. Web or fallback: Modern WHATWG Blob-based FormData
   const formData = new FormData();
   formData.append('contact_email', email);
   formData.append('one_line', oneLine);
 
   if (file) {
-    formData.append('pitch_deck', {
-      uri: file.uri,
-      name: file.name || 'pitch-deck.pdf',
-      type: file.mimeType || 'application/pdf',
-    });
+    if (file instanceof Blob || (typeof File !== 'undefined' && file instanceof File)) {
+      formData.append('pitch_deck', file, file.name || 'pitch-deck.pdf');
+    } else if (file.uri) {
+      try {
+        const fileRes = await fetch(file.uri);
+        const blob = await fileRes.blob();
+        formData.append('pitch_deck', blob, file.name || 'pitch-deck.pdf');
+      } catch {
+        formData.append('pitch_deck', {
+          uri: file.uri,
+          name: file.name || 'pitch-deck.pdf',
+          type: file.mimeType || 'application/pdf',
+        });
+      }
+    }
   }
 
-  const response = await fetch(`${API_BASE_URL}/pitch`, {
+  const response = await fetch(targetUrl, {
     method: 'POST',
     headers: {
       Accept: 'application/json',
@@ -492,7 +549,9 @@ export async function submitFounderPitch({ email, oneLine, file }) {
 
   const result = await response.json();
   if (!response.ok) {
-    const errorMsg = result?.message || (result?.errors ? Object.values(result.errors).flat().join(' ') : 'Submission failed');
+    const errorMsg =
+      result?.message ||
+      (result?.errors ? Object.values(result.errors).flat().join(' ') : 'Submission failed');
     throw new Error(errorMsg);
   }
 
