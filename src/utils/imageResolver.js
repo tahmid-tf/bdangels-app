@@ -1,5 +1,3 @@
-import { Platform } from 'react-native';
-
 // Local high-resolution bundled images as primary and fallback
 const PORTFOLIO_MAP = {
   pathao: require('../../assets/images/portfolio/pathao.png'),
@@ -22,66 +20,80 @@ const TEAM_MAP = {
   nadim: require('../../assets/images/team/nadim.jpg'),
   prajna: require('../../assets/images/team/prajna.jpg'),
   arham: require('../../assets/images/team/arham.jpg'),
+  tahmid: require('../../assets/images/team/tahmid.jpg'),
 };
 
 const EVENT_FALLBACK = require('../../assets/images/events/showcase.webp');
 const DEFAULT_AVATAR = require('../../assets/images/team/default_pfp.jpg');
 
 /**
+ * Helper to extract 1-2 letter uppercase initials from a person or company name
+ */
+export function getInitials(name) {
+  if (!name || typeof name !== 'string') return 'BAN';
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return 'BAN';
+  if (parts.length === 1) return parts[0].substring(0, 2).toUpperCase();
+  return (parts[0][0] + parts[1][0]).toUpperCase();
+}
+
+/**
  * Normalizes remote server URLs:
- * 1. Downgrades https -> http to prevent self-signed SSL handshake failures in dev/local environments.
- * 2. Rewrites bangladsh-angels-v2.test to accessible domain/IP.
+ * 1. Preserves valid HTTPS for live production domains (https://bdangels.co).
+ * 2. Rewrites relative /storage/ paths to centralized storage URL.
+ * 3. Rewrites local .test domains to accessible production storage if needed.
  */
 export function normalizeImageUrl(url) {
   if (!url || typeof url !== 'string') return null;
 
   let cleanUrl = url.trim();
 
-  // Strip HTTPS to prevent mobile/browser self-signed SSL rejection
-  if (cleanUrl.startsWith('https://')) {
-    cleanUrl = 'http://' + cleanUrl.slice(8);
-  }
-
-  // If centralized storage URL is configured, route storage paths to it
-  const customStorage = process.env.EXPO_PUBLIC_STORAGE_URL?.replace(/\/+$/, '');
-  if (customStorage && cleanUrl.includes('/storage/')) {
+  // Handle local .test domains by mapping to centralized storage URL
+  const customStorage = process.env.EXPO_PUBLIC_STORAGE_URL?.replace(/\/+$/, '') || 'https://bdangels.co/storage';
+  if (cleanUrl.includes('.test') && cleanUrl.includes('/storage/')) {
     const storagePath = cleanUrl.substring(cleanUrl.indexOf('/storage/'));
-    return `${customStorage}${storagePath.replace('/storage', '')}`;
+    return encodeURI(decodeURI(`${customStorage}${storagePath.replace('/storage', '')}`));
   }
 
-  // Replace internal Laravel APP_URL domain with accessible domain or local machine IP
-  if (cleanUrl.includes('bangladsh-angels-v2.test')) {
-    if (Platform.OS === 'android') {
-      cleanUrl = cleanUrl.replace('bangladsh-angels-v2.test', '10.0.2.2/bdangels/public');
-    } else {
-      cleanUrl = cleanUrl.replace('bangladsh-angels-v2.test', 'bdangels.test');
-    }
+  // If URL is an absolute HTTPS on live web, keep HTTPS
+  if (cleanUrl.startsWith('https://')) {
+    return encodeURI(decodeURI(cleanUrl));
   }
 
-  return cleanUrl;
+  // Upgrade http://bdangels.co to https://bdangels.co
+  if (cleanUrl.startsWith('http://bdangels.co')) {
+    return encodeURI(decodeURI(cleanUrl.replace('http://bdangels.co', 'https://bdangels.co')));
+  }
+
+  // Handle relative storage paths
+  if (cleanUrl.startsWith('/storage/')) {
+    return encodeURI(decodeURI(`${customStorage}${cleanUrl.replace('/storage', '')}`));
+  }
+  if (cleanUrl.startsWith('storage/')) {
+    return encodeURI(decodeURI(`${customStorage}/${cleanUrl.replace(/^storage\//, '')}`));
+  }
+
+  return encodeURI(decodeURI(cleanUrl));
 }
 
 /**
  * Resolves a portfolio company logo:
- * Checks bundled assets first for guaranteed instant load, otherwise normalizes remote URL.
+ * Checks remote logo_url first, then bundled assets.
  */
 export function resolvePortfolioLogo(deal) {
   if (!deal) return null;
 
-  const key = (deal.slug || deal.title || '').toLowerCase().trim();
-
-  // Match bundled local asset
-  for (const [mapKey, asset] of Object.entries(PORTFOLIO_MAP)) {
-    if (key.includes(mapKey)) {
-      return { source: asset, isLocal: true };
-    }
-  }
-
-  // Fallback to normalized remote URL if provided
   if (deal.logo_url) {
     const normalized = normalizeImageUrl(deal.logo_url);
     if (normalized) {
       return { source: { uri: normalized }, isLocal: false };
+    }
+  }
+
+  const key = (deal.slug || deal.title || '').toLowerCase().trim();
+  for (const [mapKey, asset] of Object.entries(PORTFOLIO_MAP)) {
+    if (key.includes(mapKey)) {
+      return { source: asset, isLocal: true };
     }
   }
 
@@ -90,27 +102,29 @@ export function resolvePortfolioLogo(deal) {
 
 /**
  * Resolves a team member profile photo:
- * Checks bundled assets first, then normalized remote URL, then default avatar.
+ * Prioritizes live remote photo_url from website API so new photos always show!
  */
 export function resolveTeamPhoto(member) {
-  if (!member) return { source: DEFAULT_AVATAR, isLocal: true };
+  const initials = getInitials(member?.name);
+  if (!member) return { source: DEFAULT_AVATAR, isLocal: true, initials };
 
-  const nameKey = (member.name || '').toLowerCase().trim();
-
-  for (const [mapKey, asset] of Object.entries(TEAM_MAP)) {
-    if (nameKey.includes(mapKey)) {
-      return { source: asset, isLocal: true };
-    }
-  }
-
+  // 1. LIVE REMOTE PHOTO FROM WEBSITE / API FIRST (ensures new/updated pictures show!)
   if (member.photo_url) {
     const normalized = normalizeImageUrl(member.photo_url);
     if (normalized) {
-      return { source: { uri: normalized }, isLocal: false };
+      return { source: { uri: normalized }, isLocal: false, initials };
     }
   }
 
-  return { source: DEFAULT_AVATAR, isLocal: true };
+  // 2. FALLBACK TO LOCAL ASSETS IF NO REMOTE PHOTO AVAILABLE
+  const nameKey = (member.name || '').toLowerCase().trim();
+  for (const [mapKey, asset] of Object.entries(TEAM_MAP)) {
+    if (nameKey.includes(mapKey)) {
+      return { source: asset, isLocal: true, initials };
+    }
+  }
+
+  return { source: DEFAULT_AVATAR, isLocal: true, initials };
 }
 
 /**

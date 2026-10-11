@@ -181,41 +181,49 @@ export const FALLBACK_HOME_DATA = {
       name: 'Ivy Huq Russell',
       title: 'CEO',
       linkedin_url: 'https://www.linkedin.com/in/ivy-huq-russell-417487/',
+      photo_url: 'https://bdangels.co/storage/142/ivy.png',
     },
     {
       id: 2,
       name: 'Zaaim Zakir',
       title: 'Lead Deals Analyst',
       linkedin_url: 'https://www.linkedin.com/in/zaaim-zakir/',
+      photo_url: 'https://bdangels.co/storage/143/Zaaim.JPG',
     },
     {
       id: 3,
       name: 'Rifat Ara Bonnhy',
       title: 'Strategic Partnerships Lead',
       linkedin_url: 'https://www.linkedin.com/in/bonnhy/',
+      photo_url: 'https://bdangels.co/storage/142/ivy.png',
     },
     {
       id: 4,
       name: 'Nadim Abrar',
       title: 'Operations Analyst',
       linkedin_url: 'https://www.linkedin.com/in/nadim-abrar-26087721a/',
+      photo_url: 'https://bdangels.co/storage/411/805958663_18195183343381467_1520729070359709064_n.jpg',
     },
     {
       id: 6,
       name: 'Prajna Paromita',
-      title: 'Seasonal Analyst',
+      title: 'Growth Analyst',
+      linkedin_url: null,
+      photo_url: 'https://bdangels.co/storage/147/Prajna.JPG',
     },
     {
       id: 7,
       name: 'Arham Ahmed',
       title: 'Seasonal Analyst',
       linkedin_url: 'https://www.linkedin.com/in/rhmhmd/',
+      photo_url: 'https://bdangels.co/storage/428/WhatsApp-Image-2026-09-27-at-4.44.25%E2%80%AFPM.jpeg',
     },
     {
       id: 15,
       name: 'Tahmid Ferdous',
       title: 'Tech Analyst & Developer',
       linkedin_url: 'https://www.linkedin.com/in/tahmid-ferdous-7a66b8134/',
+      photo_url: 'https://bdangels.co/storage/385/332877023_584876316897240_5530818755757307599_n.jpg',
     },
   ],
   landing_events: [
@@ -304,42 +312,111 @@ const fetchWithTimeout = async (url, options = {}, timeout = 6000) => {
   }
 };
 
+export const FALLBACK_GOVERNING_BOARD = [
+  {
+    id: 9,
+    name: 'Sajid Rahman',
+    title: 'Chief Executive',
+    subtitle: 'Telenor Health AS',
+    linkedin_url: 'https://www.linkedin.com/in/rahmansajid/',
+    photo_url: 'https://bdangels.co/storage/150/sajid.png',
+  },
+  {
+    id: 10,
+    name: 'Samad Miraly',
+    title: 'Co Founder',
+    subtitle: 'Startup Dhaka',
+    linkedin_url: 'https://www.linkedin.com/in/miraly/',
+    photo_url: 'https://bdangels.co/storage/151/samad.png',
+  },
+  {
+    id: 11,
+    name: 'Minhaz Anwar',
+    title: 'Chief Storyteller',
+    subtitle: 'Better Stories',
+    linkedin_url: 'https://www.linkedin.com/in/minhazanwar/',
+    photo_url: 'https://bdangels.co/storage/152/minhaz.png',
+  },
+  {
+    id: 12,
+    name: 'Tina Jabeen',
+    title: 'Investment Advisor',
+    subtitle: 'Startup Bangladesh',
+    linkedin_url: 'https://www.linkedin.com/in/tinajabeen/',
+    photo_url: 'https://bdangels.co/storage/153/tina.png',
+  },
+  {
+    id: 13,
+    name: 'Sanchayan Chakraborty',
+    title: 'Partner',
+    subtitle: 'Aavishkaar Capital',
+    linkedin_url: 'https://www.linkedin.com/in/sanchayan-chakraborty-5353105/',
+    photo_url: 'https://bdangels.co/storage/154/sanchayan.png',
+  },
+];
+
 /**
- * Fetch combined homepage bundle from /api/home with fallback to individual endpoints
+ * Fetch combined homepage bundle from /api/home and /api/team with robust fallback
  */
 export async function fetchHomePageData() {
   try {
-    const res = await fetchWithTimeout(`${API_BASE_URL}/home`, {
-      headers: { Accept: 'application/json' },
-    });
+    const [homeRes, teamRes] = await Promise.allSettled([
+      fetchWithTimeout(`${API_BASE_URL}/home`, { headers: { Accept: 'application/json' } }, 7000),
+      fetchWithTimeout(`${API_BASE_URL}/team`, { headers: { Accept: 'application/json' } }, 7000),
+    ]);
 
-    if (res.ok) {
-      const json = await res.json();
-      if (json && json.data) {
-        const data = json.data;
-        return {
-          stats: normalizeStats(data.landing_stats),
-          programs: (data.landing_programs && data.landing_programs.length > 0)
-            ? data.landing_programs
-            : FALLBACK_HOME_DATA.landing_programs,
-          membershipTiers: (data.membership_tiers && data.membership_tiers.length > 0)
-            ? data.membership_tiers
-            : FALLBACK_HOME_DATA.membership_tiers,
-          portfolioDeals: (data.portfolio_deals && data.portfolio_deals.length > 0)
-            ? sanitizeDeals(data.portfolio_deals)
-            : FALLBACK_HOME_DATA.portfolio_deals,
-          teamMembers: (data.team_members && data.team_members.length > 0)
-            ? sanitizeTeam(data.team_members)
-            : FALLBACK_HOME_DATA.team_members,
-          events: (data.landing_events && data.landing_events.length > 0)
-            ? sanitizeEvents(data.landing_events)
-            : FALLBACK_HOME_DATA.landing_events,
-          faqs: (data.faqs && data.faqs.length > 0)
-            ? data.faqs
-            : FALLBACK_HOME_DATA.faqs,
-        };
-      }
+    let homeData = null;
+    if (homeRes.status === 'fulfilled' && homeRes.value.ok) {
+      const json = await homeRes.value.json();
+      homeData = json.data || json;
     }
+
+    let teamData = null;
+    if (teamRes.status === 'fulfilled' && teamRes.value.ok) {
+      const json = await teamRes.value.json();
+      teamData = json.data || json;
+    }
+
+    // Resolve team members: prefer dedicated /team endpoint management array, then /home, then fallback
+    let resolvedTeam = FALLBACK_HOME_DATA.team_members;
+    if (teamData?.management && Array.isArray(teamData.management) && teamData.management.length > 0) {
+      resolvedTeam = sanitizeTeam(teamData.management);
+    } else if (homeData?.team_members && Array.isArray(homeData.team_members) && homeData.team_members.length > 0) {
+      resolvedTeam = sanitizeTeam(homeData.team_members);
+    }
+
+    if (homeData) {
+      return {
+        stats: normalizeStats(homeData.landing_stats),
+        programs: (homeData.landing_programs && homeData.landing_programs.length > 0)
+          ? homeData.landing_programs
+          : FALLBACK_HOME_DATA.landing_programs,
+        membershipTiers: (homeData.membership_tiers && homeData.membership_tiers.length > 0)
+          ? homeData.membership_tiers
+          : FALLBACK_HOME_DATA.membership_tiers,
+        portfolioDeals: (homeData.portfolio_deals && homeData.portfolio_deals.length > 0)
+          ? sanitizeDeals(homeData.portfolio_deals)
+          : FALLBACK_HOME_DATA.portfolio_deals,
+        teamMembers: resolvedTeam,
+        events: (homeData.landing_events && homeData.landing_events.length > 0)
+          ? sanitizeEvents(homeData.landing_events)
+          : FALLBACK_HOME_DATA.landing_events,
+        faqs: (homeData.faqs && homeData.faqs.length > 0)
+          ? homeData.faqs
+          : FALLBACK_HOME_DATA.faqs,
+      };
+    }
+
+    // Even if /home timed out, if /team succeeded, return team members immediately!
+    return {
+      stats: FALLBACK_HOME_DATA.landing_stats,
+      programs: FALLBACK_HOME_DATA.landing_programs,
+      membershipTiers: FALLBACK_HOME_DATA.membership_tiers,
+      portfolioDeals: FALLBACK_HOME_DATA.portfolio_deals,
+      teamMembers: resolvedTeam,
+      events: FALLBACK_HOME_DATA.landing_events,
+      faqs: FALLBACK_HOME_DATA.faqs,
+    };
   } catch (err) {
     console.log('[API] /home network note:', err.message);
   }
@@ -420,4 +497,249 @@ export async function submitFounderPitch({ email, oneLine, file }) {
   }
 
   return result;
+}
+
+/**
+ * Fetch portfolio deals from GET /api/portfolio
+ */
+export async function fetchPortfolioPageData() {
+  try {
+    const res = await fetchWithTimeout(`${API_BASE_URL}/portfolio`, {
+      headers: { Accept: 'application/json' },
+    }, 7000);
+    if (res.ok) {
+      const json = await res.json();
+      const deals = json.data || json;
+      if (Array.isArray(deals) && deals.length > 0) {
+        return sanitizeDeals(deals);
+      }
+    }
+  } catch (err) {
+    console.log('Portfolio fetch fallback notice:', err);
+  }
+  return sanitizeDeals(FALLBACK_HOME_DATA.portfolio_deals);
+}
+
+/**
+ * Fetch team members from GET /api/team
+ */
+export async function fetchTeamPageData() {
+  try {
+    const res = await fetchWithTimeout(`${API_BASE_URL}/team`, {
+      headers: { Accept: 'application/json' },
+    }, 7000);
+    if (res.ok) {
+      const json = await res.json();
+      const data = json.data || json;
+      if (data) {
+        return {
+          management: (Array.isArray(data.management) && data.management.length > 0)
+            ? sanitizeTeam(data.management)
+            : FALLBACK_HOME_DATA.team_members,
+          governingBoard: (Array.isArray(data.governing_board) && data.governing_board.length > 0)
+            ? sanitizeTeam(data.governing_board)
+            : sanitizeTeam(FALLBACK_GOVERNING_BOARD),
+          aboutSection: data.about_section || null,
+        };
+      }
+    }
+  } catch (err) {
+    console.log('Team fetch fallback notice:', err);
+  }
+  return {
+    management: FALLBACK_HOME_DATA.team_members,
+    governingBoard: sanitizeTeam(FALLBACK_GOVERNING_BOARD),
+    aboutSection: {
+      kicker: 'About Bangladesh Angels Network',
+      heading: 'What is Bangladesh Angels Network?',
+      body: 'BAN is the country\'s first and largest angel-investing platform, connecting visionary entrepreneurs with seasoned investors and fostering an ecosystem that drives innovation and economic growth. With more than $12 million invested across 50+ startups, we combine capital with mentorship, strategic guidance, and meaningful connections.',
+      image_badge: 'Capital. Community. Conviction.',
+    },
+  };
+}
+
+/**
+ * Fetch membership plans from GET /api/plans
+ */
+export async function fetchPlansPageData() {
+  try {
+    const res = await fetch(`${API_BASE_URL}/plans`);
+    if (res.ok) {
+      const json = await res.json();
+      const data = json.data || json;
+      if (data?.tiers && Array.isArray(data.tiers)) {
+        return data.tiers;
+      }
+    }
+  } catch (err) {
+    console.log('Plans fetch fallback notice:', err);
+  }
+  return FALLBACK_HOME_DATA.membership_tiers;
+}
+
+/**
+ * Fetch FAQs from GET /api/faq
+ */
+export async function fetchFaqsPageData() {
+  try {
+    const res = await fetch(`${API_BASE_URL}/faq`);
+    if (res.ok) {
+      const json = await res.json();
+      const data = json.data || json;
+      if (Array.isArray(data) && data.length > 0) {
+        return data;
+      }
+    }
+  } catch (err) {
+    console.log('FAQ fetch fallback notice:', err);
+  }
+  return FALLBACK_HOME_DATA.faqs;
+}
+
+/**
+ * Fetch Services & What We Do from GET /api/services
+ */
+export async function fetchServicesPageData() {
+  try {
+    const res = await fetch(`${API_BASE_URL}/services`);
+    if (res.ok) {
+      const json = await res.json();
+      const data = json.data || json;
+      if (data) return data;
+    }
+  } catch (err) {
+    console.log('Services fetch notice:', err);
+  }
+  return {
+    services: [
+      { id: 1, title: 'Founder Services', description: 'Pitch deck review, financial modeling guidance, and investor readiness advisory.', cta_label: 'Learn More', cta_url: '/startups' },
+      { id: 2, title: 'Legal Services', description: 'Term sheet review, cap table hygiene, and transaction document assistance.', cta_label: 'Learn More', cta_url: '/startups' },
+      { id: 3, title: 'DeckVue (AI Due Diligence)', description: 'AI-assisted pitch deck analysis and instant market intel enrichment.', cta_label: 'Explore DeckVue', cta_url: '/deckvue' },
+    ],
+  };
+}
+
+/**
+ * Fetch Blogs from GET /api/blogs
+ */
+export async function fetchBlogsPageData(search = '', category = '') {
+  try {
+    const params = new URLSearchParams();
+    if (search) params.append('search', search);
+    if (category) params.append('category', category);
+    const url = `${API_BASE_URL}/blogs${params.toString() ? '?' + params.toString() : ''}`;
+    const res = await fetch(url);
+    if (res.ok) {
+      const json = await res.json();
+      const data = json.data || json;
+      if (data?.blogs?.data && data.blogs.data.length > 0) {
+        return data;
+      }
+    }
+  } catch (err) {
+    console.log('Blogs fetch notice:', err);
+  }
+  // Curated ecosystem insights fallback
+  return {
+    blogs: {
+      data: [
+        {
+          id: 1,
+          title: 'The Angel Investor Landscape in Bangladesh: 2025 and Beyond',
+          slug: 'angel-investor-landscape-bangladesh',
+          excerpt: 'How local syndicates, female angel networks, and overseas diaspora are reshaping seed capital in Dhaka.',
+          category: 'Ecosystem',
+          published_at: '2025-02-15T10:00:00Z',
+          reading_time: '5 min read',
+          author: 'Bangladesh Angels Team',
+        },
+        {
+          id: 2,
+          title: 'Understanding Term Sheets & SAFE Agreements in Frontier Markets',
+          slug: 'understanding-term-sheets-bangladesh',
+          excerpt: 'A practical guide for early-stage founders navigating equity, convertible notes, and governance.',
+          category: 'Investment',
+          published_at: '2025-01-20T10:00:00Z',
+          reading_time: '7 min read',
+          author: 'Zaaim Zakir',
+        },
+        {
+          id: 3,
+          title: 'Why We Backed Jatri, Pathao & Priyoshop: Operator Insights',
+          slug: 'why-we-backed-jatri-pathao-priyoshop',
+          excerpt: 'Key metrics, market conviction, and team resilience lessons from BAN’s fastest-scaling portfolio companies.',
+          category: 'Portfolio',
+          published_at: '2024-12-10T10:00:00Z',
+          reading_time: '6 min read',
+          author: 'Ivy Huq Russell',
+        },
+      ],
+    },
+    categories: [
+      { category: 'Ecosystem', posts_count: 1 },
+      { category: 'Investment', posts_count: 1 },
+      { category: 'Portfolio', posts_count: 1 },
+    ],
+  };
+}
+
+/**
+ * Fetch single blog post by slug
+ */
+export async function fetchBlogBySlug(slug) {
+  try {
+    const res = await fetch(`${API_BASE_URL}/blogs/${slug}`);
+    if (res.ok) {
+      const json = await res.json();
+      if (json.data) return json.data;
+    }
+  } catch (err) {
+    console.log('Blog detail fetch notice:', err);
+  }
+  const all = await fetchBlogsPageData();
+  return all.blogs.data.find((b) => b.slug === slug) || all.blogs.data[0];
+}
+
+/**
+ * Fetch Publications from GET /api/publications
+ */
+export async function fetchPublicationsPageData() {
+  try {
+    const res = await fetch(`${API_BASE_URL}/publications`);
+    if (res.ok) {
+      const json = await res.json();
+      const data = json.data || json;
+      if (data?.publications?.data && data.publications.data.length > 0) {
+        return data;
+      }
+    }
+  } catch (err) {
+    console.log('Publications fetch notice:', err);
+  }
+  return {
+    publications: {
+      data: [
+        {
+          id: 1,
+          title: 'Bangladesh Startup Ecosystem Report 2024–2025',
+          category: 'Market Research',
+          excerpt: 'Comprehensive data on seed funding, deal sizes, active sectors, and exit horizons across Bangladesh.',
+          published_at: '2025-01-15T00:00:00Z',
+          download_url: 'https://bdangels.co/reports/ecosystem-2025.pdf',
+        },
+        {
+          id: 2,
+          title: 'Angel Investing in Bangladesh: A Legal & Regulatory Handbook',
+          category: 'Legal Guide',
+          excerpt: 'RJSC filings, foreign currency inward remittances, SPV formations, and investor rights overview.',
+          published_at: '2024-11-20T00:00:00Z',
+          download_url: 'https://bdangels.co/reports/legal-handbook.pdf',
+        },
+      ],
+    },
+    categories: [
+      { category: 'Market Research', publications_count: 1 },
+      { category: 'Legal Guide', publications_count: 1 },
+    ],
+  };
 }

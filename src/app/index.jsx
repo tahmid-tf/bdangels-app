@@ -7,6 +7,7 @@ import {
   SafeAreaView,
   StatusBar,
 } from 'react-native';
+import { router } from 'expo-router';
 import Header from '../components/Header';
 import MobileMenuModal from '../components/MobileMenuModal';
 import HeroSection from '../components/home/HeroSection';
@@ -181,7 +182,7 @@ export default function HomeScreen() {
         <View onLayout={(e) => handleLayoutSection('team', e)}>
           <TeamSection
             teamMembers={homeData.teamMembers}
-            onSelectMember={(member) => {}}
+            onSelectMember={() => router.push('/team')}
           />
         </View>
 

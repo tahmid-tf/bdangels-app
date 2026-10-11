@@ -9,17 +9,20 @@ import {
   SafeAreaView,
   Linking,
 } from 'react-native';
+import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Radii, Spacing } from '../constants/theme';
 
 export default function MobileMenuModal({ visible, onClose, onNavigate }) {
-  const handleItemPress = (sectionKey) => {
+  const handleNavigate = (path, sectionKey) => {
     onClose();
-    if (onNavigate) {
-      setTimeout(() => {
+    setTimeout(() => {
+      if (path) {
+        router.push(path);
+      } else if (onNavigate && sectionKey) {
         onNavigate(sectionKey);
-      }, 250);
-    }
+      }
+    }, 200);
   };
 
   const openUrl = (url) => {
@@ -49,37 +52,37 @@ export default function MobileMenuModal({ visible, onClose, onNavigate }) {
           {/* Main Navigation Section */}
           <View style={styles.group}>
             <Text style={styles.groupLabel}>NAVIGATION</Text>
-            <TouchableOpacity style={styles.navItem} onPress={() => handleItemPress('hero')}>
+            <TouchableOpacity style={styles.navItem} onPress={() => handleNavigate('/', 'hero')}>
               <Ionicons name="home-outline" size={20} color={Colors.green} />
               <Text style={styles.navLabel}>Home</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.navItem} onPress={() => handleItemPress('events')}>
-              <Ionicons name="calendar-outline" size={20} color={Colors.green} />
-              <Text style={styles.navLabel}>BAN Events</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.navItem} onPress={() => handleItemPress('plans')}>
-              <Ionicons name="card-outline" size={20} color={Colors.green} />
-              <Text style={styles.navLabel}>Membership Plans</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.navItem} onPress={() => handleItemPress('portfolio')}>
+            <TouchableOpacity style={styles.navItem} onPress={() => handleNavigate('/portfolio', 'portfolio')}>
               <Ionicons name="briefcase-outline" size={20} color={Colors.green} />
               <Text style={styles.navLabel}>Portfolio Showcase</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.navItem} onPress={() => handleItemPress('team')}>
+            <TouchableOpacity style={styles.navItem} onPress={() => handleNavigate('/team', 'team')}>
               <Ionicons name="people-outline" size={20} color={Colors.green} />
               <Text style={styles.navLabel}>Our Team</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.navItem} onPress={() => handleItemPress('partners')}>
-              <Ionicons name="globe-outline" size={20} color={Colors.green} />
-              <Text style={styles.navLabel}>Partners & Ecosystem</Text>
+            <TouchableOpacity style={styles.navItem} onPress={() => handleNavigate('/startups', 'pitch')}>
+              <Ionicons name="rocket-outline" size={20} color={Colors.green} />
+              <Text style={styles.navLabel}>Featured Startups & Services</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.navItem} onPress={() => handleItemPress('faq')}>
+            <TouchableOpacity style={styles.navItem} onPress={() => handleNavigate('/plans', 'plans')}>
+              <Ionicons name="card-outline" size={20} color={Colors.green} />
+              <Text style={styles.navLabel}>Membership Plans</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.navItem} onPress={() => handleNavigate('/about-us', 'about')}>
+              <Ionicons name="information-circle-outline" size={20} color={Colors.green} />
+              <Text style={styles.navLabel}>About BAN</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.navItem} onPress={() => handleNavigate('/faq', 'faq')}>
               <Ionicons name="help-circle-outline" size={20} color={Colors.green} />
               <Text style={styles.navLabel}>FAQ & Support</Text>
             </TouchableOpacity>
@@ -88,26 +91,40 @@ export default function MobileMenuModal({ visible, onClose, onNavigate }) {
           {/* Programs */}
           <View style={styles.group}>
             <Text style={styles.groupLabel}>PROGRAMS</Text>
-            <TouchableOpacity style={styles.navItem} onPress={() => handleItemPress('programs')}>
+            <TouchableOpacity style={styles.navItem} onPress={() => handleNavigate('/bwin', 'programs')}>
               <Ionicons name="sparkles-outline" size={20} color={Colors.green} />
               <Text style={styles.navLabel}>BWIN (Women Investors)</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.navItem} onPress={() => handleItemPress('programs')}>
+            <TouchableOpacity style={styles.navItem} onPress={() => handleNavigate('/angel-academy', 'programs')}>
               <Ionicons name="school-outline" size={20} color={Colors.green} />
               <Text style={styles.navLabel}>Angel Academy</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.navItem} onPress={() => handleItemPress('programs')}>
+            <TouchableOpacity style={styles.navItem} onPress={() => handleNavigate('/deckvue', 'programs')}>
               <Ionicons name="layers-outline" size={20} color={Colors.green} />
-              <Text style={styles.navLabel}>DeckVue & Services</Text>
+              <Text style={styles.navLabel}>DeckVue (AI Due Diligence)</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Learn & Insights */}
+          <View style={styles.group}>
+            <Text style={styles.groupLabel}>LEARN & INSIGHTS</Text>
+            <TouchableOpacity style={styles.navItem} onPress={() => handleNavigate('/blogs')}>
+              <Ionicons name="newspaper-outline" size={20} color={Colors.green} />
+              <Text style={styles.navLabel}>Insights & Blogs</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.navItem} onPress={() => handleNavigate('/publications')}>
+              <Ionicons name="document-text-outline" size={20} color={Colors.green} />
+              <Text style={styles.navLabel}>Publications & Reports</Text>
             </TouchableOpacity>
           </View>
 
           {/* For Founders */}
           <View style={styles.group}>
             <Text style={styles.groupLabel}>FOR STARTUPS</Text>
-            <TouchableOpacity style={styles.pitchCard} onPress={() => handleItemPress('pitch')}>
+            <TouchableOpacity style={styles.pitchCard} onPress={() => handleNavigate('/startups')}>
               <View style={styles.pitchCardHeader}>
                 <Ionicons name="paper-plane-outline" size={22} color="#FFFFFF" />
                 <Text style={styles.pitchCardTitle}>Pitch Your Startup</Text>
@@ -115,7 +132,7 @@ export default function MobileMenuModal({ visible, onClose, onNavigate }) {
               <Text style={styles.pitchCardDesc}>
                 Submit your one-line elevator pitch and investor deck for screening.
               </Text>
-              <Text style={styles.pitchCardAction}>Open Submission Form →</Text>
+              <Text style={styles.pitchCardAction}>Open Pitch Form →</Text>
             </TouchableOpacity>
           </View>
 

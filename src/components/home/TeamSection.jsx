@@ -8,20 +8,82 @@ import {
   Linking,
   Animated,
   Easing,
-  PanResponder,
   Platform,
 } from 'react-native';
+import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Radii, Shadows, Spacing } from '../../constants/theme';
-import { resolveTeamPhoto } from '../../utils/imageResolver';
+import { resolveTeamPhoto, getInitials } from '../../utils/imageResolver';
 
-const CARD_WIDTH = 270;
+const CARD_WIDTH = 276;
 const CARD_GAP = 16;
-const ITEM_SPAN = CARD_WIDTH + CARD_GAP; // 286px per card slot
-const PIXELS_PER_SEC = 38; // Smooth reading pace (~5-7 seconds per member)
+const ITEM_SPAN = CARD_WIDTH + CARD_GAP; // 292px per card slot
+const PIXELS_PER_SEC = 36; // Elegant reading pace (~6 seconds per card)
 
 // Alternating pastel avatar backgrounds matching web .ban2-team-profile
 const AVATAR_BG_COLORS = ['#dff4eb', '#f9a7a7', '#dcecef'];
+
+function TeamCard({ member, index, onSelect, onPause, onResume }) {
+  const [imageError, setImageError] = useState(false);
+  const resolved = resolveTeamPhoto(member);
+  const initials = getInitials(member.name);
+  const bgColor = AVATAR_BG_COLORS[index % AVATAR_BG_COLORS.length];
+
+  const handlePress = () => {
+    if (member.linkedin_url) {
+      Linking.openURL(member.linkedin_url).catch((err) =>
+        console.log('LinkedIn URL error:', err)
+      );
+    } else if (onSelect) {
+      onSelect(member);
+    } else {
+      router.push('/team');
+    }
+  };
+
+  return (
+    <TouchableOpacity
+      style={styles.card}
+      activeOpacity={0.88}
+      onPressIn={onPause}
+      onPressOut={onResume}
+      onPress={handlePress}
+    >
+      <View style={styles.photoContainer}>
+        <View style={[styles.avatarCircle, { backgroundColor: bgColor }]}>
+          {!imageError && resolved.source ? (
+            <Image
+              source={resolved.source}
+              style={styles.photo}
+              resizeMode="cover"
+              onError={() => setImageError(true)}
+            />
+          ) : (
+            <Text style={styles.initialsText}>{initials}</Text>
+          )}
+        </View>
+
+        {member.linkedin_url ? (
+          <View style={styles.linkedinBadge}>
+            <Ionicons name="logo-linkedin" size={10} color="#FFFFFF" />
+          </View>
+        ) : null}
+      </View>
+
+      <View style={styles.cardCopy}>
+        <Text style={styles.memberName} numberOfLines={1}>
+          {member.name}
+        </Text>
+        <Text style={styles.memberTitle} numberOfLines={2}>
+          {member.title}
+        </Text>
+        <Text style={styles.networkTag}>
+          BANGLADESH ANGELS NETWORK
+        </Text>
+      </View>
+    </TouchableOpacity>
+  );
+}
 
 export default function TeamSection({ teamMembers, onSelectMember }) {
   const displayMembers =
@@ -33,61 +95,66 @@ export default function TeamSection({ teamMembers, onSelectMember }) {
             name: 'Ivy Huq Russell',
             title: 'CEO',
             linkedin_url: 'https://www.linkedin.com/in/ivy-huq-russell-417487/',
+            photo_url: 'https://bdangels.co/storage/142/ivy.png',
           },
           {
             id: 2,
             name: 'Zaaim Zakir',
             title: 'Lead Deals Analyst',
             linkedin_url: 'https://www.linkedin.com/in/zaaim-zakir/',
+            photo_url: 'https://bdangels.co/storage/143/Zaaim.JPG',
           },
           {
             id: 3,
             name: 'Rifat Ara Bonnhy',
             title: 'Strategic Partnerships Lead',
             linkedin_url: 'https://www.linkedin.com/in/bonnhy/',
+            photo_url: 'https://bdangels.co/storage/142/ivy.png',
           },
           {
             id: 4,
             name: 'Nadim Abrar',
             title: 'Operations Analyst',
             linkedin_url: 'https://www.linkedin.com/in/nadim-abrar-26087721a/',
+            photo_url: 'https://bdangels.co/storage/411/805958663_18195183343381467_1520729070359709064_n.jpg',
           },
           {
             id: 6,
             name: 'Prajna Paromita',
-            title: 'Seasonal Analyst',
+            title: 'Growth Analyst',
+            photo_url: 'https://bdangels.co/storage/147/Prajna.JPG',
           },
           {
             id: 7,
             name: 'Arham Ahmed',
             title: 'Seasonal Analyst',
             linkedin_url: 'https://www.linkedin.com/in/rhmhmd/',
+            photo_url: 'https://bdangels.co/storage/428/WhatsApp-Image-2026-09-27-at-4.44.25%E2%80%AFPM.jpeg',
           },
           {
             id: 15,
             name: 'Tahmid Ferdous',
             title: 'Tech Analyst & Developer',
             linkedin_url: 'https://www.linkedin.com/in/tahmid-ferdous-7a66b8134/',
+            photo_url: 'https://bdangels.co/storage/385/332877023_584876316897240_5530818755757307599_n.jpg',
           },
         ];
 
-  // Two identical groups cloned back-to-back for seamless infinite wrapping
+  // Two identical groups cloned back-to-back for seamless continuous looping
   const duplicatedMembers = [...displayMembers, ...displayMembers];
-  const singleListWidth = displayMembers.length * ITEM_SPAN;
+  const singleListWidth = Math.max(displayMembers.length * ITEM_SPAN, 1);
 
-  // React 19 safe stable animated value
+  // React 19 stable animated value
   const [scrollX] = useState(() => new Animated.Value(0));
   const currentX = useRef(0);
   const animRef = useRef(null);
   const isPausedRef = useRef(false);
-  const isDragging = useRef(false);
-  const dragStart = useRef(0);
   const idleTimerRef = useRef(null);
   const startAnimationRef = useRef(null);
 
   const [isPaused, setIsPaused] = useState(false);
 
-  // Smooth continuous linear marquee animation loop
+  // Continuous linear marquee animation
   const startAnimation = useCallback(
     (fromValue = 0) => {
       if (isPausedRef.current) return;
@@ -95,8 +162,10 @@ export default function TeamSection({ teamMembers, onSelectMember }) {
 
       // Normalize starting point within [-singleListWidth, 0]
       let start = fromValue;
-      while (start < -singleListWidth) start += singleListWidth;
-      while (start > 0) start -= singleListWidth;
+      if (singleListWidth > 0) {
+        while (start < -singleListWidth) start += singleListWidth;
+        while (start > 0) start -= singleListWidth;
+      }
 
       scrollX.setValue(start);
       currentX.current = start;
@@ -156,21 +225,22 @@ export default function TeamSection({ teamMembers, onSelectMember }) {
       // direction = 1 moves left to next item, -1 moves right to previous item
       pauseAnimation();
       let target = currentX.current - direction * ITEM_SPAN;
-      while (target < -singleListWidth) target += singleListWidth;
-      while (target > 0) target -= singleListWidth;
+      if (singleListWidth > 0) {
+        while (target < -singleListWidth) target += singleListWidth;
+        while (target > 0) target -= singleListWidth;
+      }
 
       Animated.timing(scrollX, {
         toValue: target,
-        duration: 320,
+        duration: 350,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: Platform.OS !== 'web',
       }).start(() => {
         currentX.current = target;
-        // Resume auto-scroll after 3.5s of manual stepping
         if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
         idleTimerRef.current = setTimeout(() => {
           resumeAnimation();
-        }, 3500);
+        }, 4000);
       });
     },
     [pauseAnimation, resumeAnimation, scrollX, singleListWidth]
@@ -185,77 +255,11 @@ export default function TeamSection({ teamMembers, onSelectMember }) {
     };
   }, [startAnimation]);
 
-  const [panResponder, setPanResponder] = useState(null);
-
-  // Initialize PanResponder inside useEffect to ensure zero ref access during render
-  useEffect(() => {
-    const pr = PanResponder.create({
-      onMoveShouldSetPanResponder: (_, gestureState) => {
-        return (
-          Math.abs(gestureState.dx) > 10 &&
-          Math.abs(gestureState.dx) > Math.abs(gestureState.dy)
-        );
-      },
-      onPanResponderGrant: () => {
-        isDragging.current = true;
-        animRef.current?.stop();
-        scrollX.stopAnimation((val) => {
-          dragStart.current = val;
-          currentX.current = val;
-        });
-      },
-      onPanResponderMove: (_, gestureState) => {
-        let newX = dragStart.current + gestureState.dx;
-        while (newX > 0) newX -= singleListWidth;
-        while (newX < -singleListWidth) newX += singleListWidth;
-        scrollX.setValue(newX);
-        currentX.current = newX;
-      },
-      onPanResponderRelease: () => {
-        isDragging.current = false;
-        if (!isPausedRef.current && startAnimationRef.current) {
-          startAnimationRef.current(currentX.current);
-        }
-      },
-      onPanResponderTerminate: () => {
-        isDragging.current = false;
-        if (!isPausedRef.current && startAnimationRef.current) {
-          startAnimationRef.current(currentX.current);
-        }
-      },
-    });
-
-    setPanResponder(pr);
-  }, [singleListWidth, scrollX]);
-
-  const handleMemberPress = (member) => {
-    if (member.linkedin_url) {
-      Linking.openURL(member.linkedin_url).catch((err) =>
-        console.log('LinkedIn URL error:', err)
-      );
-    } else if (onSelectMember) {
-      onSelectMember(member);
+  const handleFullTeamPress = () => {
+    if (onSelectMember) {
+      onSelectMember(null);
     }
-  };
-
-  const renderPhoto = (member, index) => {
-    const resolved = resolveTeamPhoto(member);
-    const bgColor = AVATAR_BG_COLORS[index % AVATAR_BG_COLORS.length];
-
-    return (
-      <View style={[styles.photoContainer, { backgroundColor: bgColor }]}>
-        <Image
-          source={resolved.source}
-          style={styles.photo}
-          resizeMode="cover"
-        />
-        {member.linkedin_url && (
-          <View style={styles.linkedinBadge}>
-            <Ionicons name="logo-linkedin" size={10} color="#FFFFFF" />
-          </View>
-        )}
-      </View>
-    );
+    router.push('/team');
   };
 
   return (
@@ -270,7 +274,7 @@ export default function TeamSection({ teamMembers, onSelectMember }) {
           </Text>
         </View>
 
-        {/* Marquee Status Bar & Controls */}
+        {/* Marquee Controls & Status Bar */}
         <View style={styles.controlsRow}>
           <View style={styles.statusBadge}>
             <View
@@ -280,7 +284,7 @@ export default function TeamSection({ teamMembers, onSelectMember }) {
               ]}
             />
             <Text style={styles.statusText}>
-              {isPaused ? 'Paused' : 'Auto-gliding'} • Tap card for LinkedIn
+              {isPaused ? 'Paused' : 'Auto-moving'} • Tap profile for LinkedIn
             </Text>
           </View>
 
@@ -291,7 +295,7 @@ export default function TeamSection({ teamMembers, onSelectMember }) {
               activeOpacity={0.7}
               accessibilityLabel="Previous team member"
             >
-              <Ionicons name="chevron-back" size={18} color={Colors.ink} />
+              <Ionicons name="chevron-back" size={17} color={Colors.ink} />
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -313,13 +317,13 @@ export default function TeamSection({ teamMembers, onSelectMember }) {
               activeOpacity={0.7}
               accessibilityLabel="Next team member"
             >
-              <Ionicons name="chevron-forward" size={18} color={Colors.ink} />
+              <Ionicons name="chevron-forward" size={17} color={Colors.ink} />
             </TouchableOpacity>
           </View>
         </View>
 
-        {/* Continuous Auto-Moving Marquee Track (Infinite Seamless Loop) */}
-        <View style={styles.marqueeContainer} {...(panResponder ? panResponder.panHandlers : {})}>
+        {/* Continuous Auto-Moving Marquee Track */}
+        <View style={styles.marqueeContainer}>
           <Animated.View
             style={[
               styles.marqueeTrack,
@@ -331,34 +335,17 @@ export default function TeamSection({ teamMembers, onSelectMember }) {
           >
             {duplicatedMembers.map((member, index) => {
               const uniqueKey = `${member.id || member.name}-${index}`;
-
               return (
-                <TouchableOpacity
+                <TeamCard
                   key={uniqueKey}
-                  style={styles.card}
-                  activeOpacity={0.9}
-                  onPressIn={() => {
-                    if (!isDragging.current) pauseAnimation();
+                  member={member}
+                  index={index}
+                  onSelect={onSelectMember}
+                  onPause={pauseAnimation}
+                  onResume={() => {
+                    if (!isPaused) resumeAnimation();
                   }}
-                  onPressOut={() => {
-                    if (!isDragging.current && !isPaused) resumeAnimation();
-                  }}
-                  onPress={() => handleMemberPress(member)}
-                >
-                  {renderPhoto(member, index)}
-
-                  <View style={styles.cardCopy}>
-                    <Text style={styles.memberName} numberOfLines={1}>
-                      {member.name}
-                    </Text>
-                    <Text style={styles.memberTitle} numberOfLines={2}>
-                      {member.title}
-                    </Text>
-                    <Text style={styles.networkTag}>
-                      BANGLADESH ANGELS NETWORK
-                    </Text>
-                  </View>
-                </TouchableOpacity>
+                />
               );
             })}
           </Animated.View>
@@ -368,7 +355,7 @@ export default function TeamSection({ teamMembers, onSelectMember }) {
         <TouchableOpacity
           style={styles.seeAllButton}
           activeOpacity={0.8}
-          onPress={() => onSelectMember && onSelectMember(null)}
+          onPress={handleFullTeamPress}
         >
           <Text style={styles.seeAllText}>Meet the full team</Text>
           <Ionicons name="arrow-forward" size={14} color={Colors.green} />
@@ -476,19 +463,31 @@ const styles = StyleSheet.create({
     ...Shadows.card,
   },
   photoContainer: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
+    width: 74,
+    height: 74,
     position: 'relative',
-    overflow: 'visible',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarCircle: {
+    width: 74,
+    height: 74,
+    borderRadius: 37,
+    overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
   },
   photo: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
+    width: 74,
+    height: 74,
+    borderRadius: 37,
     backgroundColor: '#E5E7EB',
+  },
+  initialsText: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: Colors.green,
+    letterSpacing: 0.5,
   },
   linkedinBadge: {
     position: 'absolute',
@@ -518,6 +517,7 @@ const styles = StyleSheet.create({
     color: Colors.green,
     fontWeight: '700',
     marginBottom: 4,
+    lineHeight: 16,
   },
   networkTag: {
     fontSize: 9,

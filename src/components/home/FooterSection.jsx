@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, Image, TouchableOpacity, StyleSheet, Linking } from 'react-native';
+import { router } from 'expo-router';
 import { Colors, Spacing } from '../../constants/theme';
 
 export default function FooterSection({ onScrollToTop, onNavigateSection }) {
@@ -66,16 +67,16 @@ export default function FooterSection({ onScrollToTop, onNavigateSection }) {
           {/* Explore */}
           <View style={styles.linkCol}>
             <Text style={styles.colTitle}>Explore</Text>
-            <TouchableOpacity onPress={() => onNavigateSection && onNavigateSection('programs')}>
+            <TouchableOpacity onPress={() => router.push('/angel-academy')}>
               <Text style={styles.linkText}>Angel Academy</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => onNavigateSection && onNavigateSection('portfolio')}>
-              <Text style={styles.linkText}>Startups & Portfolio</Text>
+            <TouchableOpacity onPress={() => router.push('/bwin')}>
+              <Text style={styles.linkText}>BWIN Initiative</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => onNavigateSection && onNavigateSection('partners')}>
-              <Text style={styles.linkText}>Our Investors</Text>
+            <TouchableOpacity onPress={() => router.push('/portfolio')}>
+              <Text style={styles.linkText}>Portfolio Companies</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => onNavigateSection && onNavigateSection('programs')}>
+            <TouchableOpacity onPress={() => router.push('/deckvue')}>
               <Text style={styles.linkText}>DeckVue Due Diligence</Text>
             </TouchableOpacity>
           </View>
@@ -83,24 +84,30 @@ export default function FooterSection({ onScrollToTop, onNavigateSection }) {
           {/* Get Started */}
           <View style={styles.linkCol}>
             <Text style={styles.colTitle}>Get Started</Text>
-            <TouchableOpacity onPress={() => onNavigateSection && onNavigateSection('plans')}>
+            <TouchableOpacity onPress={() => router.push('/plans')}>
               <Text style={styles.linkText}>Services & Plans</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => onNavigateSection && onNavigateSection('plans')}>
-              <Text style={styles.linkText}>Become an Investor</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => onNavigateSection && onNavigateSection('pitch')}>
+            <TouchableOpacity onPress={() => router.push('/startups')}>
               <Text style={styles.linkText}>Pitch Your Startup</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => router.push('/blogs')}>
+              <Text style={styles.linkText}>Insights & Blogs</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => router.push('/publications')}>
+              <Text style={styles.linkText}>Publications</Text>
             </TouchableOpacity>
           </View>
 
           {/* Company & Contact */}
           <View style={styles.linkCol}>
             <Text style={styles.colTitle}>Company</Text>
-            <TouchableOpacity onPress={() => onNavigateSection && onNavigateSection('team')}>
+            <TouchableOpacity onPress={() => router.push('/team')}>
               <Text style={styles.linkText}>Our Team</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => onNavigateSection && onNavigateSection('faq')}>
+            <TouchableOpacity onPress={() => router.push('/about-us')}>
+              <Text style={styles.linkText}>About BAN</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => router.push('/faq')}>
               <Text style={styles.linkText}>FAQ</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={() => openUrl('mailto:hello@bdangels.co')}>
@@ -156,7 +163,7 @@ const styles = StyleSheet.create({
   container: {
     backgroundColor: '#04221D',
     paddingVertical: Spacing.xxl,
-    paddingHorizontal: Spacing.md,
+    paddingHorizontal: 22,
   },
   inner: {
     maxWidth: 1200,
