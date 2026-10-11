@@ -32,6 +32,55 @@ const SECTORS = [
   'RetailTech',
 ];
 
+function PortfolioCompanyCard({ deal, onPress }) {
+  const [imageError, setImageError] = useState(false);
+  const resolved = resolvePortfolioLogo(deal);
+  const initials = (deal?.title || 'BA').substring(0, 2).toUpperCase();
+
+  return (
+    <TouchableOpacity
+      style={styles.card}
+      activeOpacity={0.88}
+      onPress={() => onPress(deal)}
+      accessibilityRole="button"
+      accessibilityLabel={`View ${deal?.title || 'Company'}`}
+    >
+      <View style={styles.cardTop}>
+        <View style={styles.logoBadge}>
+          {!imageError && resolved?.source ? (
+            <Image
+              source={resolved.source}
+              style={styles.logoImage}
+              resizeMode="contain"
+              onError={() => setImageError(true)}
+            />
+          ) : (
+            <Text style={styles.logoFallbackText}>{initials}</Text>
+          )}
+        </View>
+
+        <View style={styles.sectorBadge}>
+          <Text style={styles.sectorText} numberOfLines={1}>
+            {deal?.sector || 'Portfolio'}
+          </Text>
+        </View>
+      </View>
+
+      <Text style={styles.companyName}>{deal?.title}</Text>
+      <Text style={styles.companyDesc} numberOfLines={3}>
+        {deal?.description}
+      </Text>
+
+      <View style={styles.cardBottom}>
+        <Text style={styles.viewLink}>View Company</Text>
+        <View style={styles.arrowCircle}>
+          <Ionicons name="arrow-forward" size={12} color={Colors.green} />
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+}
+
 export default function PortfolioScreen() {
   const [deals, setDeals] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -91,8 +140,8 @@ export default function PortfolioScreen() {
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
+      {/* Clean Header without redundant cramped sub-bar */}
       <SubpageHeader
-        title="PORTFOLIO COMPANIES"
         onOpenMenu={() => setMenuVisible(true)}
       />
 
@@ -109,7 +158,7 @@ export default function PortfolioScreen() {
           />
         }
       >
-        {/* Hero Section */}
+        {/* Spacious Hero Section */}
         <View style={styles.hero}>
           <View style={styles.kickerRow}>
             <View style={styles.kickerBar} />
@@ -122,14 +171,15 @@ export default function PortfolioScreen() {
             with the conviction and potential to scale.
           </Text>
 
-          <View style={styles.statPills}>
-            <View style={styles.statPill}>
-              <Text style={styles.statPillBold}>54+</Text>
-              <Text style={styles.statPillLabel}>Portfolio Companies</Text>
+          {/* Responsive 2-column Stat Cards: No edge-hugging or clipping */}
+          <View style={styles.statGrid}>
+            <View style={styles.statCard}>
+              <Text style={styles.statCardBold}>54+</Text>
+              <Text style={styles.statCardLabel}>Portfolio Companies</Text>
             </View>
-            <View style={styles.statPill}>
-              <Text style={styles.statPillBold}>$12M+</Text>
-              <Text style={styles.statPillLabel}>Capital Facilitated</Text>
+            <View style={styles.statCard}>
+              <Text style={styles.statCardBold}>$12M+</Text>
+              <Text style={styles.statCardLabel}>Capital Facilitated</Text>
             </View>
           </View>
         </View>
@@ -144,9 +194,15 @@ export default function PortfolioScreen() {
               placeholderTextColor="#9CA3AF"
               value={searchQuery}
               onChangeText={setSearchQuery}
+              returnKeyType="search"
+              autoCapitalize="none"
+              autoCorrect={false}
             />
             {searchQuery ? (
-              <TouchableOpacity onPress={() => setSearchQuery('')}>
+              <TouchableOpacity
+                onPress={() => setSearchQuery('')}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
                 <Ionicons name="close-circle" size={18} color={Colors.muted} />
               </TouchableOpacity>
             ) : null}
@@ -200,50 +256,13 @@ export default function PortfolioScreen() {
             </View>
           ) : (
             <View style={styles.cardsGrid}>
-              {filteredDeals.map((deal) => {
-                const resolved = resolvePortfolioLogo(deal);
-                return (
-                  <TouchableOpacity
-                    key={deal.id || deal.slug}
-                    style={styles.card}
-                    activeOpacity={0.85}
-                    onPress={() => setSelectedDeal(deal)}
-                  >
-                    <View style={styles.cardTop}>
-                      <View style={styles.logoWrap}>
-                        {resolved.isLocal ? (
-                          <Image
-                            source={resolved.source}
-                            style={styles.logoImage}
-                            resizeMode="contain"
-                          />
-                        ) : (
-                          <Image
-                            source={{ uri: resolved.source.uri }}
-                            style={styles.logoImage}
-                            resizeMode="contain"
-                          />
-                        )}
-                      </View>
-                      <View style={styles.sectorBadge}>
-                        <Text style={styles.sectorText} numberOfLines={1}>
-                          {deal.sector || 'Portfolio'}
-                        </Text>
-                      </View>
-                    </View>
-
-                    <Text style={styles.companyName}>{deal.title}</Text>
-                    <Text style={styles.companyDesc} numberOfLines={3}>
-                      {deal.description}
-                    </Text>
-
-                    <View style={styles.cardBottom}>
-                      <Text style={styles.viewLink}>View Company</Text>
-                      <Ionicons name="arrow-forward" size={13} color={Colors.green} />
-                    </View>
-                  </TouchableOpacity>
-                );
-              })}
+              {filteredDeals.map((deal) => (
+                <PortfolioCompanyCard
+                  key={deal.id || deal.slug}
+                  deal={deal}
+                  onPress={setSelectedDeal}
+                />
+              ))}
             </View>
           )}
         </View>
@@ -299,8 +318,8 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
   },
   hero: {
-    paddingHorizontal: 20,
-    paddingTop: 32,
+    paddingHorizontal: 22,
+    paddingTop: 28,
     paddingBottom: 24,
     backgroundColor: '#F8FAF9',
     borderBottomWidth: 1,
@@ -325,7 +344,7 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
   title: {
-    fontSize: 32,
+    fontSize: 30,
     fontWeight: '800',
     color: Colors.ink,
     lineHeight: 38,
@@ -333,38 +352,42 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   subtitle: {
-    fontSize: 15,
+    fontSize: 14.5,
     color: Colors.muted,
     lineHeight: 22,
     marginBottom: 20,
   },
-  statPills: {
+  statGrid: {
     flexDirection: 'row',
     gap: 12,
   },
-  statPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+  statCard: {
+    flex: 1,
     backgroundColor: '#FFFFFF',
+    paddingVertical: 12,
     paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: Radii.lg,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: Colors.line,
+    borderColor: '#E5E7EB',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 2,
+    elevation: 1,
   },
-  statPillBold: {
-    fontSize: 16,
+  statCardBold: {
+    fontSize: 20,
     fontWeight: '800',
     color: Colors.green,
+    marginBottom: 2,
   },
-  statPillLabel: {
+  statCardLabel: {
     fontSize: 12,
     fontWeight: '600',
     color: Colors.ink,
   },
   filtersSection: {
-    paddingHorizontal: 20,
+    paddingHorizontal: 22,
     paddingVertical: 16,
     borderBottomWidth: 1,
     borderBottomColor: Colors.line,
@@ -374,9 +397,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#F3F4F6',
-    borderRadius: Radii.md,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
     paddingHorizontal: 14,
-    height: 44,
+    height: 46,
     gap: 10,
   },
   searchInput: {
@@ -388,10 +413,11 @@ const styles = StyleSheet.create({
   sectorList: {
     gap: 8,
     paddingVertical: 2,
+    paddingRight: 22,
   },
   sectorChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 7,
+    paddingHorizontal: 15,
+    paddingVertical: 8,
     borderRadius: Radii.pill,
     backgroundColor: '#F3F4F6',
     borderWidth: 1,
@@ -410,7 +436,7 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   gridSection: {
-    paddingHorizontal: 20,
+    paddingHorizontal: 22,
     paddingVertical: 24,
   },
   gridHeader: {
@@ -426,32 +452,51 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: '#FFFFFF',
-    borderRadius: Radii.xl,
-    padding: 18,
+    borderRadius: 20,
+    padding: 20,
     borderWidth: 1,
-    borderColor: Colors.line,
+    borderColor: '#E5E7EB',
     ...Shadows.card,
   },
   cardTop: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 12,
+    marginBottom: 14,
   },
-  logoWrap: {
-    width: 80,
-    height: 38,
+  logoBadge: {
+    width: 54,
+    height: 54,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
+    padding: 6,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 2,
+    elevation: 1,
   },
   logoImage: {
-    width: 80,
-    height: 38,
+    width: '100%',
+    height: '100%',
+  },
+  logoFallbackText: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: Colors.green,
   },
   sectorBadge: {
     backgroundColor: '#ECFDF5',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: Radii.sm,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: Radii.pill,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
     maxWidth: 160,
   },
   sectorText: {
@@ -460,26 +505,37 @@ const styles = StyleSheet.create({
     color: Colors.green,
   },
   companyName: {
-    fontSize: 18,
+    fontSize: 19,
     fontWeight: '800',
     color: Colors.ink,
     marginBottom: 6,
   },
   companyDesc: {
-    fontSize: 13,
+    fontSize: 13.5,
     color: Colors.muted,
-    lineHeight: 19,
-    marginBottom: 14,
+    lineHeight: 20,
+    marginBottom: 16,
   },
   cardBottom: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    justifyContent: 'space-between',
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
   },
   viewLink: {
-    fontSize: 12,
-    fontWeight: '800',
+    fontSize: 12.5,
+    fontWeight: '700',
     color: Colors.green,
+  },
+  arrowCircle: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#ECFDF5',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   emptyCard: {
     alignItems: 'center',
@@ -516,11 +572,11 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   pitchCta: {
-    marginHorizontal: 20,
-    marginTop: 16,
+    marginHorizontal: 22,
+    marginTop: 14,
     marginBottom: 32,
     backgroundColor: Colors.ink,
-    borderRadius: Radii.xxl,
+    borderRadius: 22,
     padding: 24,
   },
   pitchCtaCopy: {

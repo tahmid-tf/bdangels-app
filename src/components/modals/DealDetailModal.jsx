@@ -115,6 +115,8 @@ const styles = StyleSheet.create({
     borderRadius: Radii.md,
     borderWidth: 1,
     borderColor: Colors.lineLight,
+    backgroundColor: '#FFFFFF',
+    padding: 4,
   },
   avatarFallback: {
     width: 52,
