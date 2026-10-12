@@ -559,17 +559,107 @@ export async function markAllAdminDealInvestmentsViewed(token, dealId) {
 /**
  * Fetch Founder Pitch Submissions from GET /api/admin/founder-pitches
  */
-export async function fetchAdminFounderPitches(token) {
+export async function fetchAdminFounderPitches(token, { search = '', filter = 'all', page = 1, per_page = 20 } = {}) {
   try {
-    const res = await fetchAdminWithFallback('/admin/founder-pitches', token);
+    const params = new URLSearchParams();
+    if (search) params.append('search', search);
+    if (filter && filter !== 'all') params.append('filter', filter);
+    if (page) params.append('page', String(page));
+    if (per_page) params.append('per_page', String(per_page));
+
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    const res = await fetchAdminWithFallback(`/admin/founder-pitches${qs}`, token);
     if (res && res.ok) {
       const json = await res.json();
-      return json.data || json;
+      const items = Array.isArray(json.data) ? json.data : (json.data?.data || []);
+      const counts = json.counts || {
+        total: items.length,
+        with_deck: items.filter((p) => p.has_deck).length,
+        without_deck: items.filter((p) => !p.has_deck).length,
+      };
+      const meta = json.meta || json.data?.meta || null;
+      return { ok: true, data: items, counts, meta };
     }
   } catch (err) {
     console.log('Admin founder pitches fetch error:', err);
   }
-  return null;
+  return { ok: false, data: [], counts: { total: 0, with_deck: 0, without_deck: 0 }, meta: null };
+}
+
+/**
+ * Fetch a single Founder Pitch Submission details
+ */
+export async function fetchAdminFounderPitch(token, id) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/founder-pitches/${id}`, token);
+    if (res && res.ok) {
+      const json = await res.json();
+      return { ok: true, data: json.data || json };
+    }
+  } catch (err) {
+    console.log('Admin founder pitch detail error:', err);
+  }
+  return { ok: false, data: null };
+}
+
+/**
+ * Fetch Founder Pitch Deck as Base64 for instant in-app PDF rendering
+ */
+export async function fetchAdminFounderPitchDeckBase64(token, id) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/founder-pitches/${id}/deck-base64`, token);
+    if (res && res.ok) {
+      const json = await res.json();
+      return { ok: true, data: json.data || json };
+    }
+    const errJson = await res.json().catch(() => ({}));
+    return { ok: false, message: errJson.message || 'Could not load pitch deck' };
+  } catch (err) {
+    console.log('Fetch founder pitch deck base64 error:', err);
+    return { ok: false, message: err.message };
+  }
+}
+
+/**
+ * Download Founder Pitch Deck PDF to device storage
+ */
+export async function downloadAdminFounderPitchDeck(token, id, fileName = 'pitch-deck.pdf') {
+  try {
+    const url = `${API_BASE_URL}/admin/founder-pitches/${id}/deck`;
+    const targetDir = FileSystem.documentDirectory || FileSystem.cacheDirectory;
+    const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const fileUri = `${targetDir}${safeName}`;
+    const result = await FileSystem.downloadAsync(url, fileUri, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/pdf',
+      },
+    });
+    return { ok: true, uri: result.uri };
+  } catch (err) {
+    console.log('Download founder pitch deck error:', err);
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
+ * Delete a Founder Pitch Submission
+ */
+export async function deleteAdminFounderPitch(token, id) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/founder-pitches/${id}`, token, {
+      method: 'DELETE',
+    });
+    if (res && res.ok) {
+      const json = await res.json().catch(() => ({}));
+      return { ok: true, message: json.message || 'Submission deleted successfully' };
+    }
+    const errJson = await res.json().catch(() => ({}));
+    return { ok: false, message: errJson.message || 'Could not delete submission' };
+  } catch (err) {
+    console.log('Delete founder pitch error:', err);
+    return { ok: false, message: err.message };
+  }
 }
 
 /**

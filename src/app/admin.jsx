@@ -19,6 +19,8 @@ import {
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
+import { WebView } from 'react-native-webview';
+import * as Sharing from 'expo-sharing';
 import { Colors, Radii, Shadows } from '../constants/theme';
 import { initAuth, logoutUser } from '../services/auth';
 import AdminSidebar from '../components/admin/AdminSidebar';
@@ -41,6 +43,9 @@ import {
   toggleAdminDealInvestmentViewed,
   markAllAdminDealInvestmentsViewed,
   fetchAdminFounderPitches,
+  fetchAdminFounderPitchDeckBase64,
+  downloadAdminFounderPitchDeck,
+  deleteAdminFounderPitch,
   fetchAdminAngelAcademy,
   fetchAdminNotifications,
   markAdminNotificationsViewed,
@@ -176,6 +181,148 @@ const PROGRAM_THEMES = [
   { value: 'sand', label: 'Sand', bg: '#F4ECD9', border: '#E5D5B8', text: '#78350F', pill: '#FEFCE8', dot: '#FBBF24' },
   { value: 'white', label: 'White', bg: '#FFFFFF', border: '#CBD5E1', text: '#0F172A', pill: '#F8FAFC', dot: '#94A3B8' },
 ];
+
+function generatePdfViewerHtml(base64Data, fileName = 'Pitch Deck') {
+  if (!base64Data) {
+    return '<!DOCTYPE html><html><body style="background:#0F172A;color:#94A3B8;display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;font-size:14px;">Loading document...</body></html>';
+  }
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=3.0, user-scalable=yes">
+  <title>${fileName}</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #1E293B;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 10px 8px 40px;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+    #controls {
+      position: sticky;
+      top: 6px;
+      z-index: 999;
+      background: rgba(15, 23, 42, 0.94);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      color: #FFFFFF;
+      padding: 6px 14px;
+      border-radius: 999px;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 12px;
+      font-weight: 700;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+    }
+    .ctrl-btn {
+      background: #334155;
+      border: 1px solid #475569;
+      color: #FFFFFF;
+      width: 26px;
+      height: 26px;
+      border-radius: 13px;
+      font-weight: 800;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
+      line-height: 1;
+    }
+    #loading-box {
+      color: #E2E8F0;
+      padding: 40px 20px;
+      font-size: 13px;
+      text-align: center;
+    }
+    .page-wrap {
+      margin-bottom: 12px;
+      background: #FFFFFF;
+      border-radius: 4px;
+      overflow: hidden;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+      max-width: 100%;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+  </style>
+</head>
+<body>
+  <div id="controls" style="display:none;">
+    <button class="ctrl-btn" onclick="zoom(-0.25)">−</button>
+    <span id="page-count">Loading...</span>
+    <button class="ctrl-btn" onclick="zoom(0.25)">+</button>
+  </div>
+  <div id="loading-box">Rendering pitch deck pages...</div>
+  <div id="pages-container" style="width: 100%; display: flex; flex-direction: column; align-items: center;"></div>
+
+  <script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    const base64Data = "${base64Data}";
+    const raw = atob(base64Data);
+    const uint8 = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) {
+      uint8[i] = raw.charCodeAt(i);
+    }
+
+    let pdfDoc = null;
+    let currentScale = 1.0;
+
+    async function init() {
+      try {
+        pdfDoc = await pdfjsLib.getDocument({ data: uint8 }).promise;
+        document.getElementById('loading-box').style.display = 'none';
+        document.getElementById('controls').style.display = 'flex';
+        document.getElementById('page-count').textContent = pdfDoc.numPages + ' ' + (pdfDoc.numPages === 1 ? 'Page' : 'Pages');
+        await renderAllPages();
+      } catch (err) {
+        document.getElementById('loading-box').innerHTML = '<span style="color:#EF4444;">Failed to render PDF: ' + (err.message || 'Unknown error') + '</span>';
+      }
+    }
+
+    async function renderAllPages() {
+      const container = document.getElementById('pages-container');
+      container.innerHTML = '';
+      for (let num = 1; num <= pdfDoc.numPages; num++) {
+        const page = await pdfDoc.getPage(num);
+        const viewport = page.getViewport({ scale: currentScale * 1.5 });
+        const wrap = document.createElement('div');
+        wrap.className = 'page-wrap';
+        wrap.style.width = Math.min(window.innerWidth - 16, viewport.width / 1.5) + 'px';
+        const canvas = document.createElement('canvas');
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        const ctx = canvas.getContext('2d');
+        await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+        wrap.appendChild(canvas);
+        container.appendChild(wrap);
+      }
+    }
+
+    function zoom(delta) {
+      currentScale = Math.max(0.6, Math.min(2.5, currentScale + delta));
+      renderAllPages();
+    }
+
+    init();
+  </script>
+</body>
+</html>`;
+}
 
 export default function AdminScreen() {
   const [currentUser, setCurrentUser] = useState(null);
@@ -354,6 +501,18 @@ export default function AdminScreen() {
   const [founderPitches, setFounderPitches] = useState([]);
   const [academyApplications, setAcademyApplications] = useState([]);
   const [submissionsLoading, setSubmissionsLoading] = useState(false);
+  const [pitchSearch, setPitchSearch] = useState('');
+  const [pitchFilter, setPitchFilter] = useState('all'); // 'all' | 'with_deck' | 'no_deck'
+  const [pitchCounts, setPitchCounts] = useState({ total: 0, with_deck: 0, without_deck: 0 });
+  const [selectedPitchForView, setSelectedPitchForView] = useState(null);
+  const [viewPitchModalVisible, setViewPitchModalVisible] = useState(false);
+  const [pdfViewerModalVisible, setPdfViewerModalVisible] = useState(false);
+  const [activePdfData, setActivePdfData] = useState(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const [downloadingPitchId, setDownloadingPitchId] = useState(null);
+  const [selectedPitchForDelete, setSelectedPitchForDelete] = useState(null);
+  const [deletePitchModalVisible, setDeletePitchModalVisible] = useState(false);
+  const [isDeletingPitch, setIsDeletingPitch] = useState(false);
 
   // Blogs Tab State
   const [blogs, setBlogs] = useState([]);
@@ -851,24 +1010,30 @@ export default function AdminScreen() {
   );
 
   // Fetch Submissions
-  const loadSubmissions = useCallback(async (token = authToken) => {
-    if (!token) return;
-    setSubmissionsLoading(true);
-    try {
-      const [pitchesRes, academyRes] = await Promise.all([
-        fetchAdminFounderPitches(token),
-        fetchAdminAngelAcademy(token),
-      ]);
-      const pitchesList = pitchesRes?.data?.data || pitchesRes?.data || (Array.isArray(pitchesRes) ? pitchesRes : []);
-      const academyList = academyRes?.data?.data || academyRes?.data || (Array.isArray(academyRes) ? academyRes : []);
-      setFounderPitches(pitchesList);
-      setAcademyApplications(academyList);
-    } catch (err) {
-      console.log('Error loading submissions:', err);
-    } finally {
-      setSubmissionsLoading(false);
-    }
-  }, [authToken]);
+  const loadSubmissions = useCallback(
+    async (token = authToken, pSearch = pitchSearch, pFilter = pitchFilter) => {
+      if (!token) return;
+      setSubmissionsLoading(true);
+      try {
+        const [pitchesRes, academyRes] = await Promise.all([
+          fetchAdminFounderPitches(token, { search: pSearch, filter: pFilter, per_page: 50 }),
+          fetchAdminAngelAcademy(token),
+        ]);
+        const pitchesList = pitchesRes?.data || [];
+        const academyList = academyRes?.data?.data || academyRes?.data || (Array.isArray(academyRes) ? academyRes : []);
+        setFounderPitches(pitchesList);
+        if (pitchesRes?.counts) {
+          setPitchCounts(pitchesRes.counts);
+        }
+        setAcademyApplications(academyList);
+      } catch (err) {
+        console.log('Error loading submissions:', err);
+      } finally {
+        setSubmissionsLoading(false);
+      }
+    },
+    [authToken, pitchSearch, pitchFilter]
+  );
 
   // Fetch Blogs
   const loadBlogs = useCallback(
@@ -4511,6 +4676,119 @@ export default function AdminScreen() {
     }
   };
 
+  // ==========================================
+  // FOUNDER PITCH HANDLERS
+  // ==========================================
+
+  const handleOpenViewPitch = (pitch) => {
+    setSelectedPitchForView(pitch);
+    setViewPitchModalVisible(true);
+  };
+
+  const handleOpenPdfViewer = async (pitch) => {
+    if (!pitch || !pitch.has_deck) {
+      Alert.alert('No Pitch Deck', 'This submission does not have an attached pitch deck.');
+      return;
+    }
+    const fileName = pitch.deck?.file_name || `pitch_${pitch.id}.pdf`;
+    const sizeFormatted = pitch.deck?.size_formatted || '';
+    setActivePdfData({
+      base64: null,
+      fileName,
+      sizeFormatted,
+      pitchId: pitch.id,
+      email: pitch.contact_email,
+    });
+    setPdfViewerModalVisible(true);
+    setPdfLoading(true);
+
+    try {
+      const res = await fetchAdminFounderPitchDeckBase64(authToken, pitch.id);
+      if (res.ok && res.data?.base64) {
+        setActivePdfData((prev) => ({
+          ...prev,
+          base64: res.data.base64,
+          fileName: res.data.file_name || fileName,
+          sizeFormatted: res.data.size_formatted || sizeFormatted,
+        }));
+      } else {
+        Alert.alert('Deck Preview', res.message || 'Could not load pitch deck for viewing. You can try downloading it directly.');
+      }
+    } catch (err) {
+      console.log('Error loading PDF deck base64:', err);
+      Alert.alert('Error', 'Failed to load pitch deck preview.');
+    } finally {
+      setPdfLoading(false);
+    }
+  };
+
+  const handleDownloadPitchDeck = async (pitch) => {
+    if (!pitch || !pitch.has_deck) {
+      Alert.alert('No Pitch Deck', 'This submission does not have an attached pitch deck.');
+      return;
+    }
+    const fileName = pitch.deck?.file_name || `pitch_${pitch.id}.pdf`;
+    setDownloadingPitchId(pitch.id);
+
+    try {
+      const res = await downloadAdminFounderPitchDeck(authToken, pitch.id, fileName);
+      if (res.ok && res.uri) {
+        const canShare = await Sharing.isAvailableAsync().catch(() => false);
+        if (canShare) {
+          await Sharing.shareAsync(res.uri, {
+            mimeType: 'application/pdf',
+            dialogTitle: `Pitch Deck - ${fileName}`,
+            UTI: 'com.adobe.pdf',
+          });
+        } else {
+          Alert.alert('Downloaded', `Pitch deck saved successfully to: ${res.uri}`);
+        }
+      } else {
+        Alert.alert('Download Error', res.error || 'Could not download the pitch deck file.');
+      }
+    } catch (err) {
+      console.log('Error downloading pitch deck:', err);
+      Alert.alert('Download Error', 'An error occurred while downloading the pitch deck.');
+    } finally {
+      setDownloadingPitchId(null);
+    }
+  };
+
+  const handleOpenDeletePitch = (pitch) => {
+    setSelectedPitchForDelete(pitch);
+    setDeletePitchModalVisible(true);
+  };
+
+  const handleConfirmDeletePitch = async () => {
+    if (!selectedPitchForDelete || !authToken) return;
+    setIsDeletingPitch(true);
+    try {
+      const res = await deleteAdminFounderPitch(authToken, selectedPitchForDelete.id);
+      if (res.ok) {
+        setDeletePitchModalVisible(false);
+        const deletedId = selectedPitchForDelete.id;
+        setSelectedPitchForDelete(null);
+        if (viewPitchModalVisible && selectedPitchForView?.id === deletedId) {
+          setViewPitchModalVisible(false);
+          setSelectedPitchForView(null);
+        }
+        setFounderPitches((prev) => prev.filter((p) => p.id !== deletedId));
+        setPitchCounts((prev) => ({
+          ...prev,
+          total: Math.max(0, (prev.total || 1) - 1),
+        }));
+        Alert.alert('Deleted', 'Founder pitch submission deleted successfully.');
+      } else {
+        Alert.alert('Delete Failed', res.message || 'Could not delete submission.');
+      }
+    } catch (err) {
+      console.log('Error deleting pitch:', err);
+      Alert.alert('Error', 'Failed to delete pitch submission.');
+    } finally {
+      setIsDeletingPitch(false);
+    }
+  };
+
   // Handle Logout
   const handleLogout = () => {
     Alert.alert('Sign Out', 'Are you sure you want to log out of the admin panel?', [
@@ -5473,7 +5751,7 @@ export default function AdminScreen() {
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
-                contentContainerStyle={[styles.filterChipsRow, { paddingVertical: 4 }]}
+                contentContainerStyle={{ flexDirection: 'row', gap: 8, paddingVertical: 4 }}
               >
                 {[
                   { key: 'all', label: 'All Deals', count: dealCounts.all },
@@ -5487,7 +5765,7 @@ export default function AdminScreen() {
                   return (
                     <TouchableOpacity
                       key={`deal-type-chip-${chip.key}`}
-                      style={[styles.filterChip, isActive && styles.filterChipActive]}
+                      style={[styles.dealTabChip, isActive && styles.dealTabChipActive]}
                       onPress={() => {
                         setDealTypeFilter(chip.key);
                         loadDeals(authToken, dealSearch, chip.key, dealStatusFilter);
@@ -5496,22 +5774,22 @@ export default function AdminScreen() {
                     >
                       <Text
                         style={[
-                          styles.filterChipText,
-                          isActive && styles.filterChipTextActive,
+                          styles.dealTabChipText,
+                          isActive && styles.dealTabChipTextActive,
                         ]}
                       >
                         {chip.label}
                       </Text>
                       <View
                         style={[
-                          styles.filterChipBadge,
-                          isActive && styles.filterChipBadgeActive,
+                          styles.dealTabChipBadge,
+                          isActive && styles.dealTabChipBadgeActive,
                         ]}
                       >
                         <Text
                           style={[
-                            styles.filterChipBadgeText,
-                            isActive && styles.filterChipBadgeTextActive,
+                            styles.dealTabChipBadgeText,
+                            isActive && styles.dealTabChipBadgeTextActive,
                           ]}
                         >
                           {chip.count ?? 0}
@@ -5915,75 +6193,240 @@ export default function AdminScreen() {
                   <Text style={styles.loadingText}>Fetching applications...</Text>
                 </View>
               ) : submissionsSubTab === 'pitches' ? (
-                /* Founder Pitches List */
-                founderPitches.length === 0 ? (
-                  <View style={styles.emptyState}>
-                    <Ionicons name="folder-open-outline" size={40} color={Colors.mutedLight} />
-                    <Text style={styles.emptyTitle}>No Founder Pitches</Text>
-                    <Text style={styles.emptyText}>No startup pitch submissions on record.</Text>
-                  </View>
-                ) : (
-                  <View style={styles.cardsList}>
-                    {founderPitches.map((pitch) => {
-                      const submittedDate = pitch.created_at
-                        ? new Date(pitch.created_at).toLocaleDateString('en-US', {
-                            month: 'short',
-                            day: 'numeric',
-                            year: 'numeric',
-                          })
-                        : 'Recent';
-
-                      return (
-                        <View key={`pitch-${pitch.id}`} style={styles.submissionCard}>
-                          <View style={styles.submissionTop}>
-                            <View style={styles.submissionTitleBox}>
-                              <Text style={styles.submissionTitle}>{pitch.company_name || pitch.name || 'Startup Pitch'}</Text>
-                              <Text style={styles.submissionFounder}>Founder: {pitch.name || pitch.founder_name || 'Anonymous'}</Text>
-                            </View>
-                            <View style={styles.dateBadge}>
-                              <Text style={styles.dateBadgeText}>{submittedDate}</Text>
-                            </View>
-                          </View>
-
-                          <View style={styles.contactRow}>
-                            {Boolean(pitch.email) && (
-                              <Text style={styles.contactItem}>✉ {pitch.email}</Text>
-                            )}
-                            {Boolean(pitch.phone) && (
-                              <Text style={styles.contactItem}>📞 {pitch.phone}</Text>
-                            )}
-                          </View>
-
-                          {Boolean(pitch.elevator_pitch || pitch.description) && (
-                            <Text style={styles.submissionDesc} numberOfLines={3}>
-                              {pitch.elevator_pitch || pitch.description}
+                /* Founder Pitches UI */
+                <View style={{ gap: 12 }}>
+                  {/* Pitch Filter Chips & Search Bar */}
+                  <View style={{ gap: 10 }}>
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={{ flexDirection: 'row', gap: 8, paddingVertical: 2 }}
+                    >
+                      {[
+                        { key: 'all', label: 'All Pitches', count: pitchCounts.total },
+                        { key: 'with_deck', label: 'With Deck', count: pitchCounts.with_deck },
+                        { key: 'no_deck', label: 'Without Deck', count: pitchCounts.without_deck },
+                      ].map((chip) => {
+                        const isActive = pitchFilter === chip.key;
+                        return (
+                          <TouchableOpacity
+                            key={`pitch-filter-${chip.key}`}
+                            style={[styles.dealTabChip, isActive && styles.dealTabChipActive]}
+                            onPress={() => {
+                              setPitchFilter(chip.key);
+                              loadSubmissions(authToken, pitchSearch, chip.key);
+                            }}
+                            activeOpacity={0.8}
+                          >
+                            <Text
+                              style={[
+                                styles.dealTabChipText,
+                                isActive && styles.dealTabChipTextActive,
+                              ]}
+                            >
+                              {chip.label}
                             </Text>
-                          )}
+                            <View
+                              style={[
+                                styles.dealTabChipBadge,
+                                isActive && styles.dealTabChipBadgeActive,
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.dealTabChipBadgeText,
+                                  isActive && styles.dealTabChipBadgeTextActive,
+                                ]}
+                              >
+                                {chip.count ?? 0}
+                              </Text>
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
 
-                          <View style={styles.submissionFooter}>
-                            <View style={styles.metaPillRow}>
-                              {Boolean(pitch.sector) && (
-                                <View style={styles.metaPill}>
-                                  <Text style={styles.metaPillText}>{pitch.sector}</Text>
+                    {/* Search Bar */}
+                    <View style={styles.searchBar}>
+                      <Ionicons name="search" size={18} color="#94A3B8" style={styles.searchIcon} />
+                      <TextInput
+                        style={styles.searchInput}
+                        placeholder="Search pitches by email, description or founder..."
+                        placeholderTextColor="#94A3B8"
+                        value={pitchSearch}
+                        onChangeText={(text) => {
+                          setPitchSearch(text);
+                          loadSubmissions(authToken, text, pitchFilter);
+                        }}
+                        returnKeyType="search"
+                      />
+                      {Boolean(pitchSearch) && (
+                        <TouchableOpacity
+                          onPress={() => {
+                            setPitchSearch('');
+                            loadSubmissions(authToken, '', pitchFilter);
+                          }}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          <Ionicons name="close-circle" size={18} color="#94A3B8" />
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  </View>
+
+                  {/* Pitches List or Empty State */}
+                  {founderPitches.length === 0 ? (
+                    <View style={styles.emptyState}>
+                      <Ionicons name="paper-plane-outline" size={44} color="#94A3B8" />
+                      <Text style={styles.emptyTitle}>No Founder Pitches found</Text>
+                      <Text style={styles.emptyText}>
+                        {pitchSearch || pitchFilter !== 'all'
+                          ? 'No submissions match your search or filter criteria.'
+                          : 'No startup pitch submissions on record.'}
+                      </Text>
+                    </View>
+                  ) : (
+                    <View style={styles.cardsList}>
+                      {founderPitches.map((pitch) => {
+                        const submittedDate =
+                          pitch.created_at_formatted ||
+                          (pitch.created_at
+                            ? new Date(pitch.created_at).toLocaleDateString('en-US', {
+                                month: 'short',
+                                day: 'numeric',
+                                year: 'numeric',
+                              })
+                            : 'Recent');
+
+                        const isDownloadingThis = downloadingPitchId === pitch.id;
+
+                        return (
+                          <View key={`founder-pitch-${pitch.id}`} style={styles.pitchCard}>
+                            {/* Top: Email Avatar + Email + Date */}
+                            <View style={styles.pitchCardHeader}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 10 }}>
+                                <View style={styles.pitchAvatarCircle}>
+                                  <Ionicons name="mail-outline" size={16} color="#0A5554" />
                                 </View>
-                              )}
-                              {Boolean(pitch.stage) && (
-                                <View style={[styles.metaPill, styles.metaPillStage]}>
-                                  <Text style={[styles.metaPillText, styles.metaPillStageText]}>{pitch.stage}</Text>
+                                <View style={{ flex: 1 }}>
+                                  <Text style={styles.pitchEmailText} numberOfLines={1}>
+                                    {pitch.contact_email}
+                                  </Text>
+                                  <Text style={styles.pitchSubmissionIdText}>
+                                    Submission #{pitch.id}
+                                  </Text>
                                 </View>
-                              )}
+                              </View>
+                              <View style={styles.dateBadge}>
+                                <Text style={styles.dateBadgeText}>{submittedDate}</Text>
+                              </View>
                             </View>
 
-                            <View style={styles.deckIndicator}>
-                              <Ionicons name="document-attach" size={14} color={Colors.forest} />
-                              <Text style={styles.deckIndicatorText}>Deck Attached</Text>
+                            {/* Linked Member row */}
+                            {pitch.user ? (
+                              <View style={styles.pitchMemberRow}>
+                                <Ionicons name="person-circle-outline" size={14} color="#059669" />
+                                <Text style={styles.pitchMemberText} numberOfLines={1}>
+                                  Member: {pitch.user.name} ({pitch.user.email})
+                                </Text>
+                              </View>
+                            ) : (
+                              <View style={styles.pitchGuestRow}>
+                                <Ionicons name="globe-outline" size={13} color="#64748B" />
+                                <Text style={styles.pitchGuestText}>
+                                  Inbound Web Submission (Non-member)
+                                </Text>
+                              </View>
+                            )}
+
+                            {/* One-line Pitch text */}
+                            <View style={styles.pitchOneLineContainer}>
+                              <Text style={styles.pitchOneLineLabel}>ONE-LINE PITCH</Text>
+                              <Text style={styles.pitchOneLineText}>
+                                {pitch.one_line || 'No description provided.'}
+                              </Text>
+                            </View>
+
+                            {/* Pitch Deck Box */}
+                            {pitch.has_deck ? (
+                              <View style={styles.pitchDeckBox}>
+                                <View style={styles.pitchDeckInfo}>
+                                  <View style={styles.pitchPdfIconWrap}>
+                                    <Ionicons name="document-text" size={20} color="#DC2626" />
+                                  </View>
+                                  <View style={{ flex: 1 }}>
+                                    <Text style={styles.pitchDeckFileName} numberOfLines={1}>
+                                      {pitch.deck?.file_name || 'Pitch-Deck.pdf'}
+                                    </Text>
+                                    <Text style={styles.pitchDeckFileSize}>
+                                      PDF Document {pitch.deck?.size_formatted ? `· ${pitch.deck.size_formatted}` : ''}
+                                    </Text>
+                                  </View>
+                                </View>
+
+                                {/* In-Card Deck Buttons */}
+                                <View style={styles.pitchDeckBtnRow}>
+                                  <TouchableOpacity
+                                    style={styles.pitchViewPdfBtn}
+                                    onPress={() => handleOpenPdfViewer(pitch)}
+                                    activeOpacity={0.8}
+                                  >
+                                    <Ionicons name="eye-outline" size={14} color="#0A5554" />
+                                    <Text style={styles.pitchViewPdfBtnText}>View PDF</Text>
+                                  </TouchableOpacity>
+
+                                  <TouchableOpacity
+                                    style={styles.pitchDownloadPdfBtn}
+                                    onPress={() => handleDownloadPitchDeck(pitch)}
+                                    disabled={isDownloadingThis}
+                                    activeOpacity={0.8}
+                                  >
+                                    {isDownloadingThis ? (
+                                      <ActivityIndicator size="small" color="#FFFFFF" />
+                                    ) : (
+                                      <>
+                                        <Ionicons name="download-outline" size={14} color="#FFFFFF" />
+                                        <Text style={styles.pitchDownloadPdfBtnText}>Download PDF</Text>
+                                      </>
+                                    )}
+                                  </TouchableOpacity>
+                                </View>
+                              </View>
+                            ) : (
+                              <View style={styles.pitchNoDeckBox}>
+                                <Ionicons name="alert-circle-outline" size={16} color="#D97706" />
+                                <Text style={styles.pitchNoDeckText}>
+                                  No pitch deck PDF attached to this submission.
+                                </Text>
+                              </View>
+                            )}
+
+                            {/* Bottom Action Toolbar */}
+                            <View style={styles.pitchCardFooter}>
+                              <TouchableOpacity
+                                style={styles.eventActionBtn}
+                                onPress={() => handleOpenViewPitch(pitch)}
+                                activeOpacity={0.8}
+                              >
+                                <Ionicons name="information-circle-outline" size={14} color="#0A5554" />
+                                <Text style={styles.eventActionBtnText}>View Details</Text>
+                              </TouchableOpacity>
+
+                              <TouchableOpacity
+                                style={[styles.eventActionBtn, styles.eventActionBtnDelete]}
+                                onPress={() => handleOpenDeletePitch(pitch)}
+                                activeOpacity={0.8}
+                              >
+                                <Ionicons name="trash-outline" size={14} color="#DC2626" />
+                                <Text style={[styles.eventActionBtnText, { color: '#DC2626' }]}>Delete</Text>
+                              </TouchableOpacity>
                             </View>
                           </View>
-                        </View>
-                      );
-                    })}
-                  </View>
-                )
+                        );
+                      })}
+                    </View>
+                  )}
+                </View>
               ) : (
                 /* Angel Academy Applications List */
                 academyApplications.length === 0 ? (
@@ -16282,30 +16725,38 @@ export default function AdminScreen() {
               ) : (
                 <View style={{ gap: 14 }}>
                   {/* Summary Metric Counters */}
-                  <View style={{ flexDirection: 'row', gap: 8 }}>
-                    <View style={{ flex: 1, backgroundColor: '#ECFDF5', padding: 10, borderRadius: 8, borderWidth: 1, borderColor: '#A7F3D0', alignItems: 'center' }}>
-                      <Text style={{ fontSize: 10, fontWeight: '700', color: '#047857', textTransform: 'uppercase' }}>Interested</Text>
+                  <View style={{ flexDirection: 'row', gap: 6 }}>
+                    <View style={{ flex: 1, backgroundColor: '#ECFDF5', paddingHorizontal: 4, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: '#A7F3D0', alignItems: 'center', justifyContent: 'center' }}>
+                      <Text numberOfLines={1} adjustsFontSizeToFit style={{ fontSize: 9.5, fontWeight: '700', color: '#047857', textAlign: 'center' }}>
+                        Interested
+                      </Text>
                       <Text style={{ fontSize: 18, fontWeight: '800', color: '#065F46', marginTop: 2 }}>
                         {dealActivityData?.summary?.interested_count ?? 0}
                       </Text>
                     </View>
 
-                    <View style={{ flex: 1, backgroundColor: '#F0FDFA', padding: 10, borderRadius: 8, borderWidth: 1, borderColor: '#99F6E4', alignItems: 'center' }}>
-                      <Text style={{ fontSize: 10, fontWeight: '700', color: '#0F766E', textTransform: 'uppercase' }}>Invest</Text>
+                    <View style={{ flex: 1, backgroundColor: '#F0FDFA', paddingHorizontal: 4, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: '#99F6E4', alignItems: 'center', justifyContent: 'center' }}>
+                      <Text numberOfLines={1} adjustsFontSizeToFit style={{ fontSize: 9.5, fontWeight: '700', color: '#0F766E', textAlign: 'center' }}>
+                        Invest
+                      </Text>
                       <Text style={{ fontSize: 18, fontWeight: '800', color: '#115E59', marginTop: 2 }}>
                         {dealActivityData?.summary?.invest_count ?? 0}
                       </Text>
                     </View>
 
-                    <View style={{ flex: 1, backgroundColor: '#FAF5FF', padding: 10, borderRadius: 8, borderWidth: 1, borderColor: '#E9D5FF', alignItems: 'center' }}>
-                      <Text style={{ fontSize: 10, fontWeight: '700', color: '#7E22CE', textTransform: 'uppercase' }}>Review</Text>
+                    <View style={{ flex: 1, backgroundColor: '#FAF5FF', paddingHorizontal: 4, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: '#E9D5FF', alignItems: 'center', justifyContent: 'center' }}>
+                      <Text numberOfLines={1} adjustsFontSizeToFit style={{ fontSize: 9.5, fontWeight: '700', color: '#7E22CE', textAlign: 'center' }}>
+                        Review
+                      </Text>
                       <Text style={{ fontSize: 18, fontWeight: '800', color: '#6B21A8', marginTop: 2 }}>
                         {dealActivityData?.summary?.review_count ?? 0}
                       </Text>
                     </View>
 
-                    <View style={{ flex: 1, backgroundColor: '#FFFBEB', padding: 10, borderRadius: 8, borderWidth: 1, borderColor: '#FDE68A', alignItems: 'center' }}>
-                      <Text style={{ fontSize: 10, fontWeight: '700', color: '#B45309', textTransform: 'uppercase' }}>Commits</Text>
+                    <View style={{ flex: 1, backgroundColor: '#FFFBEB', paddingHorizontal: 4, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: '#FDE68A', alignItems: 'center', justifyContent: 'center' }}>
+                      <Text numberOfLines={1} adjustsFontSizeToFit style={{ fontSize: 9.5, fontWeight: '700', color: '#B45309', textAlign: 'center' }}>
+                        Commits
+                      </Text>
                       <Text style={{ fontSize: 18, fontWeight: '800', color: '#92400E', marginTop: 2 }}>
                         {dealActivityData?.summary?.commits_count ?? 0}
                       </Text>
@@ -16692,6 +17143,390 @@ export default function AdminScreen() {
                   <ActivityIndicator size="small" color="#FFFFFF" />
                 ) : (
                   <Text style={styles.deleteModalConfirmBtnText}>Delete Deal</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* MODAL: VIEW FOUNDER PITCH DETAILS */}
+      <Modal
+        visible={viewPitchModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setViewPitchModalVisible(false)}
+      >
+        <View style={styles.editModalSafeArea}>
+          <View style={[styles.editModalContainer, { maxHeight: '92%' }]}>
+            <View style={styles.editModalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                <View
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 18,
+                    backgroundColor: '#E6F4F1',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Ionicons name="paper-plane" size={18} color="#0A5554" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.editModalTitle} numberOfLines={1}>
+                    Founder Pitch Details
+                  </Text>
+                  <Text style={styles.editModalSubtitle}>
+                    Submission #{selectedPitchForView?.id || '—'}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                style={styles.modalCloseBtn}
+                onPress={() => setViewPitchModalVisible(false)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              style={styles.editModalScrollView}
+              contentContainerStyle={{ padding: 16, paddingBottom: 24, gap: 16 }}
+              showsVerticalScrollIndicator={false}
+            >
+              {/* Contact Email & Member Information */}
+              <View style={styles.viewPitchSectionCard}>
+                <Text style={styles.viewPitchSectionTitle}>CONTACT & FOUNDER INFO</Text>
+
+                <View style={styles.viewPitchInfoRow}>
+                  <Text style={styles.viewPitchInfoLabel}>Contact Email</Text>
+                  <TouchableOpacity
+                    onPress={() => {
+                      if (selectedPitchForView?.contact_email) {
+                        Linking.openURL(`mailto:${selectedPitchForView.contact_email}`);
+                      }
+                    }}
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
+                  >
+                    <Ionicons name="mail" size={14} color="#0A5554" />
+                    <Text style={[styles.viewPitchInfoVal, { color: '#0A5554', fontWeight: '800' }]}>
+                      {selectedPitchForView?.contact_email || '—'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.viewPitchInfoRow}>
+                  <Text style={styles.viewPitchInfoLabel}>Linked Member</Text>
+                  {selectedPitchForView?.user ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                      <Ionicons name="person-circle" size={15} color="#059669" />
+                      <Text style={[styles.viewPitchInfoVal, { color: '#059669', fontWeight: '700' }]}>
+                        {selectedPitchForView.user.name} ({selectedPitchForView.user.email})
+                      </Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.viewPitchInfoVal}>No linked member account (Guest)</Text>
+                  )}
+                </View>
+
+                <View style={styles.viewPitchInfoRow}>
+                  <Text style={styles.viewPitchInfoLabel}>Submitted At</Text>
+                  <Text style={styles.viewPitchInfoVal}>
+                    {selectedPitchForView?.created_at_formatted ||
+                      (selectedPitchForView?.created_at
+                        ? new Date(selectedPitchForView.created_at).toLocaleString()
+                        : '—')}
+                  </Text>
+                </View>
+              </View>
+
+              {/* One-Line Pitch */}
+              <View style={styles.viewPitchSectionCard}>
+                <Text style={styles.viewPitchSectionTitle}>ONE-LINE PITCH</Text>
+                <View style={styles.viewPitchOneLineBox}>
+                  <Text style={styles.viewPitchOneLineText}>
+                    {selectedPitchForView?.one_line || 'No pitch description provided.'}
+                  </Text>
+                </View>
+              </View>
+
+              {/* Pitch Deck Section */}
+              <View style={styles.viewPitchSectionCard}>
+                <Text style={styles.viewPitchSectionTitle}>ATTACHED PITCH DECK</Text>
+                {selectedPitchForView?.has_deck ? (
+                  <View style={{ gap: 12 }}>
+                    <View style={styles.viewPitchDeckInfoBox}>
+                      <Ionicons name="document-text" size={28} color="#DC2626" />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.viewPitchDeckName} numberOfLines={1}>
+                          {selectedPitchForView.deck?.file_name || 'Pitch-Deck.pdf'}
+                        </Text>
+                        <Text style={styles.viewPitchDeckMeta}>
+                          PDF Document {selectedPitchForView.deck?.size_formatted ? `· ${selectedPitchForView.deck.size_formatted}` : ''}
+                        </Text>
+                      </View>
+                    </View>
+
+                    <View style={{ flexDirection: 'row', gap: 10 }}>
+                      <TouchableOpacity
+                        style={styles.viewPitchViewPdfBtn}
+                        onPress={() => {
+                          setViewPitchModalVisible(false);
+                          handleOpenPdfViewer(selectedPitchForView);
+                        }}
+                        activeOpacity={0.8}
+                      >
+                        <Ionicons name="eye-outline" size={16} color="#0A5554" />
+                        <Text style={styles.viewPitchViewPdfBtnText}>View in App</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.viewPitchDownloadPdfBtn}
+                        onPress={() => handleDownloadPitchDeck(selectedPitchForView)}
+                        disabled={downloadingPitchId === selectedPitchForView?.id}
+                        activeOpacity={0.8}
+                      >
+                        {downloadingPitchId === selectedPitchForView?.id ? (
+                          <ActivityIndicator size="small" color="#FFFFFF" />
+                        ) : (
+                          <>
+                            <Ionicons name="download-outline" size={16} color="#FFFFFF" />
+                            <Text style={styles.viewPitchDownloadPdfBtnText}>Download PDF</Text>
+                          </>
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ) : (
+                  <View style={styles.pitchNoDeckBox}>
+                    <Ionicons name="alert-circle-outline" size={18} color="#D97706" />
+                    <Text style={styles.pitchNoDeckText}>
+                      No pitch deck PDF was uploaded with this submission.
+                    </Text>
+                  </View>
+                )}
+              </View>
+            </ScrollView>
+
+            <View style={styles.editModalFooter}>
+              <TouchableOpacity
+                style={[styles.eventActionBtn, styles.eventActionBtnDelete, { paddingHorizontal: 14, paddingVertical: 10 }]}
+                onPress={() => {
+                  setViewPitchModalVisible(false);
+                  handleOpenDeletePitch(selectedPitchForView);
+                }}
+              >
+                <Ionicons name="trash-outline" size={15} color="#DC2626" />
+                <Text style={[styles.eventActionBtnText, { color: '#DC2626' }]}>Delete</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.modalSecondaryBtn, { paddingHorizontal: 20, paddingVertical: 10 }]}
+                onPress={() => setViewPitchModalVisible(false)}
+              >
+                <Text style={styles.modalSecondaryBtnText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* MODAL: IN-APP PDF VIEWER */}
+      <Modal
+        visible={pdfViewerModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setPdfViewerModalVisible(false)}
+      >
+        <SafeAreaView style={{ flex: 1, backgroundColor: '#0F172A' }}>
+          {/* Viewer Header */}
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingHorizontal: 14,
+              paddingVertical: 12,
+              backgroundColor: '#1E293B',
+              borderBottomWidth: 1,
+              borderBottomColor: '#334155',
+            }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, marginRight: 8 }}>
+              <View
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: 6,
+                  backgroundColor: '#DC2626',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Ionicons name="document-text" size={18} color="#FFFFFF" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#F8FAFC' }} numberOfLines={1}>
+                  {activePdfData?.fileName || 'Pitch Deck'}
+                </Text>
+                <Text style={{ fontSize: 11, color: '#94A3B8' }}>
+                  {activePdfData?.sizeFormatted ? `${activePdfData.sizeFormatted} · ` : ''}In-App Preview
+                </Text>
+              </View>
+            </View>
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              {activePdfData?.pitchId ? (
+                <TouchableOpacity
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 5,
+                    backgroundColor: '#16A34A',
+                    paddingHorizontal: 10,
+                    paddingVertical: 6,
+                    borderRadius: 6,
+                  }}
+                  onPress={() =>
+                    handleDownloadPitchDeck({
+                      id: activePdfData.pitchId,
+                      has_deck: true,
+                      deck: { file_name: activePdfData.fileName },
+                    })
+                  }
+                  disabled={downloadingPitchId === activePdfData.pitchId}
+                  activeOpacity={0.8}
+                >
+                  {downloadingPitchId === activePdfData.pitchId ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <Ionicons name="download-outline" size={14} color="#FFFFFF" />
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#FFFFFF' }}>Download</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              ) : null}
+
+              <TouchableOpacity
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: 16,
+                  backgroundColor: '#334155',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+                onPress={() => setPdfViewerModalVisible(false)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons name="close" size={18} color="#F8FAFC" />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Viewer Content */}
+          <View style={{ flex: 1, backgroundColor: '#1E293B' }}>
+            {pdfLoading ? (
+              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 14, padding: 30 }}>
+                <ActivityIndicator size="large" color="#0A5554" />
+                <Text style={{ fontSize: 14, fontWeight: '700', color: '#E2E8F0', textAlign: 'center' }}>
+                  Loading Pitch Deck...
+                </Text>
+                <Text style={{ fontSize: 12, color: '#94A3B8', textAlign: 'center' }}>
+                  Preparing document pages for in-app viewing without download
+                </Text>
+              </View>
+            ) : activePdfData?.base64 ? (
+              <WebView
+                source={{
+                  html: generatePdfViewerHtml(activePdfData.base64, activePdfData.fileName),
+                }}
+                style={{ flex: 1, backgroundColor: '#1E293B' }}
+                javaScriptEnabled={true}
+                domStorageEnabled={true}
+                originWhitelist={['*']}
+                scalesPageToFit={true}
+                showsVerticalScrollIndicator={true}
+              />
+            ) : (
+              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 14, padding: 30 }}>
+                <Ionicons name="alert-circle-outline" size={48} color="#F59E0B" />
+                <Text style={{ fontSize: 15, fontWeight: '700', color: '#F8FAFC', textAlign: 'center' }}>
+                  Could not display PDF preview
+                </Text>
+                <Text style={{ fontSize: 12, color: '#94A3B8', textAlign: 'center' }}>
+                  The PDF file could not be rendered in-app. You can download the PDF file directly to view it on your device.
+                </Text>
+                {activePdfData?.pitchId ? (
+                  <TouchableOpacity
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 6,
+                      backgroundColor: '#16A34A',
+                      paddingHorizontal: 16,
+                      paddingVertical: 10,
+                      borderRadius: 8,
+                      marginTop: 8,
+                    }}
+                    onPress={() =>
+                      handleDownloadPitchDeck({
+                        id: activePdfData.pitchId,
+                        has_deck: true,
+                        deck: { file_name: activePdfData.fileName },
+                      })
+                    }
+                  >
+                    <Ionicons name="download-outline" size={16} color="#FFFFFF" />
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#FFFFFF' }}>Download PDF File</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            )}
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      {/* MODAL: DELETE FOUNDER PITCH CONFIRMATION */}
+      <Modal
+        visible={deletePitchModalVisible}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => setDeletePitchModalVisible(false)}
+      >
+        <View style={styles.deleteModalOverlay}>
+          <View style={styles.deleteModalBox}>
+            <View style={[styles.deleteModalIconWrap, { backgroundColor: '#FEE2E2' }]}>
+              <Ionicons name="trash-outline" size={26} color="#DC2626" />
+            </View>
+            <Text style={styles.deleteModalTitle}>Delete Pitch Submission</Text>
+            <Text style={styles.deleteModalMessage}>
+              Are you sure you want to delete pitch submission #{selectedPitchForDelete?.id} from{' '}
+              <Text style={{ fontWeight: '800', color: '#0F172A' }}>
+                {selectedPitchForDelete?.contact_email}
+              </Text>
+              ? Any attached pitch deck will also be removed. This action cannot be undone.
+            </Text>
+            <View style={styles.deleteModalBtnRow}>
+              <TouchableOpacity
+                style={styles.deleteModalCancelBtn}
+                onPress={() => setDeletePitchModalVisible(false)}
+                disabled={isDeletingPitch}
+              >
+                <Text style={styles.deleteModalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.deleteModalConfirmBtn}
+                onPress={handleConfirmDeletePitch}
+                disabled={isDeletingPitch}
+              >
+                {isDeletingPitch ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.deleteModalConfirmBtnText}>Delete Submission</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -17251,6 +18086,8 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   filterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: Radii.pill,
@@ -17286,6 +18123,50 @@ const styles = StyleSheet.create({
     color: '#64748B',
   },
   filterChipBadgeTextActive: {
+    color: '#FFFFFF',
+  },
+  // Deal tab chips
+  dealTabChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  dealTabChipActive: {
+    backgroundColor: '#0A5554',
+    borderColor: '#0A5554',
+  },
+  dealTabChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  dealTabChipTextActive: {
+    color: '#FFFFFF',
+  },
+  dealTabChipBadge: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 10,
+    minWidth: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dealTabChipBadgeActive: {
+    backgroundColor: 'rgba(255, 255, 255, 0.22)',
+  },
+  dealTabChipBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  dealTabChipBadgeTextActive: {
     color: '#FFFFFF',
   },
   cardsList: {
@@ -21412,6 +22293,280 @@ const styles = StyleSheet.create({
   statusBadgeText: {
     fontSize: 11,
     fontWeight: '700',
+  },
+  // ==========================================
+  // FOUNDER PITCHES STYLES
+  // ==========================================
+  pitchCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    gap: 12,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  pitchCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  pitchAvatarCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#E6F4F1',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pitchEmailText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  pitchSubmissionIdText: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  pitchMemberRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+  },
+  pitchMemberText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  pitchGuestRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+  },
+  pitchGuestText: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  pitchOneLineContainer: {
+    backgroundColor: '#F8FAFC',
+    padding: 12,
+    borderRadius: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: '#0A5554',
+    gap: 4,
+  },
+  pitchOneLineLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#0A5554',
+    letterSpacing: 0.5,
+  },
+  pitchOneLineText: {
+    fontSize: 13,
+    color: '#334155',
+    lineHeight: 20,
+  },
+  pitchDeckBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 12,
+    gap: 12,
+  },
+  pitchDeckInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  pitchPdfIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: '#FEE2E2',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pitchDeckFileName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  pitchDeckFileSize: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  pitchDeckBtnRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  pitchViewPdfBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#E6F4F1',
+    borderWidth: 1,
+    borderColor: '#0A5554',
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  pitchViewPdfBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0A5554',
+  },
+  pitchDownloadPdfBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#16A34A',
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  pitchDownloadPdfBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  pitchNoDeckBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    padding: 10,
+    borderRadius: 8,
+  },
+  pitchNoDeckText: {
+    fontSize: 12,
+    color: '#B45309',
+    fontWeight: '600',
+  },
+  pitchCardFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  viewPitchSectionCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 14,
+    gap: 10,
+  },
+  viewPitchSectionTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.5,
+  },
+  viewPitchInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  viewPitchInfoLabel: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  viewPitchInfoVal: {
+    fontSize: 13,
+    color: '#0F172A',
+    fontWeight: '700',
+  },
+  viewPitchOneLineBox: {
+    backgroundColor: '#FFFFFF',
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  viewPitchOneLineText: {
+    fontSize: 14,
+    color: '#1E293B',
+    lineHeight: 22,
+  },
+  viewPitchDeckInfoBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#FFFFFF',
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  viewPitchDeckName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  viewPitchDeckMeta: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  viewPitchViewPdfBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#E6F4F1',
+    borderWidth: 1,
+    borderColor: '#0A5554',
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  viewPitchViewPdfBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0A5554',
+  },
+  viewPitchDownloadPdfBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#16A34A',
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  viewPitchDownloadPdfBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
 });
 
