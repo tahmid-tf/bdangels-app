@@ -56,6 +56,10 @@ import {
   fetchTeamPageData,
   fetchAdminLandingPageStats,
   updateAdminLandingPageStats,
+  fetchAdminLandingProgramCards,
+  createAdminLandingProgramCard,
+  updateAdminLandingProgramCard,
+  deleteAdminLandingProgramCard,
 } from '../services/api';
 
 export function getViewDisplayName(key) {
@@ -135,6 +139,14 @@ const PUBLICATION_CATEGORIES = [
   'Investment education',
   'Annual report',
   'Misc',
+];
+
+const PROGRAM_THEMES = [
+  { value: 'blush', label: 'Blush', bg: '#FFF8FB', border: '#FBCFE8', text: '#831843', pill: '#FDF2F8', dot: '#F472B6' },
+  { value: 'dark', label: 'Dark green', bg: '#042F2E', border: '#0D5B52', text: '#FFFFFF', pill: '#064E3B', dot: '#10B981' },
+  { value: 'mint', label: 'Mint', bg: '#DFF4EB', border: '#A7F3D0', text: '#065F46', pill: '#ECFDF5', dot: '#34D399' },
+  { value: 'sand', label: 'Sand', bg: '#F4ECD9', border: '#E5D5B8', text: '#78350F', pill: '#FEFCE8', dot: '#FBBF24' },
+  { value: 'white', label: 'White', bg: '#FFFFFF', border: '#CBD5E1', text: '#0F172A', pill: '#F8FAFC', dot: '#94A3B8' },
 ];
 
 export default function AdminScreen() {
@@ -359,6 +371,33 @@ export default function AdminScreen() {
   ]);
   const [landingPageStatsLoading, setLandingPageStatsLoading] = useState(false);
   const [landingPageStatsSaving, setLandingPageStatsSaving] = useState(false);
+
+  // Homepage Programs State
+  const [landingPrograms, setLandingPrograms] = useState([]);
+  const [landingProgramsLoading, setLandingProgramsLoading] = useState(false);
+  const [createProgramModalVisible, setCreateProgramModalVisible] = useState(false);
+  const [editProgramModalVisible, setEditProgramModalVisible] = useState(false);
+  const [editingProgram, setEditingProgram] = useState(null);
+  const [programSaving, setProgramSaving] = useState(false);
+  const [deleteProgramModalVisible, setDeleteProgramModalVisible] = useState(false);
+  const [selectedProgramForDelete, setSelectedProgramForDelete] = useState(null);
+  const [isDeletingProgram, setIsDeletingProgram] = useState(false);
+  const [programFormData, setProgramFormData] = useState({
+    title: '',
+    eyebrow: '',
+    description: '',
+    primary_label: '',
+    primary_link: '',
+    secondary_label: '',
+    secondary_link: '',
+    theme: 'white',
+    sort_order: '',
+    dropdown_label: '',
+    dropdown_items: [
+      { title: '', link: '' },
+      { title: '', link: '' },
+    ],
+  });
 
   // Fetch Dashboard summary data
   const loadDashboard = useCallback(async (token = authToken) => {
@@ -749,6 +788,27 @@ export default function AdminScreen() {
     [authToken]
   );
 
+  // Fetch Landing Program Cards
+  const loadLandingPrograms = useCallback(
+    async (token = authToken, options = {}) => {
+      if (!token) return;
+      const { silent = false } = options;
+      if (!silent) setLandingProgramsLoading(true);
+      try {
+        const res = await fetchAdminLandingProgramCards(token);
+        if (Array.isArray(res)) {
+          const sorted = [...res].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+          setLandingPrograms(sorted);
+        }
+      } catch (err) {
+        console.log('Error loading landing programs:', err);
+      } finally {
+        if (!silent) setLandingProgramsLoading(false);
+      }
+    },
+    [authToken]
+  );
+
   // Handle Tab / Sidebar View Selection
   const handleTabChange = (tab) => {
     setActiveTab(tab);
@@ -762,6 +822,8 @@ export default function AdminScreen() {
       if (publications.length === 0) loadPublications(authToken);
     } else if (tab === 'landing-stats') {
       loadLandingPageStats(authToken);
+    } else if (tab === 'landing-programs') {
+      if (landingPrograms.length === 0) loadLandingPrograms(authToken);
     } else if (tab === 'deals') {
       if (deals.length === 0) loadDeals(authToken);
     } else if (tab === 'founder-pitches') {
@@ -780,7 +842,6 @@ export default function AdminScreen() {
       if (banWealthOrders.length === 0) loadBanWealthOrders(authToken);
     } else if (
       [
-        'landing-programs',
         'homepage-portfolios',
         'team-about',
         'events',
@@ -801,6 +862,7 @@ export default function AdminScreen() {
     if (activeTab === 'blogs') await loadBlogs(authToken);
     if (activeTab === 'publications') await loadPublications(authToken);
     if (activeTab === 'landing-stats') await loadLandingPageStats(authToken);
+    if (activeTab === 'landing-programs') await loadLandingPrograms(authToken);
     if (activeTab === 'deals') await loadDeals(authToken);
     if (activeTab === 'submissions' || activeTab === 'founder-pitches' || activeTab === 'angel-academy') {
       await loadSubmissions(authToken);
@@ -812,7 +874,6 @@ export default function AdminScreen() {
     if (activeTab === 'ban-wealth-orders') await loadBanWealthOrders(authToken);
     if (
       [
-        'landing-programs',
         'homepage-portfolios',
         'team-about',
         'events',
@@ -2092,6 +2153,245 @@ export default function AdminScreen() {
       Alert.alert('Error', 'An unexpected error occurred while saving statistics.');
     } finally {
       setLandingPageStatsSaving(false);
+    }
+  };
+
+  // Homepage Programs Handlers
+  const handleOpenCreateProgram = () => {
+    if (landingPrograms.length >= 5) {
+      Alert.alert(
+        'Maximum Limit Reached',
+        'The homepage can show a maximum of 5 program cards. You must edit or remove an existing card to add a new one.'
+      );
+      return;
+    }
+    setProgramFormData({
+      title: '',
+      eyebrow: '',
+      description: '',
+      primary_label: '',
+      primary_link: '',
+      secondary_label: '',
+      secondary_link: '',
+      theme: 'white',
+      sort_order: String(landingPrograms.length + 1),
+      dropdown_label: '',
+      dropdown_items: [
+        { title: '', link: '' },
+        { title: '', link: '' },
+      ],
+    });
+    setCreateProgramModalVisible(true);
+  };
+
+  const handleOpenEditProgram = (prog) => {
+    setEditingProgram(prog);
+    const existingDropdown = prog.dropdown_items || {};
+    const existingItems = Array.isArray(existingDropdown.items)
+      ? existingDropdown.items.map((it) => ({
+          title: it.title || '',
+          link: it.link || '',
+        }))
+      : [];
+
+    while (existingItems.length < 2) {
+      existingItems.push({ title: '', link: '' });
+    }
+
+    setProgramFormData({
+      title: prog.title || '',
+      eyebrow: prog.eyebrow || prog.badge || '',
+      description: prog.description || '',
+      primary_label: prog.primary_label || prog.link_label || '',
+      primary_link: prog.primary_link || prog.link_url || '',
+      secondary_label: prog.secondary_label || '',
+      secondary_link: prog.secondary_link || '',
+      theme: prog.theme || 'white',
+      sort_order: String(prog.sort_order ?? ''),
+      dropdown_label: existingDropdown.label || '',
+      dropdown_items: existingItems,
+    });
+    setEditProgramModalVisible(true);
+  };
+
+  const handleAddDropdownItem = () => {
+    if (programFormData.dropdown_items.length >= 6) {
+      Alert.alert('Notice', 'A card can have a maximum of 6 dropdown options.');
+      return;
+    }
+    setProgramFormData((prev) => ({
+      ...prev,
+      dropdown_items: [...prev.dropdown_items, { title: '', link: '' }],
+    }));
+  };
+
+  const handleRemoveDropdownItem = (index) => {
+    setProgramFormData((prev) => ({
+      ...prev,
+      dropdown_items: prev.dropdown_items.filter((_, idx) => idx !== index),
+    }));
+  };
+
+  const handleUpdateDropdownItem = (index, field, value) => {
+    setProgramFormData((prev) => {
+      const next = [...prev.dropdown_items];
+      next[index] = { ...next[index], [field]: value };
+      return { ...prev, dropdown_items: next };
+    });
+  };
+
+  const buildProgramPayload = () => {
+    if (!programFormData.eyebrow.trim()) {
+      Alert.alert('Validation Error', 'Category label is required (e.g. Women-led investment).');
+      return null;
+    }
+    if (!programFormData.title.trim()) {
+      Alert.alert('Validation Error', 'Program title is required (e.g. BWIN).');
+      return null;
+    }
+    if (!programFormData.description.trim()) {
+      Alert.alert('Validation Error', 'Description is required.');
+      return null;
+    }
+    if (!programFormData.primary_label.trim()) {
+      Alert.alert('Validation Error', 'Primary button label is required (e.g. Explore BWIN).');
+      return null;
+    }
+    if (!programFormData.primary_link.trim()) {
+      Alert.alert('Validation Error', 'Primary button link is required (e.g. /bwin or https://...).');
+      return null;
+    }
+
+    const hasSecLabel = Boolean(programFormData.secondary_label.trim());
+    const hasSecLink = Boolean(programFormData.secondary_link.trim());
+    if (hasSecLabel !== hasSecLink) {
+      Alert.alert(
+        'Secondary Action Incomplete',
+        'Both secondary button label and link must be filled, or leave both empty.'
+      );
+      return null;
+    }
+
+    let dropdownPayload = null;
+    const dropLabel = programFormData.dropdown_label.trim();
+    if (dropLabel) {
+      const activeItems = programFormData.dropdown_items
+        .map((it) => ({ title: it.title.trim(), link: it.link.trim() }))
+        .filter((it) => it.title.length > 0);
+
+      dropdownPayload = {
+        label: dropLabel,
+        items: activeItems.map((it) => ({
+          title: it.title,
+          link: it.link || '#',
+        })),
+      };
+    }
+
+    return {
+      eyebrow: programFormData.eyebrow.trim(),
+      title: programFormData.title.trim(),
+      description: programFormData.description.trim(),
+      primary_label: programFormData.primary_label.trim(),
+      primary_link: programFormData.primary_link.trim(),
+      secondary_label: programFormData.secondary_label.trim() || null,
+      secondary_link: programFormData.secondary_link.trim() || null,
+      theme: programFormData.theme || 'white',
+      sort_order: programFormData.sort_order ? parseInt(programFormData.sort_order, 10) : landingPrograms.length + 1,
+      dropdown_items: dropdownPayload,
+    };
+  };
+
+  const handleSaveCreateProgram = async () => {
+    if (!authToken) return;
+    const payload = buildProgramPayload();
+    if (!payload) return;
+
+    setProgramSaving(true);
+    try {
+      const res = await createAdminLandingProgramCard(authToken, payload);
+      if (res.ok) {
+        const newCard = res.data || { id: Date.now(), ...payload };
+        const updated = [...landingPrograms, newCard].sort(
+          (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)
+        );
+        setLandingPrograms(updated);
+        setCreateProgramModalVisible(false);
+        Alert.alert('Success', 'Homepage program card created successfully!');
+        loadLandingPrograms(authToken, { silent: true });
+      } else {
+        const errMsg = res.errors
+          ? Object.values(res.errors).flat().join('\n')
+          : res.message || 'Could not create program card.';
+        Alert.alert('Creation Failed', errMsg);
+      }
+    } catch (err) {
+      console.log('Error creating program card:', err);
+      Alert.alert('Error', 'An unexpected error occurred while creating program card.');
+    } finally {
+      setProgramSaving(false);
+    }
+  };
+
+  const handleSaveEditProgram = async () => {
+    if (!authToken || !editingProgram) return;
+    const payload = buildProgramPayload();
+    if (!payload) return;
+
+    setProgramSaving(true);
+    try {
+      const res = await updateAdminLandingProgramCard(authToken, editingProgram.id, payload);
+      if (res.ok) {
+        const updatedCard = res.data || { id: editingProgram.id, ...payload };
+        const updated = landingPrograms
+          .map((c) => (c.id === editingProgram.id ? updatedCard : c))
+          .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+        setLandingPrograms(updated);
+        setEditProgramModalVisible(false);
+        setEditingProgram(null);
+        Alert.alert('Success', 'Homepage program card updated successfully!');
+        loadLandingPrograms(authToken, { silent: true });
+      } else {
+        const errMsg = res.errors
+          ? Object.values(res.errors).flat().join('\n')
+          : res.message || 'Could not update program card.';
+        Alert.alert('Update Failed', errMsg);
+      }
+    } catch (err) {
+      console.log('Error updating program card:', err);
+      Alert.alert('Error', 'An unexpected error occurred while updating program card.');
+    } finally {
+      setProgramSaving(false);
+    }
+  };
+
+  const handleOpenDeleteProgram = (prog) => {
+    setSelectedProgramForDelete(prog);
+    setDeleteProgramModalVisible(true);
+  };
+
+  const handleConfirmDeleteProgram = async () => {
+    if (!authToken || !selectedProgramForDelete) return;
+    setIsDeletingProgram(true);
+    try {
+      const res = await deleteAdminLandingProgramCard(authToken, selectedProgramForDelete.id);
+      if (res.ok) {
+        setLandingPrograms((prev) =>
+          prev.filter((c) => c.id !== selectedProgramForDelete.id)
+        );
+        setDeleteProgramModalVisible(false);
+        setSelectedProgramForDelete(null);
+        Alert.alert('Deleted', 'Program card removed from homepage.');
+        loadLandingPrograms(authToken, { silent: true });
+      } else {
+        Alert.alert('Delete Failed', res.message || 'Could not delete program card.');
+      }
+    } catch (err) {
+      console.log('Error deleting program card:', err);
+      Alert.alert('Error', 'An unexpected error occurred while deleting program card.');
+    } finally {
+      setIsDeletingProgram(false);
+      setSelectedProgramForDelete(null);
     }
   };
 
@@ -4718,38 +5018,352 @@ export default function AdminScreen() {
           {/* TAB: HOMEPAGE PROGRAMS */}
           {activeTab === 'landing-programs' && (
             <View style={styles.tabContent}>
+              {/* Header Row */}
               <View style={styles.sectionHeaderRow}>
-                <View>
+                <View style={{ flex: 1, marginRight: 8 }}>
                   <Text style={styles.sectionHeading}>Homepage Programs</Text>
-                  <Text style={styles.sectionSubheading}>Flagship initiatives and educational cohorts</Text>
+                  <Text style={styles.sectionSubheading}>
+                    Manage up to 5 program cards shown in the programs section on the landing page
+                  </Text>
                 </View>
+                <TouchableOpacity
+                  style={styles.refreshIconBtn}
+                  onPress={() => loadLandingPrograms(authToken)}
+                  disabled={landingProgramsLoading}
+                  accessibilityLabel="Refresh programs"
+                >
+                  {landingProgramsLoading ? (
+                    <ActivityIndicator size="small" color={Colors.forest} />
+                  ) : (
+                    <Ionicons name="refresh" size={18} color={Colors.forest} />
+                  )}
+                </TouchableOpacity>
               </View>
 
-              <View style={styles.cardsList}>
-                {[
-                  {
-                    title: 'BWIN',
-                    badge: 'Initiative',
-                    desc: 'Building a more diverse pipeline of female investors and entrepreneurs across Bangladesh.',
-                  },
-                  {
-                    title: 'Angel Academy',
-                    badge: 'Education',
-                    desc: 'Practical masterclasses for aspiring and active angels—from first principles to syndicate committee.',
-                  },
-                ].map((prog, idx) => (
-                  <View key={`prog-${idx}`} style={styles.cmsCard}>
-                    <View style={styles.cmsCardHeader}>
-                      <View style={styles.metaPill}>
-                        <Text style={styles.metaPillText}>{prog.badge}</Text>
-                      </View>
-                      <Ionicons name="school" size={18} color={Colors.forest} />
-                    </View>
-                    <Text style={styles.cmsCardTitle}>{prog.title}</Text>
-                    <Text style={styles.cmsCardDesc}>{prog.desc}</Text>
-                  </View>
-                ))}
+              {/* Top Summary Bar & Add Program Button */}
+              <View style={styles.programsActionBar}>
+                <View style={styles.programsCountPill}>
+                  <Ionicons name="layers" size={14} color="#0A5554" />
+                  <Text style={styles.programsCountPillText}>
+                    {landingPrograms.length} / 5 cards
+                  </Text>
+                </View>
+
+                <TouchableOpacity
+                  style={[
+                    styles.programsAddBtn,
+                    landingPrograms.length >= 5 && styles.programsAddBtnDisabled,
+                  ]}
+                  onPress={handleOpenCreateProgram}
+                  disabled={landingPrograms.length >= 5}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="add" size={16} color="#FFFFFF" />
+                  <Text style={styles.programsAddBtnText}>Add Program</Text>
+                </TouchableOpacity>
               </View>
+
+              {/* Maximum cards notice */}
+              {landingPrograms.length >= 5 && (
+                <View style={styles.programsMaxBanner}>
+                  <Ionicons name="information-circle" size={16} color="#92400E" />
+                  <Text style={styles.programsMaxBannerText}>
+                    {"Maximum limit reached (5 cards). Remove or edit existing cards to change the section."}
+                  </Text>
+                </View>
+              )}
+
+              {/* LIVE CARDS PREVIEW SECTION */}
+              {landingPrograms.length > 0 && (
+                <View style={styles.programsPreviewContainer}>
+                  <View style={styles.programsPreviewHeader}>
+                    <View style={styles.programsPreviewHeaderLeft}>
+                      <Ionicons name="eye-outline" size={16} color="#0A5554" />
+                      <Text style={styles.programsPreviewHeaderTitle}>
+                        LIVE HOMEPAGE PREVIEW
+                      </Text>
+                    </View>
+                    <View style={styles.programsPreviewBadge}>
+                      <Text style={styles.programsPreviewBadgeText}>bdangels.co/ #programs</Text>
+                    </View>
+                  </View>
+
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.programsPreviewScrollContent}
+                  >
+                    {landingPrograms.map((prog, idx) => {
+                      const themeMeta =
+                        PROGRAM_THEMES.find((t) => t.value === prog.theme) ||
+                        PROGRAM_THEMES[4]; // fallback white
+                      const isDark = prog.theme === 'dark';
+
+                      return (
+                        <View
+                          key={`live-preview-${prog.id || idx}`}
+                          style={[
+                            styles.liveProgramPreviewCard,
+                            {
+                              backgroundColor: themeMeta.bg,
+                              borderColor: themeMeta.border,
+                            },
+                          ]}
+                        >
+                          <View style={styles.liveProgramPreviewTop}>
+                            <Text
+                              style={[
+                                styles.liveProgramEyebrow,
+                                { color: isDark ? '#10B981' : '#0A5554' },
+                              ]}
+                              numberOfLines={1}
+                            >
+                              {prog.eyebrow || prog.badge || 'PROGRAM'}
+                            </Text>
+                            <Text
+                              style={[
+                                styles.liveProgramTitle,
+                                { color: isDark ? '#FFFFFF' : '#0F172A' },
+                              ]}
+                              numberOfLines={1}
+                            >
+                              {prog.title}
+                            </Text>
+                            <Text
+                              style={[
+                                styles.liveProgramDesc,
+                                { color: isDark ? '#94A3B8' : '#475569' },
+                              ]}
+                              numberOfLines={3}
+                            >
+                              {prog.description}
+                            </Text>
+                          </View>
+
+                          <View style={styles.liveProgramActions}>
+                            <View
+                              style={[
+                                styles.liveProgramActionBtn,
+                                isDark
+                                  ? styles.liveProgramActionBtnDark
+                                  : styles.liveProgramActionBtnLight,
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.liveProgramActionText,
+                                  isDark ? { color: '#042F2E' } : { color: '#0A5554' },
+                                ]}
+                                numberOfLines={1}
+                              >
+                                {prog.primary_label || prog.link_label || 'Explore'} ↗
+                              </Text>
+                            </View>
+
+                            {Boolean(prog.secondary_label) && (
+                              <View
+                                style={[
+                                  styles.liveProgramSecBtn,
+                                  isDark
+                                    ? styles.liveProgramSecBtnDark
+                                    : styles.liveProgramSecBtnLight,
+                                ]}
+                              >
+                                <Text
+                                  style={[
+                                    styles.liveProgramSecText,
+                                    isDark ? { color: '#E2E8F0' } : { color: '#334155' },
+                                  ]}
+                                  numberOfLines={1}
+                                >
+                                  {prog.secondary_label} ↗
+                                </Text>
+                              </View>
+                            )}
+
+                            {Boolean(prog.dropdown_items?.label) && (
+                              <View
+                                style={[
+                                  styles.liveProgramDropBtn,
+                                  isDark
+                                    ? styles.liveProgramSecBtnDark
+                                    : styles.liveProgramSecBtnLight,
+                                ]}
+                              >
+                                <Text
+                                  style={[
+                                    styles.liveProgramSecText,
+                                    isDark ? { color: '#E2E8F0' } : { color: '#334155' },
+                                  ]}
+                                  numberOfLines={1}
+                                >
+                                  {prog.dropdown_items.label} ▾
+                                </Text>
+                              </View>
+                            )}
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+              )}
+
+              {/* LIST OF PROGRAM CARDS */}
+              <View style={styles.programCardsListWrap}>
+                <View style={styles.programCardsListHeadingRow}>
+                  <Text style={styles.programCardsListHeading}>CONFIGURED PROGRAM CARDS</Text>
+                  <Text style={styles.programCardsListSubheading}>
+                    Sorted by display order
+                  </Text>
+                </View>
+
+                {landingProgramsLoading && landingPrograms.length === 0 ? (
+                  <View style={styles.emptyContainer}>
+                    <ActivityIndicator size="large" color="#0A5554" />
+                    <Text style={styles.emptyText}>Loading program cards...</Text>
+                  </View>
+                ) : landingPrograms.length === 0 ? (
+                  <View style={styles.emptyContainer}>
+                    <Ionicons name="layers-outline" size={48} color="#94A3B8" />
+                    <Text style={styles.emptyTitle}>No Program Cards Yet</Text>
+                    <Text style={styles.emptyText}>
+                      Add program cards to showcase BWIN, Angel Academy, Syndicates, and services on the homepage.
+                    </Text>
+                    <TouchableOpacity
+                      style={styles.emptyActionBtn}
+                      onPress={handleOpenCreateProgram}
+                    >
+                      <Ionicons name="add" size={16} color="#FFFFFF" />
+                      <Text style={styles.emptyActionBtnText}>Add First Program</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  landingPrograms.map((prog, idx) => {
+                    const themeMeta =
+                      PROGRAM_THEMES.find((t) => t.value === prog.theme) ||
+                      PROGRAM_THEMES[4];
+                    const hasDropdown = Boolean(prog.dropdown_items?.label);
+                    const dropdownItemCount = (prog.dropdown_items?.items || []).length;
+
+                    return (
+                      <View key={`program-card-${prog.id || idx}`} style={styles.programCardItem}>
+                        {/* Header Row */}
+                        <View style={styles.programCardItemHeader}>
+                          <View style={styles.programCardItemBadges}>
+                            <View style={styles.programOrderBadge}>
+                              <Text style={styles.programOrderBadgeText}>
+                                #{idx + 1}
+                              </Text>
+                            </View>
+                            <View style={styles.programEyebrowPill}>
+                              <Text style={styles.programEyebrowPillText} numberOfLines={1}>
+                                {prog.eyebrow || prog.badge || 'Program'}
+                              </Text>
+                            </View>
+                          </View>
+
+                          <View style={styles.programCardThemeBadge}>
+                            <View
+                              style={[
+                                styles.programThemeColorDot,
+                                { backgroundColor: themeMeta.dot },
+                              ]}
+                            />
+                            <Text style={styles.programCardThemeText}>
+                              {themeMeta.label}
+                            </Text>
+                          </View>
+                        </View>
+
+                        {/* Title & Description */}
+                        <Text style={styles.programCardItemTitle}>{prog.title}</Text>
+                        <Text style={styles.programCardItemDesc} numberOfLines={3}>
+                          {prog.description}
+                        </Text>
+
+                        {/* Action Details Pills */}
+                        <View style={styles.programMetaInfoRow}>
+                          <View style={styles.programActionTag}>
+                            <Ionicons name="arrow-forward-circle" size={13} color="#0A5554" />
+                            <Text style={styles.programActionTagText} numberOfLines={1}>
+                              {prog.primary_label || prog.link_label} → {prog.primary_link || prog.link_url}
+                            </Text>
+                          </View>
+
+                          {Boolean(prog.secondary_label) && (
+                            <View style={styles.programActionTag}>
+                              <Ionicons name="open-outline" size={12} color="#0369A1" />
+                              <Text style={[styles.programActionTagText, { color: '#0369A1' }]} numberOfLines={1}>
+                                {prog.secondary_label} → {prog.secondary_link}
+                              </Text>
+                            </View>
+                          )}
+
+                          {hasDropdown && (
+                            <View style={[styles.programActionTag, { backgroundColor: '#F3E8FF' }]}>
+                              <Ionicons name="list-outline" size={12} color="#7E22CE" />
+                              <Text style={[styles.programActionTagText, { color: '#7E22CE' }]} numberOfLines={1}>
+                                Dropdown: {prog.dropdown_items.label} ({dropdownItemCount} items)
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+
+                        {/* Card Bottom Actions */}
+                        <View style={styles.programCardActionsBar}>
+                          <View style={styles.programOrderDisplay}>
+                            <Text style={styles.programOrderDisplayText}>
+                              Sort Order: <Text style={{ fontWeight: '800' }}>{prog.sort_order ?? idx + 1}</Text>
+                            </Text>
+                          </View>
+
+                          <View style={styles.programCardBtnGroup}>
+                            <TouchableOpacity
+                              style={styles.programEditBtn}
+                              onPress={() => handleOpenEditProgram(prog)}
+                              activeOpacity={0.8}
+                            >
+                              <Ionicons name="pencil-outline" size={14} color="#0A5554" />
+                              <Text style={styles.programEditBtnText}>Edit</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                              style={styles.programDeleteBtn}
+                              onPress={() => handleOpenDeleteProgram(prog)}
+                              activeOpacity={0.8}
+                              accessibilityLabel={`Delete program ${prog.title}`}
+                            >
+                              <Ionicons name="trash-outline" size={15} color="#DC2626" />
+                              <Text style={styles.programDeleteBtnText}>Remove</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      </View>
+                    );
+                  })
+                )}
+              </View>
+
+              {/* View on website link card */}
+              <TouchableOpacity
+                style={styles.statsExternalLinkCard}
+                onPress={() => {
+                  Linking.openURL('https://bdangels.co#programs').catch(() => {
+                    Alert.alert('Notice', 'Could not open https://bdangels.co#programs');
+                  });
+                }}
+                activeOpacity={0.8}
+              >
+                <View style={styles.statsExternalLinkLeft}>
+                  <Ionicons name="globe-outline" size={20} color="#0A5554" />
+                  <View>
+                    <Text style={styles.statsExternalLinkTitle}>View section on live site</Text>
+                    <Text style={styles.statsExternalLinkDesc}>bdangels.co/#programs section</Text>
+                  </View>
+                </View>
+                <Ionicons name="open-outline" size={18} color="#0A5554" />
+              </TouchableOpacity>
             </View>
           )}
 
@@ -7425,6 +8039,689 @@ export default function AdminScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* CREATE PROGRAM MODAL */}
+      <Modal
+        visible={createProgramModalVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => !programSaving && setCreateProgramModalVisible(false)}
+      >
+        <SafeAreaView style={styles.modalSafeArea}>
+          <View style={styles.editModalContainer}>
+            {/* Modal Header */}
+            <View style={styles.editModalHeader}>
+              <View>
+                <Text style={styles.editModalTitle}>Add Homepage Program</Text>
+                <Text style={styles.editModalSubtitle}>
+                  Configure a new card for the landing page programs grid
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.editModalCloseBtn}
+                onPress={() => setCreateProgramModalVisible(false)}
+                disabled={programSaving}
+              >
+                <Ionicons name="close" size={22} color={Colors.ink} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              style={styles.editModalScrollView}
+              contentContainerStyle={styles.editModalFormContent}
+              keyboardShouldPersistTaps="handled"
+            >
+              {/* Category & Title */}
+              <Text style={styles.formSectionHeader}>PROGRAM INFORMATION</Text>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>
+                  Category Label <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={programFormData.eyebrow}
+                  onChangeText={(val) =>
+                    setProgramFormData((prev) => ({ ...prev, eyebrow: val }))
+                  }
+                  placeholder="e.g. Women-led investment, Investor education"
+                  placeholderTextColor="#94A3B8"
+                  maxLength={120}
+                />
+                <Text style={styles.fieldHelperText}>
+                  Shown in small uppercase text at the top of the card.
+                </Text>
+              </View>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>
+                  Program Title <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={programFormData.title}
+                  onChangeText={(val) =>
+                    setProgramFormData((prev) => ({ ...prev, title: val }))
+                  }
+                  placeholder="e.g. BWIN, Angel Academy, DeckVue"
+                  placeholderTextColor="#94A3B8"
+                  maxLength={255}
+                />
+              </View>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>
+                  Description <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                <TextInput
+                  style={[styles.fieldInput, styles.fieldTextArea, { minHeight: 90 }]}
+                  value={programFormData.description}
+                  onChangeText={(val) =>
+                    setProgramFormData((prev) => ({ ...prev, description: val }))
+                  }
+                  placeholder="Provide a compelling overview of what this program or service offers..."
+                  placeholderTextColor="#94A3B8"
+                  multiline
+                  numberOfLines={4}
+                  maxLength={1200}
+                  textAlignVertical="top"
+                />
+              </View>
+
+              {/* Card Theme */}
+              <Text style={styles.formSectionHeader}>CARD APPEARANCE</Text>
+              <Text style={styles.fieldHelperText}>
+                Choose the background and visual theme for this card on the homepage:
+              </Text>
+
+              <View style={styles.themeSelectorRow}>
+                {PROGRAM_THEMES.map((th) => {
+                  const isSelected = (programFormData.theme || 'white') === th.value;
+                  return (
+                    <TouchableOpacity
+                      key={`theme-opt-${th.value}`}
+                      style={[
+                        styles.themeSelectorCard,
+                        { backgroundColor: th.bg, borderColor: isSelected ? '#0A5554' : th.border },
+                        isSelected && styles.themeSelectorCardActive,
+                      ]}
+                      onPress={() =>
+                        setProgramFormData((prev) => ({ ...prev, theme: th.value }))
+                      }
+                      activeOpacity={0.8}
+                    >
+                      <View style={[styles.themeDot, { backgroundColor: th.dot }]} />
+                      <Text
+                        style={[
+                          styles.themeSelectorLabel,
+                          { color: th.value === 'dark' ? '#FFFFFF' : '#0F172A' },
+                        ]}
+                      >
+                        {th.label}
+                      </Text>
+                      {isSelected && (
+                        <View style={styles.themeSelectedCheck}>
+                          <Ionicons name="checkmark" size={12} color="#FFFFFF" />
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* Primary Action Button */}
+              <Text style={styles.formSectionHeader}>PRIMARY ACTION BUTTON</Text>
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>
+                  Button Label <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={programFormData.primary_label}
+                  onChangeText={(val) =>
+                    setProgramFormData((prev) => ({ ...prev, primary_label: val }))
+                  }
+                  placeholder="e.g. Explore BWIN, Learn more"
+                  placeholderTextColor="#94A3B8"
+                  maxLength={120}
+                />
+              </View>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>
+                  Button Link <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={programFormData.primary_link}
+                  onChangeText={(val) =>
+                    setProgramFormData((prev) => ({ ...prev, primary_link: val }))
+                  }
+                  placeholder="e.g. /bwin, /angel-academy or https://..."
+                  placeholderTextColor="#94A3B8"
+                  maxLength={2048}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+
+              {/* Secondary Action Button */}
+              <Text style={styles.formSectionHeader}>SECONDARY ACTION (OPTIONAL)</Text>
+              <Text style={styles.fieldHelperText}>
+                Fill in both fields to display a secondary action button on the card.
+              </Text>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>Secondary Button Label</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={programFormData.secondary_label}
+                  onChangeText={(val) =>
+                    setProgramFormData((prev) => ({ ...prev, secondary_label: val }))
+                  }
+                  placeholder="e.g. Book a call, Book a demo"
+                  placeholderTextColor="#94A3B8"
+                  maxLength={120}
+                />
+              </View>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>Secondary Button Link</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={programFormData.secondary_link}
+                  onChangeText={(val) =>
+                    setProgramFormData((prev) => ({ ...prev, secondary_link: val }))
+                  }
+                  placeholder="e.g. https://calendar.google.com/... or mailto:info@bdangels.co"
+                  placeholderTextColor="#94A3B8"
+                  maxLength={2048}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+
+              {/* Dropdown Menu */}
+              <Text style={styles.formSectionHeader}>DROPDOWN BUTTON (OPTIONAL)</Text>
+              <Text style={styles.fieldHelperText}>
+                Add an expandable dropdown button to display up to 6 custom sub-links.
+              </Text>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>Dropdown Trigger Label</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={programFormData.dropdown_label}
+                  onChangeText={(val) =>
+                    setProgramFormData((prev) => ({ ...prev, dropdown_label: val }))
+                  }
+                  placeholder="e.g. View Services (leave blank if not using dropdown)"
+                  placeholderTextColor="#94A3B8"
+                  maxLength={120}
+                />
+              </View>
+
+              {Boolean(programFormData.dropdown_label.trim()) && (
+                <View style={styles.dropdownItemsEditorBox}>
+                  <View style={styles.dropdownItemsHeaderRow}>
+                    <Text style={styles.dropdownItemsHeaderTitle}>DROPDOWN OPTIONS (UP TO 6)</Text>
+                    <TouchableOpacity
+                      style={[
+                        styles.dropdownAddOptionBtn,
+                        programFormData.dropdown_items.length >= 6 && { opacity: 0.5 },
+                      ]}
+                      onPress={handleAddDropdownItem}
+                      disabled={programFormData.dropdown_items.length >= 6}
+                    >
+                      <Ionicons name="add-circle" size={15} color="#0A5554" />
+                      <Text style={styles.dropdownAddOptionBtnText}>Add Option</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {programFormData.dropdown_items.map((item, dIdx) => (
+                    <View key={`dropdown-item-field-${dIdx}`} style={styles.dropdownItemFieldRow}>
+                      <View style={styles.dropdownItemNumberBadge}>
+                        <Text style={styles.dropdownItemNumberText}>#{dIdx + 1}</Text>
+                      </View>
+                      <View style={{ flex: 1, gap: 6 }}>
+                        <TextInput
+                          style={styles.dropdownItemInput}
+                          value={item.title}
+                          onChangeText={(val) => handleUpdateDropdownItem(dIdx, 'title', val)}
+                          placeholder="Option Title (e.g. Founder Services)"
+                          placeholderTextColor="#94A3B8"
+                          maxLength={120}
+                        />
+                        <TextInput
+                          style={styles.dropdownItemInput}
+                          value={item.link}
+                          onChangeText={(val) => handleUpdateDropdownItem(dIdx, 'link', val)}
+                          placeholder="Option Link (e.g. /startups#our-services)"
+                          placeholderTextColor="#94A3B8"
+                          maxLength={2048}
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                        />
+                      </View>
+                      {programFormData.dropdown_items.length > 1 && (
+                        <TouchableOpacity
+                          style={styles.dropdownItemRemoveBtn}
+                          onPress={() => handleRemoveDropdownItem(dIdx)}
+                          accessibilityLabel={`Remove option ${dIdx + 1}`}
+                        >
+                          <Ionicons name="trash-outline" size={16} color="#DC2626" />
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              {/* Sort Order */}
+              <Text style={styles.formSectionHeader}>DISPLAY POSITION</Text>
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>Sort Order</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={programFormData.sort_order}
+                  onChangeText={(val) =>
+                    setProgramFormData((prev) => ({ ...prev, sort_order: val }))
+                  }
+                  placeholder="e.g. 1, 2, 3"
+                  placeholderTextColor="#94A3B8"
+                  keyboardType="number-pad"
+                  maxLength={3}
+                />
+                <Text style={styles.fieldHelperText}>
+                  Controls position on the homepage. Lowest numbers appear first.
+                </Text>
+              </View>
+            </ScrollView>
+
+            {/* Modal Bottom Actions */}
+            <View style={styles.editModalActionRow}>
+              <TouchableOpacity
+                style={styles.editModalCancelBtn}
+                onPress={() => setCreateProgramModalVisible(false)}
+                disabled={programSaving}
+              >
+                <Text style={styles.editModalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.editModalSaveBtn}
+                onPress={handleSaveCreateProgram}
+                disabled={programSaving}
+              >
+                {programSaving ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.editModalSaveBtnText}>Add Program</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      {/* EDIT PROGRAM MODAL */}
+      <Modal
+        visible={editProgramModalVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => !programSaving && setEditProgramModalVisible(false)}
+      >
+        <SafeAreaView style={styles.modalSafeArea}>
+          <View style={styles.editModalContainer}>
+            {/* Modal Header */}
+            <View style={styles.editModalHeader}>
+              <View>
+                <Text style={styles.editModalTitle}>Edit Program Card</Text>
+                <Text style={styles.editModalSubtitle}>
+                  Modify &ldquo;{editingProgram?.title}&rdquo; details and links
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.editModalCloseBtn}
+                onPress={() => setEditProgramModalVisible(false)}
+                disabled={programSaving}
+              >
+                <Ionicons name="close" size={22} color={Colors.ink} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              style={styles.editModalScrollView}
+              contentContainerStyle={styles.editModalFormContent}
+              keyboardShouldPersistTaps="handled"
+            >
+              {/* Category & Title */}
+              <Text style={styles.formSectionHeader}>PROGRAM INFORMATION</Text>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>
+                  Category Label <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={programFormData.eyebrow}
+                  onChangeText={(val) =>
+                    setProgramFormData((prev) => ({ ...prev, eyebrow: val }))
+                  }
+                  placeholder="e.g. Women-led investment, Investor education"
+                  placeholderTextColor="#94A3B8"
+                  maxLength={120}
+                />
+              </View>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>
+                  Program Title <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={programFormData.title}
+                  onChangeText={(val) =>
+                    setProgramFormData((prev) => ({ ...prev, title: val }))
+                  }
+                  placeholder="e.g. BWIN, Angel Academy, DeckVue"
+                  placeholderTextColor="#94A3B8"
+                  maxLength={255}
+                />
+              </View>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>
+                  Description <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                <TextInput
+                  style={[styles.fieldInput, styles.fieldTextArea, { minHeight: 90 }]}
+                  value={programFormData.description}
+                  onChangeText={(val) =>
+                    setProgramFormData((prev) => ({ ...prev, description: val }))
+                  }
+                  placeholder="Provide a compelling overview of what this program or service offers..."
+                  placeholderTextColor="#94A3B8"
+                  multiline
+                  numberOfLines={4}
+                  maxLength={1200}
+                  textAlignVertical="top"
+                />
+              </View>
+
+              {/* Card Theme */}
+              <Text style={styles.formSectionHeader}>CARD APPEARANCE</Text>
+              <Text style={styles.fieldHelperText}>
+                Choose the background and visual theme for this card on the homepage:
+              </Text>
+
+              <View style={styles.themeSelectorRow}>
+                {PROGRAM_THEMES.map((th) => {
+                  const isSelected = (programFormData.theme || 'white') === th.value;
+                  return (
+                    <TouchableOpacity
+                      key={`edit-theme-opt-${th.value}`}
+                      style={[
+                        styles.themeSelectorCard,
+                        { backgroundColor: th.bg, borderColor: isSelected ? '#0A5554' : th.border },
+                        isSelected && styles.themeSelectorCardActive,
+                      ]}
+                      onPress={() =>
+                        setProgramFormData((prev) => ({ ...prev, theme: th.value }))
+                      }
+                      activeOpacity={0.8}
+                    >
+                      <View style={[styles.themeDot, { backgroundColor: th.dot }]} />
+                      <Text
+                        style={[
+                          styles.themeSelectorLabel,
+                          { color: th.value === 'dark' ? '#FFFFFF' : '#0F172A' },
+                        ]}
+                      >
+                        {th.label}
+                      </Text>
+                      {isSelected && (
+                        <View style={styles.themeSelectedCheck}>
+                          <Ionicons name="checkmark" size={12} color="#FFFFFF" />
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* Primary Action Button */}
+              <Text style={styles.formSectionHeader}>PRIMARY ACTION BUTTON</Text>
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>
+                  Button Label <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={programFormData.primary_label}
+                  onChangeText={(val) =>
+                    setProgramFormData((prev) => ({ ...prev, primary_label: val }))
+                  }
+                  placeholder="e.g. Explore BWIN, Learn more"
+                  placeholderTextColor="#94A3B8"
+                  maxLength={120}
+                />
+              </View>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>
+                  Button Link <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={programFormData.primary_link}
+                  onChangeText={(val) =>
+                    setProgramFormData((prev) => ({ ...prev, primary_link: val }))
+                  }
+                  placeholder="e.g. /bwin, /angel-academy or https://..."
+                  placeholderTextColor="#94A3B8"
+                  maxLength={2048}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+
+              {/* Secondary Action Button */}
+              <Text style={styles.formSectionHeader}>SECONDARY ACTION (OPTIONAL)</Text>
+              <Text style={styles.fieldHelperText}>
+                Fill in both fields to display a secondary action button on the card.
+              </Text>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>Secondary Button Label</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={programFormData.secondary_label}
+                  onChangeText={(val) =>
+                    setProgramFormData((prev) => ({ ...prev, secondary_label: val }))
+                  }
+                  placeholder="e.g. Book a call, Book a demo"
+                  placeholderTextColor="#94A3B8"
+                  maxLength={120}
+                />
+              </View>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>Secondary Button Link</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={programFormData.secondary_link}
+                  onChangeText={(val) =>
+                    setProgramFormData((prev) => ({ ...prev, secondary_link: val }))
+                  }
+                  placeholder="e.g. https://calendar.google.com/... or mailto:info@bdangels.co"
+                  placeholderTextColor="#94A3B8"
+                  maxLength={2048}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+
+              {/* Dropdown Menu */}
+              <Text style={styles.formSectionHeader}>DROPDOWN BUTTON (OPTIONAL)</Text>
+              <Text style={styles.fieldHelperText}>
+                Add an expandable dropdown button to display up to 6 custom sub-links.
+              </Text>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>Dropdown Trigger Label</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={programFormData.dropdown_label}
+                  onChangeText={(val) =>
+                    setProgramFormData((prev) => ({ ...prev, dropdown_label: val }))
+                  }
+                  placeholder="e.g. View Services (leave blank if not using dropdown)"
+                  placeholderTextColor="#94A3B8"
+                  maxLength={120}
+                />
+              </View>
+
+              {Boolean(programFormData.dropdown_label.trim()) && (
+                <View style={styles.dropdownItemsEditorBox}>
+                  <View style={styles.dropdownItemsHeaderRow}>
+                    <Text style={styles.dropdownItemsHeaderTitle}>DROPDOWN OPTIONS (UP TO 6)</Text>
+                    <TouchableOpacity
+                      style={[
+                        styles.dropdownAddOptionBtn,
+                        programFormData.dropdown_items.length >= 6 && { opacity: 0.5 },
+                      ]}
+                      onPress={handleAddDropdownItem}
+                      disabled={programFormData.dropdown_items.length >= 6}
+                    >
+                      <Ionicons name="add-circle" size={15} color="#0A5554" />
+                      <Text style={styles.dropdownAddOptionBtnText}>Add Option</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {programFormData.dropdown_items.map((item, dIdx) => (
+                    <View key={`edit-dropdown-item-field-${dIdx}`} style={styles.dropdownItemFieldRow}>
+                      <View style={styles.dropdownItemNumberBadge}>
+                        <Text style={styles.dropdownItemNumberText}>#{dIdx + 1}</Text>
+                      </View>
+                      <View style={{ flex: 1, gap: 6 }}>
+                        <TextInput
+                          style={styles.dropdownItemInput}
+                          value={item.title}
+                          onChangeText={(val) => handleUpdateDropdownItem(dIdx, 'title', val)}
+                          placeholder="Option Title (e.g. Founder Services)"
+                          placeholderTextColor="#94A3B8"
+                          maxLength={120}
+                        />
+                        <TextInput
+                          style={styles.dropdownItemInput}
+                          value={item.link}
+                          onChangeText={(val) => handleUpdateDropdownItem(dIdx, 'link', val)}
+                          placeholder="Option Link (e.g. /startups#our-services)"
+                          placeholderTextColor="#94A3B8"
+                          maxLength={2048}
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                        />
+                      </View>
+                      {programFormData.dropdown_items.length > 1 && (
+                        <TouchableOpacity
+                          style={styles.dropdownItemRemoveBtn}
+                          onPress={() => handleRemoveDropdownItem(dIdx)}
+                          accessibilityLabel={`Remove option ${dIdx + 1}`}
+                        >
+                          <Ionicons name="trash-outline" size={16} color="#DC2626" />
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              {/* Sort Order */}
+              <Text style={styles.formSectionHeader}>DISPLAY POSITION</Text>
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>Sort Order</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={programFormData.sort_order}
+                  onChangeText={(val) =>
+                    setProgramFormData((prev) => ({ ...prev, sort_order: val }))
+                  }
+                  placeholder="e.g. 1, 2, 3"
+                  placeholderTextColor="#94A3B8"
+                  keyboardType="number-pad"
+                  maxLength={3}
+                />
+                <Text style={styles.fieldHelperText}>
+                  Controls position on the homepage. Lowest numbers appear first.
+                </Text>
+              </View>
+            </ScrollView>
+
+            {/* Modal Bottom Actions */}
+            <View style={styles.editModalActionRow}>
+              <TouchableOpacity
+                style={styles.editModalCancelBtn}
+                onPress={() => setEditProgramModalVisible(false)}
+                disabled={programSaving}
+              >
+                <Text style={styles.editModalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.editModalSaveBtn}
+                onPress={handleSaveEditProgram}
+                disabled={programSaving}
+              >
+                {programSaving ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.editModalSaveBtnText}>Save Changes</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      {/* DELETE PROGRAM CONFIRMATION MODAL */}
+      <Modal
+        visible={deleteProgramModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !isDeletingProgram && setDeleteProgramModalVisible(false)}
+      >
+        <View style={styles.deleteModalOverlay}>
+          <View style={styles.deleteModalBox}>
+            <View style={[styles.deleteModalIconWrap, { backgroundColor: '#FEE2E2' }]}>
+              <Ionicons name="trash-outline" size={26} color="#DC2626" />
+            </View>
+            <Text style={styles.deleteModalTitle}>Remove Program Card?</Text>
+            <Text style={styles.deleteModalMessage}>
+              Are you sure you want to remove &ldquo;{selectedProgramForDelete?.title}&rdquo; from the homepage? This will immediately remove it from the public landing page.
+            </Text>
+            <View style={styles.deleteModalBtnRow}>
+              <TouchableOpacity
+                style={styles.deleteModalCancelBtn}
+                onPress={() => setDeleteProgramModalVisible(false)}
+                disabled={isDeletingProgram}
+              >
+                <Text style={styles.deleteModalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.deleteModalConfirmBtn}
+                onPress={handleConfirmDeleteProgram}
+                disabled={isDeletingProgram}
+              >
+                {isDeletingProgram ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.deleteModalConfirmBtnText}>Remove Card</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -8966,6 +10263,470 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#15803D',
     marginTop: 1,
+  },
+
+  // Homepage Programs Styles
+  programsActionBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+  },
+  programsCountPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#E6F4F1',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: Radii.pill,
+    borderWidth: 1,
+    borderColor: '#BFE7DE',
+  },
+  programsCountPillText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0A5554',
+  },
+  programsAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#0A5554',
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: Radii.md,
+    ...Shadows.sm,
+  },
+  programsAddBtnDisabled: {
+    opacity: 0.45,
+    backgroundColor: '#94A3B8',
+  },
+  programsAddBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  programsMaxBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+    borderRadius: Radii.md,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    marginBottom: 14,
+  },
+  programsMaxBannerText: {
+    flex: 1,
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#92400E',
+    lineHeight: 16,
+  },
+  programsPreviewContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: Radii.lg,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 14,
+    marginBottom: 16,
+    ...Shadows.card,
+  },
+  programsPreviewHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  programsPreviewHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  programsPreviewHeaderTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#0A5554',
+    letterSpacing: 0.8,
+  },
+  programsPreviewBadge: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: Radii.pill,
+  },
+  programsPreviewBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  programsPreviewScrollContent: {
+    gap: 12,
+    paddingRight: 6,
+  },
+  liveProgramPreviewCard: {
+    width: 250,
+    borderRadius: Radii.lg,
+    borderWidth: 1.5,
+    padding: 16,
+    justifyContent: 'space-between',
+    ...Shadows.card,
+  },
+  liveProgramPreviewTop: {
+    marginBottom: 14,
+  },
+  liveProgramEyebrow: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    marginBottom: 6,
+  },
+  liveProgramTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    marginBottom: 6,
+    letterSpacing: -0.3,
+  },
+  liveProgramDesc: {
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  liveProgramActions: {
+    gap: 6,
+  },
+  liveProgramActionBtn: {
+    borderRadius: Radii.md,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  liveProgramActionBtnDark: {
+    backgroundColor: '#10B981',
+  },
+  liveProgramActionBtnLight: {
+    backgroundColor: '#E6F4F1',
+    borderWidth: 1,
+    borderColor: '#0A5554',
+  },
+  liveProgramActionText: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  liveProgramSecBtn: {
+    borderRadius: Radii.md,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  liveProgramSecBtnDark: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  liveProgramSecBtnLight: {
+    backgroundColor: 'rgba(0, 0, 0, 0.04)',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  liveProgramDropBtn: {
+    borderRadius: Radii.md,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  liveProgramSecText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  programCardsListWrap: {
+    marginBottom: 10,
+  },
+  programCardsListHeadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+    paddingHorizontal: 2,
+  },
+  programCardsListHeading: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#475569',
+    letterSpacing: 0.8,
+  },
+  programCardsListSubheading: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: Colors.muted,
+  },
+  programCardItem: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: Radii.lg,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 16,
+    marginBottom: 12,
+    ...Shadows.card,
+  },
+  programCardItemHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  programCardItemBadges: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+  },
+  programOrderBadge: {
+    backgroundColor: '#0A5554',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: Radii.pill,
+  },
+  programOrderBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  programEyebrowPill: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+    borderRadius: Radii.pill,
+    maxWidth: '70%',
+  },
+  programEyebrowPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  programCardThemeBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: Radii.pill,
+  },
+  programThemeColorDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  programCardThemeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  programCardItemTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: Colors.ink,
+    marginBottom: 6,
+  },
+  programCardItemDesc: {
+    fontSize: 13,
+    color: Colors.muted,
+    lineHeight: 18,
+    marginBottom: 12,
+  },
+  programMetaInfoRow: {
+    gap: 6,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+    marginBottom: 12,
+  },
+  programActionTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: Radii.sm,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  programActionTagText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#334155',
+    flex: 1,
+  },
+  programCardActionsBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  programOrderDisplay: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  programOrderDisplayText: {
+    fontSize: 11,
+    color: '#64748B',
+  },
+  programCardBtnGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  programEditBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#E6F4F1',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: Radii.md,
+  },
+  programEditBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0A5554',
+  },
+  programDeleteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: Radii.md,
+  },
+  programDeleteBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#DC2626',
+  },
+  themeSelectorRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 16,
+    marginTop: 6,
+  },
+  themeSelectorCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: Radii.md,
+    borderWidth: 1.5,
+    position: 'relative',
+  },
+  themeSelectorCardActive: {
+    borderWidth: 2,
+    borderColor: '#0A5554',
+  },
+  themeDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  themeSelectorLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  themeSelectedCheck: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#0A5554',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 4,
+  },
+  dropdownItemsEditorBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: Radii.md,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 12,
+    marginBottom: 16,
+    gap: 10,
+  },
+  dropdownItemsHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+  },
+  dropdownItemsHeaderTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.5,
+  },
+  dropdownAddOptionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    backgroundColor: '#E6F4F1',
+    borderRadius: Radii.pill,
+  },
+  dropdownAddOptionBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0A5554',
+  },
+  dropdownItemFieldRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: '#FFFFFF',
+    borderRadius: Radii.sm,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 10,
+  },
+  dropdownItemNumberBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    backgroundColor: '#F1F5F9',
+    borderRadius: Radii.xs,
+    marginTop: 6,
+  },
+  dropdownItemNumberText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#64748B',
+  },
+  dropdownItemInput: {
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: Radii.xs,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    fontSize: 12,
+    color: Colors.ink,
+    backgroundColor: '#FFFFFF',
+  },
+  dropdownItemRemoveBtn: {
+    padding: 8,
+    marginTop: 18,
   },
   dealDateText: {
     fontSize: 11,

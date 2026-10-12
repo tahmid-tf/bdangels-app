@@ -986,6 +986,96 @@ export async function updateAdminLandingPageStats(token, statsArray) {
   return { ok: false, message: 'Could not update landing page stats.' };
 }
 
+/**
+ * Fetch Landing Program Cards from GET /api/admin/landing-program-cards
+ */
+export async function fetchAdminLandingProgramCards(token) {
+  try {
+    const res = await fetchAdminWithFallback('/admin/landing-program-cards', token);
+    if (res && res.ok) {
+      const json = await res.json();
+      const list = json.data || (Array.isArray(json) ? json : []);
+      if (Array.isArray(list) && list.length > 0) {
+        return list;
+      }
+    }
+  } catch (err) {
+    console.log('Admin landing program cards fetch error:', err);
+  }
+  return FALLBACK_HOME_DATA.landing_programs || [];
+}
+
+/**
+ * Create a new Landing Program Card via POST /api/admin/landing-program-cards
+ */
+export async function createAdminLandingProgramCard(token, cardData) {
+  try {
+    const res = await fetchAdminWithFallback('/admin/landing-program-cards', token, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cardData),
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        data: json.data || null,
+        message: json.message || '',
+        errors: json.errors || null,
+      };
+    }
+  } catch (err) {
+    console.log('Admin create landing program card error:', err);
+  }
+  return { ok: false, message: 'Could not create program card.' };
+}
+
+/**
+ * Update an existing Landing Program Card via PUT/POST /api/admin/landing-program-cards/:id
+ */
+export async function updateAdminLandingProgramCard(token, cardId, cardData) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/landing-program-cards/${cardId}`, token, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cardData),
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        data: json.data || null,
+        message: json.message || '',
+        errors: json.errors || null,
+      };
+    }
+  } catch (err) {
+    console.log('Admin update landing program card error:', err);
+  }
+  return { ok: false, message: 'Could not update program card.' };
+}
+
+/**
+ * Delete a Landing Program Card via DELETE /api/admin/landing-program-cards/:id
+ */
+export async function deleteAdminLandingProgramCard(token, cardId) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/landing-program-cards/${cardId}`, token, {
+      method: 'DELETE',
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        message: json.message || 'Program card deleted successfully.',
+      };
+    }
+  } catch (err) {
+    console.log('Admin delete landing program card error:', err);
+  }
+  return { ok: false, message: 'Could not delete program card.' };
+}
+
 
 // Embedded fallback data directly from live Laravel backend for 100% resilient rendering
 export const FALLBACK_HOME_DATA = {
