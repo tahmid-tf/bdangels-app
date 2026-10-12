@@ -728,6 +728,35 @@ export async function fetchAdminSubscriptions(token) {
 }
 
 /**
+ * Update Subscription Tiers via POST /api/admin/subscriptions/tiers
+ */
+export async function updateAdminSubscriptionTiers(token, tiers) {
+  try {
+    const res = await fetchAdminWithFallback('/admin/subscriptions/tiers', token, {
+      method: 'POST',
+      body: JSON.stringify({ tiers }),
+    });
+    if (res && res.ok) {
+      const json = await res.json();
+      return {
+        ok: true,
+        data: json.data || json,
+        message: json.message || 'Subscription tiers updated successfully.',
+      };
+    }
+    const errJson = await res?.json().catch(() => null);
+    return {
+      ok: false,
+      message: errJson?.message || 'Failed to update subscription tiers.',
+      errors: errJson?.errors || null,
+    };
+  } catch (err) {
+    console.log('Admin update subscription tiers error:', err);
+    return { ok: false, message: 'Network error updating subscription tiers.' };
+  }
+}
+
+/**
  * Fetch Investor Investments from GET /api/admin/investor-investments
  */
 export async function fetchAdminInvestorInvestments(token) {

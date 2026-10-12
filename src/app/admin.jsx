@@ -50,6 +50,7 @@ import {
   fetchAdminNotifications,
   markAdminNotificationsViewed,
   fetchAdminSubscriptions,
+  updateAdminSubscriptionTiers,
   fetchAdminInvestorInvestments,
   fetchAdminBanWealthOrders,
   fetchHomePageData,
@@ -346,6 +347,30 @@ export default function AdminScreen() {
   // Subscriptions State
   const [subscriptionsData, setSubscriptionsData] = useState(null);
   const [subscriptionsLoading, setSubscriptionsLoading] = useState(false);
+  const [subscriptionsSubTab, setSubscriptionsSubTab] = useState('members'); // 'members' | 'tiers'
+  const [subscriptionSearch, setSubscriptionSearch] = useState('');
+  const [subscriptionPaymentFilter, setSubscriptionPaymentFilter] = useState('all'); // 'all' | 'paid' | 'unpaid'
+  const [subscriptionPlanFilter, setSubscriptionPlanFilter] = useState('all'); // 'all' | slug
+  const [subscriptionPage, setSubscriptionPage] = useState(1);
+  const subscriptionSearchTimeoutRef = useRef(null);
+
+  // Subscription Modals State
+  const [subscriptionDetailModalVisible, setSubscriptionDetailModalVisible] = useState(false);
+  const [selectedSubscriptionDetail, setSelectedSubscriptionDetail] = useState(null);
+  const [editTierModalVisible, setEditTierModalVisible] = useState(false);
+  const [selectedTierForEdit, setSelectedTierForEdit] = useState(null);
+  const [tierSaving, setTierSaving] = useState(false);
+  const [tierFormData, setTierFormData] = useState({
+    id: null,
+    name: '',
+    slug: '',
+    price_yearly: '',
+    sort_order: 1,
+    is_active: true,
+    is_highlighted: false,
+    features_included: '',
+    features_excluded: '',
+  });
 
   // Investor Investments State
   const [investorInvestments, setInvestorInvestments] = useState([]);
@@ -842,9 +867,10 @@ export default function AdminScreen() {
   };
 
   // Fetch Subscriptions
-  const loadSubscriptions = useCallback(async (token = authToken) => {
+  const loadSubscriptions = useCallback(async (token = authToken, options = {}) => {
     if (!token) return;
-    setSubscriptionsLoading(true);
+    const { silent = false } = options;
+    if (!silent) setSubscriptionsLoading(true);
     try {
       const res = await fetchAdminSubscriptions(token);
       if (res) {
@@ -853,7 +879,7 @@ export default function AdminScreen() {
     } catch (err) {
       console.log('Error loading admin subscriptions:', err);
     } finally {
-      setSubscriptionsLoading(false);
+      if (!silent) setSubscriptionsLoading(false);
     }
   }, [authToken]);
 
@@ -997,6 +1023,7 @@ export default function AdminScreen() {
     return () => {
       if (dealSearchTimeoutRef.current) clearTimeout(dealSearchTimeoutRef.current);
       if (pitchSearchTimeoutRef.current) clearTimeout(pitchSearchTimeoutRef.current);
+      if (subscriptionSearchTimeoutRef.current) clearTimeout(subscriptionSearchTimeoutRef.current);
     };
   }, []);
 
@@ -1164,6 +1191,174 @@ export default function AdminScreen() {
     setPitchSearch('');
     loadSubmissions(authToken, '', pitchFilter, 1);
   };
+
+  // Subscriptions Search & Pagination Handlers
+  const handleSubscriptionSearchChange = (text) => {
+    setSubscriptionSearch(text);
+    if (subscriptionSearchTimeoutRef.current) {
+      clearTimeout(subscriptionSearchTimeoutRef.current);
+    }
+    subscriptionSearchTimeoutRef.current = setTimeout(() => {
+      setSubscriptionPage(1);
+    }, 400);
+  };
+
+  const handleClearSubscriptionSearch = () => {
+    if (subscriptionSearchTimeoutRef.current) {
+      clearTimeout(subscriptionSearchTimeoutRef.current);
+    }
+    setSubscriptionSearch('');
+    setSubscriptionPage(1);
+  };
+
+  // Unified Subscriptions and Members calculation
+  const {
+    filteredSubscribers,
+    paginatedSubscribers,
+    subscriptionTotalPages,
+    subscriptionCounts,
+    availablePlans,
+  } = useMemo(() => {
+    const rawSubs = subscriptionsData?.subscriptions || [];
+    const missingUsers = subscriptionsData?.users_without_subscriptions || [];
+    const tiers = subscriptionsData?.tiers || [];
+
+    const currentAdminId = currentUser?.id;
+
+    // Normalizing subscription records
+    const mappedSubs = rawSubs
+      .filter((s) => s.user && (!currentAdminId || s.user.id !== currentAdminId))
+      .map((s) => {
+        const u = s.user || {};
+        const p = s.payment || null;
+        const isPaid = Boolean(s.payment_id || p?.id);
+        const amountDisplay = p?.amount
+          ? `${p.currency || 'USD'} ${Number(p.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+          : s.price
+          ? `$${Number(s.price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+          : 'N/A';
+        const planSlug = String(s.plan || u.account_status || 'free').toLowerCase();
+
+        return {
+          id: `sub-${s.id}`,
+          subscriptionId: s.id,
+          isMissingSubscription: false,
+          user: u,
+          plan: s.plan || u.account_status || 'Member',
+          planSlug,
+          price: s.price,
+          status: s.status || (isPaid ? 'active' : 'unpaid'),
+          startDate: s.start_date || s.created_at,
+          endDate: s.end_date || null,
+          payment: p,
+          isPaid,
+          amountDisplay,
+          transactionId: p ? (p.transaction_id || p.merchant_txnid || 'N/A') : 'No payment',
+          paymentMethod: p?.payment_method ? String(p.payment_method).toUpperCase() : 'N/A',
+        };
+      });
+
+    // Normalizing users without subscriptions
+    const mappedMissing = missingUsers
+      .filter((u) => !currentAdminId || u.id !== currentAdminId)
+      .map((u) => {
+        const planSlug = String(u.account_status || 'free').toLowerCase();
+        return {
+          id: `missing-${u.id}`,
+          subscriptionId: null,
+          isMissingSubscription: true,
+          user: u,
+          plan: u.account_status || 'Unassigned',
+          planSlug,
+          price: 0,
+          status: 'unpaid',
+          startDate: u.created_at,
+          endDate: null,
+          payment: null,
+          isPaid: false,
+          amountDisplay: 'N/A',
+          transactionId: 'No payment',
+          paymentMethod: 'N/A',
+        };
+      });
+
+    const combined = [...mappedSubs, ...mappedMissing];
+
+    // Accurate Counts
+    const paidCount = combined.filter((item) => item.isPaid).length;
+    const unpaidCount = combined.filter((item) => !item.isPaid).length;
+    const totalCount = combined.length;
+
+    // Available plans from tiers + dynamic data
+    const planSet = new Set();
+    tiers.forEach((t) => {
+      if (t.slug) planSet.add(t.slug.toLowerCase());
+    });
+    combined.forEach((item) => {
+      if (item.planSlug && item.planSlug !== 'free') {
+        planSet.add(item.planSlug);
+      }
+    });
+    const plansList = Array.from(planSet);
+
+    // Filter by Payment Status, Plan, Search
+    const searchLower = subscriptionSearch.trim().toLowerCase();
+    const filtered = combined.filter((item) => {
+      if (subscriptionPaymentFilter === 'paid' && !item.isPaid) return false;
+      if (subscriptionPaymentFilter === 'unpaid' && item.isPaid) return false;
+
+      if (subscriptionPlanFilter !== 'all' && item.planSlug !== subscriptionPlanFilter) {
+        return false;
+      }
+
+      if (searchLower) {
+        const userName = (item.user.name || '').toLowerCase();
+        const userEmail = (item.user.email || '').toLowerCase();
+        const planName = (item.plan || '').toLowerCase();
+        const trx = (item.transactionId || '').toLowerCase();
+        const method = (item.paymentMethod || '').toLowerCase();
+        const company = (item.user.company_name || '').toLowerCase();
+        if (
+          !userName.includes(searchLower) &&
+          !userEmail.includes(searchLower) &&
+          !planName.includes(searchLower) &&
+          !trx.includes(searchLower) &&
+          !method.includes(searchLower) &&
+          !company.includes(searchLower)
+        ) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+
+    const perPage = 10;
+    const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
+    const safePage = Math.min(subscriptionPage, totalPages);
+    const startIdx = (safePage - 1) * perPage;
+    const paginated = filtered.slice(startIdx, startIdx + perPage);
+
+    return {
+      unifiedSubscribers: combined,
+      filteredSubscribers: filtered,
+      paginatedSubscribers: paginated,
+      subscriptionTotalPages: totalPages,
+      subscriptionCounts: {
+        total: totalCount,
+        paid: paidCount,
+        unpaid: unpaidCount,
+      },
+      availablePlans: plansList,
+    };
+  }, [
+    subscriptionsData,
+    currentUser,
+    subscriptionSearch,
+    subscriptionPaymentFilter,
+    subscriptionPlanFilter,
+    subscriptionPage,
+  ]);
 
   // Fetch Blogs
   const loadBlogs = useCallback(
@@ -4927,6 +5122,87 @@ export default function AdminScreen() {
     }
   };
 
+  // ==========================================
+  // SUBSCRIPTIONS & TIERS HANDLERS
+  // ==========================================
+
+  const handleOpenSubscriptionDetail = (subItem) => {
+    setSelectedSubscriptionDetail(subItem);
+    setSubscriptionDetailModalVisible(true);
+  };
+
+  const handleOpenEditTier = (tier) => {
+    setSelectedTierForEdit(tier);
+    setTierFormData({
+      id: tier.id,
+      name: tier.name || '',
+      slug: tier.slug || '',
+      price_yearly: String(tier.price_yearly ?? ''),
+      sort_order: Number(tier.sort_order ?? 1),
+      is_active: Boolean(tier.is_active),
+      is_highlighted: Boolean(tier.is_highlighted),
+      features_included: tier.features_included || '',
+      features_excluded: tier.features_excluded || '',
+    });
+    setEditTierModalVisible(true);
+  };
+
+  const handleSaveTier = async () => {
+    if (!authToken || !selectedTierForEdit) return;
+    if (!tierFormData.name.trim()) {
+      Alert.alert('Validation Error', 'Please enter a display name for the tier.');
+      return;
+    }
+    const priceNum = parseFloat(tierFormData.price_yearly);
+    if (isNaN(priceNum) || priceNum < 0) {
+      Alert.alert('Validation Error', 'Please enter a valid yearly price.');
+      return;
+    }
+    setTierSaving(true);
+    try {
+      const currentTiers = subscriptionsData?.tiers || [];
+      const updatedTiersPayload = currentTiers.map((t) => {
+        if (t.id === selectedTierForEdit.id) {
+          return {
+            id: t.id,
+            name: tierFormData.name.trim(),
+            price_yearly: priceNum,
+            sort_order: parseInt(tierFormData.sort_order, 10) || 1,
+            is_active: tierFormData.is_active,
+            is_highlighted: tierFormData.is_highlighted,
+            features_included: tierFormData.features_included,
+            features_excluded: tierFormData.features_excluded,
+          };
+        }
+        return {
+          id: t.id,
+          name: t.name,
+          price_yearly: parseFloat(t.price_yearly) || 0,
+          sort_order: t.sort_order,
+          is_active: Boolean(t.is_active),
+          is_highlighted: tierFormData.is_highlighted ? false : Boolean(t.is_highlighted),
+          features_included: t.features_included || '',
+          features_excluded: t.features_excluded || '',
+        };
+      });
+
+      const res = await updateAdminSubscriptionTiers(authToken, updatedTiersPayload);
+      if (res.ok) {
+        Alert.alert('Success', 'Membership tier and pricing updated successfully.');
+        setEditTierModalVisible(false);
+        setSelectedTierForEdit(null);
+        loadSubscriptions(authToken, { silent: true });
+      } else {
+        Alert.alert('Update Failed', res.message || 'Could not update tier.');
+      }
+    } catch (err) {
+      console.log('Error saving tier:', err);
+      Alert.alert('Error', 'An unexpected error occurred while saving tier.');
+    } finally {
+      setTierSaving(false);
+    }
+  };
+
   // Handle Logout
   const handleLogout = () => {
     Alert.alert('Sign Out', 'Are you sure you want to log out of the admin panel?', [
@@ -6955,86 +7231,582 @@ export default function AdminScreen() {
           {/* TAB: SUBSCRIPTIONS */}
           {activeTab === 'subscriptions' && (
             <View style={styles.tabContent}>
+              {/* Header */}
               <View style={styles.sectionHeaderRow}>
-                <View>
-                  <Text style={styles.sectionHeading}>Member Subscriptions</Text>
-                  <Text style={styles.sectionSubheading}>Tiers, active memberships, and payments</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.sectionHeading}>Subscriptions & Tiers</Text>
+                  <Text style={styles.sectionSubheading}>
+                    {subscriptionsSubTab === 'members'
+                      ? `Showing ${paginatedSubscribers.length} of ${filteredSubscribers.length} records · Payments & memberships`
+                      : 'Membership tier definitions & pricing packages'}
+                  </Text>
                 </View>
                 <TouchableOpacity
                   style={styles.refreshIconBtn}
                   onPress={() => loadSubscriptions(authToken)}
+                  accessibilityLabel="Refresh subscriptions data"
                 >
                   <Ionicons name="refresh" size={18} color={Colors.forest} />
                 </TouchableOpacity>
               </View>
 
-              {/* Tiers Summary */}
-              <Text style={styles.subSectionTitle}>Active Membership Tiers</Text>
-              <View style={styles.tiersGrid}>
-                {[
-                  { name: 'Core Angel', price: 'BDT 5,000/yr', desc: 'Curated deal flow, investor syndicate voting, online pitches' },
-                  { name: 'Advanced Angel', price: 'BDT 15,000/yr', desc: 'Direct founder intros, priority allocations, data room access' },
-                  { name: 'Institutional', price: 'BDT 50,000/yr', desc: 'Custom SPVs, syndicate co-lead, strategic committee seat' },
-                ].map((tier, idx) => (
-                  <View key={`tier-${idx}`} style={styles.tierCard}>
-                    <Text style={styles.tierName}>{tier.name}</Text>
-                    <Text style={styles.tierPrice}>{tier.price}</Text>
-                    <Text style={styles.tierDesc}>{tier.desc}</Text>
-                  </View>
-                ))}
+              {/* KPI Summary Cards */}
+              <View style={styles.subKpiRow}>
+                <View style={[styles.subKpiCard, { borderLeftColor: '#0A5554' }]}>
+                  <Text style={styles.subKpiLabel}>TOTAL SUBSCRIBERS</Text>
+                  <Text style={styles.subKpiValue}>{subscriptionCounts.total}</Text>
+                  <Text style={styles.subKpiHint}>Active & assigned members</Text>
+                </View>
+                <View style={[styles.subKpiCard, { borderLeftColor: '#16A34A' }]}>
+                  <Text style={[styles.subKpiLabel, { color: '#16A34A' }]}>PAID MEMBERS</Text>
+                  <Text style={[styles.subKpiValue, { color: '#16A34A' }]}>{subscriptionCounts.paid}</Text>
+                  <Text style={styles.subKpiHint}>Verified transactions</Text>
+                </View>
+                <View style={[styles.subKpiCard, { borderLeftColor: '#D97706' }]}>
+                  <Text style={[styles.subKpiLabel, { color: '#D97706' }]}>UNPAID / MISSING</Text>
+                  <Text style={[styles.subKpiValue, { color: '#D97706' }]}>{subscriptionCounts.unpaid}</Text>
+                  <Text style={styles.subKpiHint}>Awaiting payment record</Text>
+                </View>
               </View>
 
-              {/* Subscriptions List */}
-              <Text style={styles.subSectionTitle}>Subscribed Members</Text>
-              {subscriptionsLoading ? (
-                <View style={styles.listLoadingBox}>
-                  <ActivityIndicator size="small" color={Colors.forest} />
-                  <Text style={styles.loadingText}>Fetching subscriptions...</Text>
-                </View>
-              ) : (
-                (() => {
-                  const subsList = subscriptionsData?.subscriptions || [];
-                  if (subsList.length === 0) {
-                    return (
-                      <View style={styles.emptyState}>
-                        <Ionicons name="card-outline" size={40} color={Colors.mutedLight} />
-                        <Text style={styles.emptyTitle}>No Subscriptions on Record</Text>
-                        <Text style={styles.emptyText}>Active subscriber entries will appear here.</Text>
-                      </View>
-                    );
-                  }
+              {/* Sub-tab Switcher */}
+              <View style={styles.toggleRow}>
+                <TouchableOpacity
+                  style={[styles.toggleBtn, subscriptionsSubTab === 'members' && styles.toggleBtnActive]}
+                  onPress={() => setSubscriptionsSubTab('members')}
+                >
+                  <Ionicons
+                    name="people-outline"
+                    size={16}
+                    color={subscriptionsSubTab === 'members' ? '#FFFFFF' : Colors.muted}
+                  />
+                  <Text
+                    style={[
+                      styles.toggleBtnText,
+                      subscriptionsSubTab === 'members' && styles.toggleBtnTextActive,
+                    ]}
+                  >
+                    Member Records ({subscriptionCounts.total})
+                  </Text>
+                </TouchableOpacity>
 
-                  return (
-                    <View style={styles.cardsList}>
-                      {subsList.map((sub, idx) => {
-                        const sUser = sub.user || {};
+                <TouchableOpacity
+                  style={[styles.toggleBtn, subscriptionsSubTab === 'tiers' && styles.toggleBtnActive]}
+                  onPress={() => setSubscriptionsSubTab('tiers')}
+                >
+                  <Ionicons
+                    name="pricetags-outline"
+                    size={16}
+                    color={subscriptionsSubTab === 'tiers' ? '#FFFFFF' : Colors.muted}
+                  />
+                  <Text
+                    style={[
+                      styles.toggleBtnText,
+                      subscriptionsSubTab === 'tiers' && styles.toggleBtnTextActive,
+                    ]}
+                  >
+                    Tiers & Pricing ({(subscriptionsData?.tiers || []).length})
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* TAB CONTENT: MEMBERS */}
+              {subscriptionsSubTab === 'members' && (
+                <View style={{ gap: 12 }}>
+                  {/* Payment Status Filter Chips */}
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={{ flexDirection: 'row', gap: 8, paddingVertical: 2 }}
+                  >
+                    {[
+                      { key: 'all', label: 'All Statuses', count: subscriptionCounts.total },
+                      { key: 'paid', label: 'Paid', count: subscriptionCounts.paid },
+                      { key: 'unpaid', label: 'Unpaid / Missing', count: subscriptionCounts.unpaid },
+                    ].map((chip) => {
+                      const isActive = subscriptionPaymentFilter === chip.key;
+                      return (
+                        <TouchableOpacity
+                          key={`sub-pay-filter-${chip.key}`}
+                          style={[styles.dealTabChip, isActive && styles.dealTabChipActive]}
+                          onPress={() => {
+                            setSubscriptionPaymentFilter(chip.key);
+                            setSubscriptionPage(1);
+                          }}
+                          activeOpacity={0.8}
+                        >
+                          <Text
+                            style={[
+                              styles.dealTabChipText,
+                              isActive && styles.dealTabChipTextActive,
+                            ]}
+                          >
+                            {chip.label}
+                          </Text>
+                          <View
+                            style={[
+                              styles.dealTabChipBadge,
+                              isActive && styles.dealTabChipBadgeActive,
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.dealTabChipBadgeText,
+                                isActive && styles.dealTabChipBadgeTextActive,
+                              ]}
+                            >
+                              {chip.count ?? 0}
+                            </Text>
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+
+                  {/* Dynamic Plan Filter Chips */}
+                  {availablePlans.length > 0 && (
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={{ flexDirection: 'row', gap: 8, paddingVertical: 2 }}
+                    >
+                      <TouchableOpacity
+                        style={[
+                          styles.planFilterChip,
+                          subscriptionPlanFilter === 'all' && styles.planFilterChipActive,
+                        ]}
+                        onPress={() => {
+                          setSubscriptionPlanFilter('all');
+                          setSubscriptionPage(1);
+                        }}
+                        activeOpacity={0.8}
+                      >
+                        <Text
+                          style={[
+                            styles.planFilterChipText,
+                            subscriptionPlanFilter === 'all' && styles.planFilterChipTextActive,
+                          ]}
+                        >
+                          All Plans
+                        </Text>
+                      </TouchableOpacity>
+
+                      {availablePlans.map((planSlug) => {
+                        const isActive = subscriptionPlanFilter === planSlug;
+                        const planLabel = planSlug.toUpperCase();
                         return (
-                          <View key={`sub-${sub.id || idx}`} style={styles.subCard}>
-                            <View style={styles.subCardHeader}>
-                              <View>
-                                <Text style={styles.subUserName}>{sUser.name || 'Member'}</Text>
-                                <Text style={styles.subUserEmail}>{sUser.email || ''}</Text>
+                          <TouchableOpacity
+                            key={`sub-plan-filter-${planSlug}`}
+                            style={[styles.planFilterChip, isActive && styles.planFilterChipActive]}
+                            onPress={() => {
+                              setSubscriptionPlanFilter(planSlug);
+                              setSubscriptionPage(1);
+                            }}
+                            activeOpacity={0.8}
+                          >
+                            <Text
+                              style={[
+                                styles.planFilterChipText,
+                                isActive && styles.planFilterChipTextActive,
+                              ]}
+                            >
+                              {planLabel}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                  )}
+
+                  {/* Search Bar - ALWAYS MOUNTED */}
+                  <View style={styles.searchBar}>
+                    <Ionicons name="search" size={18} color="#94A3B8" style={styles.searchIcon} />
+                    <TextInput
+                      style={styles.searchInput}
+                      placeholder="Search subscribers by name, email, plan, txn ID..."
+                      placeholderTextColor="#94A3B8"
+                      value={subscriptionSearch}
+                      onChangeText={handleSubscriptionSearchChange}
+                      returnKeyType="search"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      clearButtonMode="never"
+                    />
+                    {subscriptionSearch.length > 0 && (
+                      <TouchableOpacity
+                        onPress={handleClearSubscriptionSearch}
+                        style={styles.clearSearchBtn}
+                        accessibilityLabel="Clear subscription search text"
+                      >
+                        <Ionicons name="close-circle" size={18} color="#94A3B8" />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  {/* Subscribers List */}
+                  {subscriptionsLoading ? (
+                    <View style={styles.listLoadingBox}>
+                      <ActivityIndicator size="small" color={Colors.forest} />
+                      <Text style={styles.loadingText}>Fetching member subscriptions...</Text>
+                    </View>
+                  ) : filteredSubscribers.length === 0 ? (
+                    <View style={styles.emptyState}>
+                      <Ionicons name="card-outline" size={40} color={Colors.mutedLight} />
+                      <Text style={styles.emptyTitle}>No Subscriber Records Found</Text>
+                      <Text style={styles.emptyText}>
+                        {subscriptionSearch.trim() || subscriptionPaymentFilter !== 'all' || subscriptionPlanFilter !== 'all'
+                          ? 'No subscribers match the current filter or search criteria.'
+                          : 'There are no active or assigned subscriber records.'}
+                      </Text>
+                    </View>
+                  ) : (
+                    <View style={{ gap: 12 }}>
+                      {paginatedSubscribers.map((item) => {
+                        const u = item.user || {};
+                        const userAvatar = u.profile_photo_url || u.avatar_url;
+                        const userInitials = (u.name || 'Member')
+                          .split(' ')
+                          .filter(Boolean)
+                          .map((n) => n[0])
+                          .slice(0, 2)
+                          .join('')
+                          .toUpperCase();
+
+                        return (
+                          <View key={item.id} style={styles.subCardEnhanced}>
+                            {/* Card Top: Member info + Status Badges */}
+                            <View style={styles.subCardTopRow}>
+                              <View style={styles.subMemberProfileRow}>
+                                {userAvatar ? (
+                                  <Image source={{ uri: userAvatar }} style={styles.subAvatarImage} />
+                                ) : (
+                                  <View style={styles.subAvatarInitialWrap}>
+                                    <Text style={styles.subAvatarInitialText}>{userInitials}</Text>
+                                  </View>
+                                )}
+                                <View style={{ flex: 1 }}>
+                                  <Text style={styles.subMemberName} numberOfLines={1}>
+                                    {u.name || 'Anonymous Member'}
+                                  </Text>
+                                  <Text style={styles.subMemberEmail} numberOfLines={1}>
+                                    {u.email || 'No email provided'}
+                                  </Text>
+                                  {Boolean(u.organization || u.company_name) && (
+                                    <Text style={styles.subMemberCompany} numberOfLines={1}>
+                                      {u.organization || u.company_name}
+                                    </Text>
+                                  )}
+                                </View>
                               </View>
-                              <View style={styles.statusCompleted}>
-                                <Text style={styles.statusCompletedText}>
-                                  {String(sUser.account_status || 'Active').toUpperCase()}
-                                </Text>
+
+                              {/* Badges */}
+                              <View style={styles.subBadgeGroup}>
+                                <View style={styles.subPlanBadge}>
+                                  <Text style={styles.subPlanBadgeText}>
+                                    {String(item.plan || 'Member').toUpperCase()}
+                                  </Text>
+                                </View>
+                                {item.isPaid ? (
+                                  <View style={styles.subPaidBadge}>
+                                    <Ionicons name="checkmark-circle" size={12} color="#16A34A" />
+                                    <Text style={styles.subPaidBadgeText}>PAID</Text>
+                                  </View>
+                                ) : (
+                                  <View style={styles.subUnpaidBadge}>
+                                    <Ionicons name="alert-circle" size={12} color="#D97706" />
+                                    <Text style={styles.subUnpaidBadgeText}>UNPAID</Text>
+                                  </View>
+                                )}
                               </View>
                             </View>
-                            <View style={styles.subCardBottom}>
-                              <Text style={styles.subDate}>Tier: {sub.tier_name || 'Angel Member'}</Text>
-                              {Boolean(sub.payment?.amount) && (
-                                <Text style={styles.subAmount}>
-                                  BDT {Number(sub.payment.amount).toLocaleString()}
-                                </Text>
+
+                            {/* Metadata Box */}
+                            <View style={styles.subMetadataBox}>
+                              <View style={styles.subMetaGridRow}>
+                                <View style={styles.subMetaCol}>
+                                  <Text style={styles.subMetaLabel}>AMOUNT</Text>
+                                  <Text style={styles.subMetaValue}>{item.amountDisplay}</Text>
+                                </View>
+                                <View style={styles.subMetaCol}>
+                                  <Text style={styles.subMetaLabel}>PAYMENT METHOD</Text>
+                                  <Text style={styles.subMetaValue}>{item.paymentMethod}</Text>
+                                </View>
+                              </View>
+
+                              <View style={styles.subMetaGridRow}>
+                                <View style={styles.subMetaCol}>
+                                  <Text style={styles.subMetaLabel}>START DATE</Text>
+                                  <Text style={styles.subMetaValue}>
+                                    {item.startDate
+                                      ? new Date(item.startDate).toLocaleDateString('en-US', {
+                                          year: 'numeric',
+                                          month: 'short',
+                                          day: 'numeric',
+                                        })
+                                      : 'N/A'}
+                                  </Text>
+                                </View>
+                                <View style={styles.subMetaCol}>
+                                  <Text style={styles.subMetaLabel}>EXPIRES</Text>
+                                  <Text style={styles.subMetaValue}>
+                                    {item.endDate
+                                      ? new Date(item.endDate).toLocaleDateString('en-US', {
+                                          year: 'numeric',
+                                          month: 'short',
+                                          day: 'numeric',
+                                        })
+                                      : 'Indefinite'}
+                                  </Text>
+                                </View>
+                              </View>
+
+                              {item.transactionId !== 'No payment' && (
+                                <View style={{ marginTop: 4 }}>
+                                  <Text style={styles.subMetaLabel}>TRANSACTION ID</Text>
+                                  <Text style={styles.subMetaValueMono} numberOfLines={1}>
+                                    {item.transactionId}
+                                  </Text>
+                                </View>
                               )}
+                            </View>
+
+                            {/* Card Footer Actions */}
+                            <View style={styles.subCardFooterRow}>
+                              <TouchableOpacity
+                                style={styles.subActionBtnOutline}
+                                onPress={() => handleOpenSubscriptionDetail(item)}
+                                activeOpacity={0.8}
+                              >
+                                <Ionicons name="eye-outline" size={15} color="#0A5554" />
+                                <Text style={styles.subActionBtnOutlineText}>View Details</Text>
+                              </TouchableOpacity>
+
+                              <TouchableOpacity
+                                style={styles.subActionBtnSolid}
+                                onPress={() => handleOpenEditModal(u)}
+                                activeOpacity={0.8}
+                              >
+                                <Ionicons name="person-outline" size={15} color="#FFFFFF" />
+                                <Text style={styles.subActionBtnSolidText}>Manage Member</Text>
+                              </TouchableOpacity>
                             </View>
                           </View>
                         );
                       })}
+
+                      {/* Pagination Controls */}
+                      {subscriptionTotalPages > 1 && (
+                        <View style={styles.paginationContainer}>
+                          <TouchableOpacity
+                            style={[
+                              styles.paginationBtn,
+                              subscriptionPage <= 1 && styles.paginationBtnDisabled,
+                            ]}
+                            onPress={() => {
+                              if (subscriptionPage > 1) {
+                                setSubscriptionPage((prev) => Math.max(1, prev - 1));
+                              }
+                            }}
+                            disabled={subscriptionPage <= 1}
+                          >
+                            <Ionicons
+                              name="chevron-back"
+                              size={16}
+                              color={subscriptionPage <= 1 ? '#9CA3AF' : '#0A5554'}
+                            />
+                            <Text
+                              style={[
+                                styles.paginationBtnText,
+                                subscriptionPage <= 1 && styles.paginationBtnTextDisabled,
+                              ]}
+                            >
+                              Previous
+                            </Text>
+                          </TouchableOpacity>
+
+                          <View style={styles.paginationInfoBox}>
+                            <Text style={styles.paginationInfoText}>
+                              Page {subscriptionPage} of {subscriptionTotalPages}
+                            </Text>
+                          </View>
+
+                          <TouchableOpacity
+                            style={[
+                              styles.paginationBtn,
+                              subscriptionPage >= subscriptionTotalPages && styles.paginationBtnDisabled,
+                            ]}
+                            onPress={() => {
+                              if (subscriptionPage < subscriptionTotalPages) {
+                                setSubscriptionPage((prev) => Math.min(subscriptionTotalPages, prev + 1));
+                              }
+                            }}
+                            disabled={subscriptionPage >= subscriptionTotalPages}
+                          >
+                            <Text
+                              style={[
+                                styles.paginationBtnText,
+                                subscriptionPage >= subscriptionTotalPages && styles.paginationBtnTextDisabled,
+                              ]}
+                            >
+                              Next
+                            </Text>
+                            <Ionicons
+                              name="chevron-forward"
+                              size={16}
+                              color={
+                                subscriptionPage >= subscriptionTotalPages ? '#9CA3AF' : '#0A5554'
+                              }
+                            />
+                          </TouchableOpacity>
+                        </View>
+                      )}
                     </View>
-                  );
-                })()
+                  )}
+                </View>
+              )}
+
+              {/* TAB CONTENT: TIERS & PRICING */}
+              {subscriptionsSubTab === 'tiers' && (
+                <View style={{ gap: 14 }}>
+                  {/* Notice Banner */}
+                  <View style={styles.tierNoticeBanner}>
+                    <Ionicons name="information-circle" size={18} color="#0A5554" />
+                    <Text style={styles.tierNoticeText}>
+                      These tiers define the public membership packages and annual pricing displayed to investors and members.
+                    </Text>
+                  </View>
+
+                  {/* Tiers List */}
+                  {subscriptionsLoading ? (
+                    <View style={styles.listLoadingBox}>
+                      <ActivityIndicator size="small" color={Colors.forest} />
+                      <Text style={styles.loadingText}>Fetching membership tiers...</Text>
+                    </View>
+                  ) : (subscriptionsData?.tiers || []).length === 0 ? (
+                    <View style={styles.emptyState}>
+                      <Ionicons name="pricetags-outline" size={40} color={Colors.mutedLight} />
+                      <Text style={styles.emptyTitle}>No Membership Tiers Configured</Text>
+                      <Text style={styles.emptyText}>
+                        Configure tiers in the backend or run database seeders.
+                      </Text>
+                    </View>
+                  ) : (
+                    <View style={{ gap: 14 }}>
+                      {(subscriptionsData?.tiers || []).map((tier) => {
+                        const includedLines = (tier.features_included || '')
+                          .split('\n')
+                          .map((f) => f.trim())
+                          .filter(Boolean);
+                        const excludedLines = (tier.features_excluded || '')
+                          .split('\n')
+                          .map((f) => f.trim())
+                          .filter(Boolean);
+
+                        return (
+                          <View
+                            key={`tier-card-${tier.id}`}
+                            style={[
+                              styles.tierCardEnhanced,
+                              tier.is_highlighted && styles.tierCardHighlighted,
+                            ]}
+                          >
+                            {/* Tier Header */}
+                            <View style={styles.tierCardHeader}>
+                              <View style={{ flex: 1 }}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                  <Text style={styles.tierNameTitle}>{tier.name}</Text>
+                                  <View style={styles.tierSlugBadge}>
+                                    <Text style={styles.tierSlugBadgeText}>{tier.slug}</Text>
+                                  </View>
+                                </View>
+                                <Text style={styles.tierSortOrderText}>
+                                  Display Order: #{tier.sort_order ?? 1}
+                                </Text>
+                              </View>
+
+                              <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                                {Boolean(tier.is_highlighted) && (
+                                  <View style={styles.tierPopularBadge}>
+                                    <Ionicons name="star" size={11} color="#B45309" />
+                                    <Text style={styles.tierPopularBadgeText}>MOST POPULAR</Text>
+                                  </View>
+                                )}
+                                <View
+                                  style={[
+                                    styles.tierStatusBadge,
+                                    tier.is_active ? styles.tierStatusActive : styles.tierStatusInactive,
+                                  ]}
+                                >
+                                  <Text
+                                    style={[
+                                      styles.tierStatusBadgeText,
+                                      tier.is_active
+                                        ? styles.tierStatusActiveText
+                                        : styles.tierStatusInactiveText,
+                                    ]}
+                                  >
+                                    {tier.is_active ? 'ACTIVE' : 'INACTIVE'}
+                                  </Text>
+                                </View>
+                              </View>
+                            </View>
+
+                            {/* Price Section */}
+                            <View style={styles.tierPriceContainer}>
+                              <Text style={styles.tierPriceDisplay}>
+                                ${Number(tier.price_yearly || 0).toLocaleString(undefined, {
+                                  minimumFractionDigits: 0,
+                                  maximumFractionDigits: 2,
+                                })}
+                              </Text>
+                              <Text style={styles.tierPricePeriod}>/ year (USD)</Text>
+                            </View>
+
+                            {/* Features Included */}
+                            <View style={styles.tierFeaturesWrap}>
+                              <Text style={styles.tierFeatureSectionTitle}>Included Features</Text>
+                              {includedLines.length === 0 ? (
+                                <Text style={styles.tierNoFeaturesText}>None specified</Text>
+                              ) : (
+                                includedLines.map((feat, fIdx) => (
+                                  <View key={`inc-${fIdx}`} style={styles.tierFeatureRow}>
+                                    <Ionicons name="checkmark-circle" size={15} color="#16A34A" />
+                                    <Text style={styles.tierFeatureText}>{feat}</Text>
+                                  </View>
+                                ))
+                              )}
+                            </View>
+
+                            {/* Features Excluded (if any) */}
+                            {excludedLines.length > 0 && (
+                              <View style={styles.tierFeaturesWrap}>
+                                <Text style={[styles.tierFeatureSectionTitle, { color: '#94A3B8' }]}>
+                                  Excluded Features
+                                </Text>
+                                {excludedLines.map((feat, fIdx) => (
+                                  <View key={`exc-${fIdx}`} style={styles.tierFeatureRow}>
+                                    <Ionicons name="close-circle" size={15} color="#94A3B8" />
+                                    <Text style={[styles.tierFeatureText, { color: '#64748B' }]}>{feat}</Text>
+                                  </View>
+                                ))}
+                              </View>
+                            )}
+
+                            {/* Edit Action Button */}
+                            <TouchableOpacity
+                              style={styles.tierEditBtn}
+                              onPress={() => handleOpenEditTier(tier)}
+                              activeOpacity={0.8}
+                            >
+                              <Ionicons name="create-outline" size={16} color="#0A5554" />
+                              <Text style={styles.tierEditBtnText}>Edit Tier & Pricing</Text>
+                            </TouchableOpacity>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  )}
+                </View>
               )}
             </View>
           )}
@@ -17858,6 +18630,366 @@ export default function AdminScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* MODAL: SUBSCRIPTION DETAIL */}
+      <Modal
+        visible={subscriptionDetailModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setSubscriptionDetailModalVisible(false)}
+      >
+        <SafeAreaView style={styles.subModalSafe}>
+          <View style={styles.subModalCard}>
+            {/* Header */}
+            <View style={styles.subModalHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.subModalTitle}>Subscription Record</Text>
+                <Text style={styles.subModalSub}>
+                  {selectedSubscriptionDetail?.user?.name || 'Member Details'}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.subModalCloseBtn}
+                onPress={() => setSubscriptionDetailModalVisible(false)}
+                accessibilityLabel="Close Subscription Details Modal"
+              >
+                <Ionicons name="close" size={22} color="#475569" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              style={{ flex: 1 }}
+              contentContainerStyle={{ padding: 16, gap: 16 }}
+              showsVerticalScrollIndicator={false}
+            >
+              {/* Member Card Box */}
+              <View style={styles.subDetailBox}>
+                <Text style={styles.subDetailBoxHeading}>MEMBER PROFILE</Text>
+                <View style={styles.subDetailRow}>
+                  <Text style={styles.subDetailLabel}>Full Name</Text>
+                  <Text style={styles.subDetailValue}>
+                    {selectedSubscriptionDetail?.user?.name || 'N/A'}
+                  </Text>
+                </View>
+                <View style={styles.subDetailRow}>
+                  <Text style={styles.subDetailLabel}>Email</Text>
+                  <Text style={styles.subDetailValue}>
+                    {selectedSubscriptionDetail?.user?.email || 'N/A'}
+                  </Text>
+                </View>
+                <View style={styles.subDetailRow}>
+                  <Text style={styles.subDetailLabel}>Phone</Text>
+                  <Text style={styles.subDetailValue}>
+                    {selectedSubscriptionDetail?.user?.phone || 'N/A'}
+                  </Text>
+                </View>
+                <View style={styles.subDetailRow}>
+                  <Text style={styles.subDetailLabel}>Company / Org</Text>
+                  <Text style={styles.subDetailValue}>
+                    {selectedSubscriptionDetail?.user?.organization ||
+                      selectedSubscriptionDetail?.user?.company_name ||
+                      'N/A'}
+                  </Text>
+                </View>
+                <View style={styles.subDetailRow}>
+                  <Text style={styles.subDetailLabel}>Country</Text>
+                  <Text style={styles.subDetailValue}>
+                    {selectedSubscriptionDetail?.user?.primary_country ||
+                      selectedSubscriptionDetail?.user?.country ||
+                      'N/A'}
+                  </Text>
+                </View>
+                <View style={styles.subDetailRow}>
+                  <Text style={styles.subDetailLabel}>Account Status</Text>
+                  <Text style={[styles.subDetailValue, { textTransform: 'capitalize' }]}>
+                    {selectedSubscriptionDetail?.user?.account_status || 'free'}
+                  </Text>
+                </View>
+              </View>
+
+              {/* Subscription Specifics Box */}
+              <View style={styles.subDetailBox}>
+                <Text style={styles.subDetailBoxHeading}>SUBSCRIPTION DETAILS</Text>
+                <View style={styles.subDetailRow}>
+                  <Text style={styles.subDetailLabel}>Plan / Tier</Text>
+                  <Text style={[styles.subDetailValue, { fontWeight: '800', color: '#0A5554' }]}>
+                    {String(selectedSubscriptionDetail?.plan || 'Member').toUpperCase()}
+                  </Text>
+                </View>
+                <View style={styles.subDetailRow}>
+                  <Text style={styles.subDetailLabel}>Payment Status</Text>
+                  <View
+                    style={
+                      selectedSubscriptionDetail?.isPaid
+                        ? styles.subPaidBadge
+                        : styles.subUnpaidBadge
+                    }
+                  >
+                    <Ionicons
+                      name={
+                        selectedSubscriptionDetail?.isPaid
+                          ? 'checkmark-circle'
+                          : 'alert-circle'
+                      }
+                      size={12}
+                      color={selectedSubscriptionDetail?.isPaid ? '#16A34A' : '#D97706'}
+                    />
+                    <Text
+                      style={
+                        selectedSubscriptionDetail?.isPaid
+                          ? styles.subPaidBadgeText
+                          : styles.subUnpaidBadgeText
+                      }
+                    >
+                      {selectedSubscriptionDetail?.isPaid ? 'PAID' : 'UNPAID / MISSING'}
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.subDetailRow}>
+                  <Text style={styles.subDetailLabel}>Amount</Text>
+                  <Text style={[styles.subDetailValue, { fontWeight: '700' }]}>
+                    {selectedSubscriptionDetail?.amountDisplay || 'N/A'}
+                  </Text>
+                </View>
+                <View style={styles.subDetailRow}>
+                  <Text style={styles.subDetailLabel}>Start / Joined</Text>
+                  <Text style={styles.subDetailValue}>
+                    {selectedSubscriptionDetail?.startDate
+                      ? new Date(selectedSubscriptionDetail.startDate).toLocaleDateString('en-US', {
+                          year: 'numeric',
+                          month: 'short',
+                          day: 'numeric',
+                        })
+                      : 'N/A'}
+                  </Text>
+                </View>
+                <View style={styles.subDetailRow}>
+                  <Text style={styles.subDetailLabel}>End / Expiry</Text>
+                  <Text style={styles.subDetailValue}>
+                    {selectedSubscriptionDetail?.endDate
+                      ? new Date(selectedSubscriptionDetail.endDate).toLocaleDateString('en-US', {
+                          year: 'numeric',
+                          month: 'short',
+                          day: 'numeric',
+                        })
+                      : 'Indefinite'}
+                  </Text>
+                </View>
+              </View>
+
+              {/* Payment / Gateway Box */}
+              <View style={styles.subDetailBox}>
+                <Text style={styles.subDetailBoxHeading}>TRANSACTION & GATEWAY</Text>
+                <View style={styles.subDetailRow}>
+                  <Text style={styles.subDetailLabel}>Transaction ID</Text>
+                  <Text style={styles.subDetailValueMono}>
+                    {selectedSubscriptionDetail?.transactionId || 'No payment'}
+                  </Text>
+                </View>
+                <View style={styles.subDetailRow}>
+                  <Text style={styles.subDetailLabel}>Gateway Method</Text>
+                  <Text style={styles.subDetailValue}>
+                    {selectedSubscriptionDetail?.paymentMethod || 'N/A'}
+                  </Text>
+                </View>
+                {Boolean(selectedSubscriptionDetail?.payment?.payment_date) && (
+                  <View style={styles.subDetailRow}>
+                    <Text style={styles.subDetailLabel}>Payment Date</Text>
+                    <Text style={styles.subDetailValue}>
+                      {new Date(
+                        selectedSubscriptionDetail.payment.payment_date
+                      ).toLocaleDateString('en-US', {
+                        year: 'numeric',
+                        month: 'short',
+                        day: 'numeric',
+                      })}
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              {/* Quick Actions */}
+              <TouchableOpacity
+                style={styles.subModalManageBtn}
+                onPress={() => {
+                  const targetUser = selectedSubscriptionDetail?.user;
+                  setSubscriptionDetailModalVisible(false);
+                  if (targetUser) {
+                    handleOpenEditModal(targetUser);
+                  }
+                }}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="create-outline" size={17} color="#FFFFFF" />
+                <Text style={styles.subModalManageBtnText}>Manage Member Profile</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      {/* MODAL: EDIT MEMBERSHIP TIER & PRICING */}
+      <Modal
+        visible={editTierModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setEditTierModalVisible(false)}
+      >
+        <SafeAreaView style={styles.subModalSafe}>
+          <View style={styles.subModalCard}>
+            {/* Header */}
+            <View style={styles.subModalHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.subModalTitle}>Edit Tier & Pricing</Text>
+                <Text style={styles.subModalSub}>
+                  {tierFormData.name || selectedTierForEdit?.name || 'Tier Details'}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.subModalCloseBtn}
+                onPress={() => setEditTierModalVisible(false)}
+                disabled={tierSaving}
+                accessibilityLabel="Close Edit Tier Modal"
+              >
+                <Ionicons name="close" size={22} color="#475569" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              style={{ flex: 1 }}
+              contentContainerStyle={{ padding: 16, gap: 14 }}
+              showsVerticalScrollIndicator={false}
+            >
+              {/* Name */}
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>
+                  Tier Display Name <Text style={{ color: '#DC2626' }}>*</Text>
+                </Text>
+                <TextInput
+                  style={styles.formInput}
+                  placeholder="e.g. Core Angel"
+                  value={tierFormData.name}
+                  onChangeText={(text) => setTierFormData((prev) => ({ ...prev, name: text }))}
+                />
+              </View>
+
+              {/* Yearly Price */}
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>
+                  Yearly Price (USD) <Text style={{ color: '#DC2626' }}>*</Text>
+                </Text>
+                <TextInput
+                  style={styles.formInput}
+                  placeholder="399.00"
+                  keyboardType="numeric"
+                  value={tierFormData.price_yearly}
+                  onChangeText={(text) =>
+                    setTierFormData((prev) => ({ ...prev, price_yearly: text }))
+                  }
+                />
+              </View>
+
+              {/* Sort Order */}
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>Sort Order (Display sequence)</Text>
+                <TextInput
+                  style={styles.formInput}
+                  placeholder="1"
+                  keyboardType="numeric"
+                  value={String(tierFormData.sort_order)}
+                  onChangeText={(text) =>
+                    setTierFormData((prev) => ({ ...prev, sort_order: text }))
+                  }
+                />
+              </View>
+
+              {/* Switch Toggles: Active & Popular */}
+              <View style={styles.tierSwitchRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.tierSwitchLabel}>Active Tier</Text>
+                  <Text style={styles.tierSwitchSub}>Visible in membership selections</Text>
+                </View>
+                <Switch
+                  value={tierFormData.is_active}
+                  onValueChange={(val) =>
+                    setTierFormData((prev) => ({ ...prev, is_active: val }))
+                  }
+                  trackColor={{ false: '#CBD5E1', true: '#0A5554' }}
+                  thumbColor="#FFFFFF"
+                />
+              </View>
+
+              <View style={styles.tierSwitchRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.tierSwitchLabel}>Highlighted / Most Popular</Text>
+                  <Text style={styles.tierSwitchSub}>Highlights package on the pricing table</Text>
+                </View>
+                <Switch
+                  value={tierFormData.is_highlighted}
+                  onValueChange={(val) =>
+                    setTierFormData((prev) => ({ ...prev, is_highlighted: val }))
+                  }
+                  trackColor={{ false: '#CBD5E1', true: '#F59E0B' }}
+                  thumbColor="#FFFFFF"
+                />
+              </View>
+
+              {/* Included Features */}
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>Included Features (One per line)</Text>
+                <TextInput
+                  style={[styles.formInput, { height: 110, textAlignVertical: 'top' }]}
+                  placeholder="Access to deal pipeline&#10;Syndicate voting&#10;Founder Q&A webinars"
+                  multiline
+                  numberOfLines={4}
+                  value={tierFormData.features_included}
+                  onChangeText={(text) =>
+                    setTierFormData((prev) => ({ ...prev, features_included: text }))
+                  }
+                />
+              </View>
+
+              {/* Excluded Features */}
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>Excluded Features (One per line, optional)</Text>
+                <TextInput
+                  style={[styles.formInput, { height: 80, textAlignVertical: 'top' }]}
+                  placeholder="No board seat access&#10;No custom SPV structures"
+                  multiline
+                  numberOfLines={3}
+                  value={tierFormData.features_excluded}
+                  onChangeText={(text) =>
+                    setTierFormData((prev) => ({ ...prev, features_excluded: text }))
+                  }
+                />
+              </View>
+
+              {/* Action Buttons */}
+              <View style={styles.subModalBtnRow}>
+                <TouchableOpacity
+                  style={styles.subModalCancelBtn}
+                  onPress={() => setEditTierModalVisible(false)}
+                  disabled={tierSaving}
+                >
+                  <Text style={styles.subModalCancelBtnText}>Cancel</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.subModalSaveBtn}
+                  onPress={handleSaveTier}
+                  disabled={tierSaving}
+                >
+                  {tierSaving ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.subModalSaveBtnText}>Save Changes</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -22892,6 +24024,558 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+
+  // ==========================================
+  // SUBSCRIPTIONS & TIERS MANAGEMENT STYLES
+  // ==========================================
+  subKpiRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 4,
+  },
+  subKpiCard: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: Radii.md,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 12,
+    borderLeftWidth: 4,
+  },
+  subKpiLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+  subKpiValue: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginTop: 4,
+  },
+  subKpiHint: {
+    fontSize: 10,
+    color: '#94A3B8',
+    marginTop: 2,
+    lineHeight: 13,
+  },
+  planFilterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  planFilterChipActive: {
+    backgroundColor: '#0A5554',
+    borderColor: '#0A5554',
+  },
+  planFilterChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  planFilterChipTextActive: {
+    color: '#FFFFFF',
+  },
+  clearSearchBtn: {
+    padding: 4,
+  },
+  subCardEnhanced: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: Radii.md,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 14,
+    gap: 12,
+    ...Shadows.sm,
+  },
+  subCardTopRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  subMemberProfileRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  subAvatarImage: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#E2E8F0',
+  },
+  subAvatarInitialWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#E6F4F1',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  subAvatarInitialText: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0A5554',
+  },
+  subMemberName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  subMemberEmail: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  subMemberCompany: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#0A5554',
+    marginTop: 2,
+  },
+  subBadgeGroup: {
+    alignItems: 'flex-end',
+    gap: 4,
+  },
+  subPlanBadge: {
+    backgroundColor: '#E6F4F1',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#CCFBF1',
+  },
+  subPlanBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#0A5554',
+    letterSpacing: 0.4,
+  },
+  subPaidBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+  },
+  subPaidBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#16A34A',
+    letterSpacing: 0.3,
+  },
+  subUnpaidBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  subUnpaidBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#D97706',
+    letterSpacing: 0.3,
+  },
+  subMetadataBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 8,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+    gap: 8,
+  },
+  subMetaGridRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  subMetaCol: {
+    flex: 1,
+  },
+  subMetaLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#94A3B8',
+    letterSpacing: 0.4,
+    marginBottom: 2,
+    textTransform: 'uppercase',
+  },
+  subMetaValue: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#1E293B',
+  },
+  subMetaValueMono: {
+    fontSize: 11,
+    fontWeight: '600',
+    fontFamily: 'monospace',
+    color: '#475569',
+  },
+  subCardFooterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  subActionBtnOutline: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#0A5554',
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  subActionBtnOutlineText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0A5554',
+  },
+  subActionBtnSolid: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#0A5554',
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  subActionBtnSolidText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  tierNoticeBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    backgroundColor: '#E6F4F1',
+    borderWidth: 1,
+    borderColor: '#B2DFDB',
+    borderRadius: Radii.md,
+    padding: 12,
+  },
+  tierNoticeText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 17,
+    color: '#0A5554',
+    fontWeight: '500',
+  },
+  tierCardEnhanced: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: Radii.md,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 16,
+    gap: 14,
+    ...Shadows.sm,
+  },
+  tierCardHighlighted: {
+    borderColor: '#F59E0B',
+    borderWidth: 2,
+  },
+  tierCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  tierNameTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  tierSlugBadge: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  tierSlugBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    fontFamily: 'monospace',
+    color: '#64748B',
+  },
+  tierSortOrderText: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 3,
+  },
+  tierPopularBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  tierPopularBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#B45309',
+    letterSpacing: 0.5,
+  },
+  tierStatusBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: 6,
+  },
+  tierStatusActive: {
+    backgroundColor: '#DCFCE7',
+  },
+  tierStatusInactive: {
+    backgroundColor: '#F1F5F9',
+  },
+  tierStatusBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  tierStatusActiveText: {
+    color: '#16A34A',
+  },
+  tierStatusInactiveText: {
+    color: '#64748B',
+  },
+  tierPriceContainer: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 6,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  tierPriceDisplay: {
+    fontSize: 24,
+    fontWeight: '900',
+    color: '#0F172A',
+  },
+  tierPricePeriod: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  tierFeaturesWrap: {
+    gap: 6,
+  },
+  tierFeatureSectionTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#475569',
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
+    marginBottom: 2,
+  },
+  tierNoFeaturesText: {
+    fontSize: 12,
+    color: '#94A3B8',
+    fontStyle: 'italic',
+  },
+  tierFeatureRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  tierFeatureText: {
+    fontSize: 12,
+    color: '#334155',
+    lineHeight: 17,
+    flex: 1,
+  },
+  tierEditBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#E6F4F1',
+    borderWidth: 1,
+    borderColor: '#0A5554',
+    paddingVertical: 10,
+    borderRadius: 8,
+    marginTop: 4,
+  },
+  tierEditBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0A5554',
+  },
+  subModalSafe: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  subModalCard: {
+    width: '100%',
+    maxHeight: '90%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: Radii.lg,
+    overflow: 'hidden',
+    ...Shadows.lg,
+  },
+  subModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+  },
+  subModalTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  subModalSub: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  subModalCloseBtn: {
+    padding: 4,
+  },
+  subDetailBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 14,
+    gap: 10,
+  },
+  subDetailBoxHeading: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginBottom: 2,
+  },
+  subDetailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  subDetailLabel: {
+    fontSize: 12,
+    color: '#64748B',
+  },
+  subDetailValue: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#0F172A',
+    textAlign: 'right',
+    flex: 1,
+  },
+  subDetailValueMono: {
+    fontSize: 11,
+    fontWeight: '600',
+    fontFamily: 'monospace',
+    color: '#475569',
+    textAlign: 'right',
+    flex: 1,
+  },
+  subModalManageBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#0A5554',
+    paddingVertical: 12,
+    borderRadius: 10,
+    marginTop: 4,
+  },
+  subModalManageBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  tierSwitchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    paddingHorizontal: 2,
+  },
+  tierSwitchLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  tierSwitchSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  subModalBtnRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 10,
+    marginBottom: 8,
+  },
+  subModalCancelBtn: {
+    flex: 1,
+    backgroundColor: '#F1F5F9',
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  subModalCancelBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  subModalSaveBtn: {
+    flex: 1.5,
+    backgroundColor: '#0A5554',
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  subModalSaveBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  formGroup: {
+    gap: 6,
   },
 });
 
