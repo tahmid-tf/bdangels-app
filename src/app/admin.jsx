@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import * as DocumentPicker from 'expo-document-picker';
 import { Colors, Radii, Shadows } from '../constants/theme';
 import { initAuth, logoutUser } from '../services/auth';
 import AdminSidebar from '../components/admin/AdminSidebar';
@@ -336,6 +337,7 @@ export default function AdminScreen() {
     status: 'published',
     published_at: '',
   });
+  const [publicationPdfFile, setPublicationPdfFile] = useState(null);
 
   const [deletePublicationModalVisible, setDeletePublicationModalVisible] = useState(false);
   const [selectedPublicationForDelete, setSelectedPublicationForDelete] = useState(null);
@@ -1613,7 +1615,36 @@ export default function AdminScreen() {
     setViewPublicationModalVisible(true);
   };
 
+  const handlePickPublicationPdf = async () => {
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        type: 'application/pdf',
+        copyToCacheDirectory: true,
+      });
+
+      if (!res.canceled && res.assets && res.assets.length > 0) {
+        const file = res.assets[0];
+        if (file.size && file.size > 20 * 1024 * 1024) {
+          Alert.alert(
+            'File Limit Exceeded',
+            'The selected PDF is larger than 20 MB. Please choose a smaller file.'
+          );
+          return;
+        }
+        setPublicationPdfFile(file);
+        setPublicationFormData((prev) => ({
+          ...prev,
+          pdf_original_name: file.name || prev.pdf_original_name,
+        }));
+      }
+    } catch (err) {
+      console.log('Error selecting publication PDF:', err);
+      Alert.alert('Notice', 'Could not open document picker.');
+    }
+  };
+
   const handleOpenCreatePublication = () => {
+    setPublicationPdfFile(null);
     setPublicationFormData({
       title: '',
       category: 'Research',
@@ -1632,6 +1663,17 @@ export default function AdminScreen() {
       Alert.alert('Validation Error', 'Publication title is required.');
       return;
     }
+    if (
+      !publicationPdfFile &&
+      !publicationFormData.pdf_original_name.trim() &&
+      !publicationFormData.pdf_path.trim()
+    ) {
+      Alert.alert(
+        'PDF File Required',
+        'Please choose a PDF document file to upload for this publication.'
+      );
+      return;
+    }
 
     setPublicationSaving(true);
     try {
@@ -1640,11 +1682,13 @@ export default function AdminScreen() {
         category: publicationFormData.category || 'Research',
         excerpt: publicationFormData.excerpt.trim(),
         pdf_original_name:
+          publicationPdfFile?.name ||
           publicationFormData.pdf_original_name.trim() ||
           `${publicationFormData.title.trim().toLowerCase().replace(/\s+/g, '-')}.pdf`,
-        pdf_path: publicationFormData.pdf_path.trim() || 'publications/report.pdf',
+        pdf_path: publicationFormData.pdf_path.trim() || '',
         status: publicationFormData.status || 'published',
         published_at: publicationFormData.published_at || null,
+        pdfFile: publicationPdfFile,
       };
 
       const res = await createAdminPublication(authToken, payload);
@@ -1674,8 +1718,9 @@ export default function AdminScreen() {
               : prev.archived || 0,
         }));
 
+        setPublicationPdfFile(null);
         setCreatePublicationModalVisible(false);
-        Alert.alert('Success', 'Publication added successfully!');
+        Alert.alert('Success', 'Publication created and PDF uploaded successfully!');
 
         // Silent background sync
         loadPublications(authToken, publicationSearch, publicationStatusFilter, 1, {
@@ -1697,6 +1742,7 @@ export default function AdminScreen() {
 
   const handleOpenEditPublication = (pub) => {
     setEditingPublication(pub);
+    setPublicationPdfFile(null);
     setPublicationFormData({
       title: pub.title || '',
       category: pub.category || 'Research',
@@ -1723,12 +1769,14 @@ export default function AdminScreen() {
         category: publicationFormData.category || 'Research',
         excerpt: publicationFormData.excerpt.trim(),
         pdf_original_name:
+          publicationPdfFile?.name ||
           publicationFormData.pdf_original_name.trim() ||
           editingPublication.pdf_original_name,
         pdf_path:
           publicationFormData.pdf_path.trim() || editingPublication.pdf_path,
         status: publicationFormData.status || 'published',
         published_at: publicationFormData.published_at || null,
+        pdfFile: publicationPdfFile,
       };
 
       const res = await updateAdminPublication(authToken, editingPublication.id, payload);
@@ -1744,6 +1792,7 @@ export default function AdminScreen() {
           setSelectedPublicationForView(updatedPub);
         }
 
+        setPublicationPdfFile(null);
         setEditPublicationModalVisible(false);
         Alert.alert('Success', 'Publication updated successfully!');
 
@@ -6796,13 +6845,89 @@ export default function AdminScreen() {
                 </Text>
               </View>
 
-              {/* Section 2: PDF Document Details */}
-              <Text style={styles.formSectionHeader}>PDF DOCUMENT DETAILS</Text>
+              {/* Section 2: PDF Document Upload & Details */}
+              <Text style={styles.formSectionHeader}>PDF DOCUMENT UPLOAD</Text>
 
               <View style={styles.formField}>
                 <Text style={styles.fieldLabel}>
-                  PDF Document Name <Text style={styles.requiredStar}>*</Text>
+                  PDF Document File{' '}
+                  {createPublicationModalVisible && <Text style={styles.requiredStar}>*</Text>}
                 </Text>
+
+                {/* If editing and has existing file */}
+                {Boolean(editingPublication?.pdf_original_name) && !publicationPdfFile && (
+                  <View style={styles.pubCurrentFileBanner}>
+                    <View style={styles.pubCurrentFileLeft}>
+                      <Ionicons name="document-text" size={18} color="#0A5554" />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.pubCurrentFileTitle}>Current Uploaded File</Text>
+                        <Text style={styles.pubCurrentFileName} numberOfLines={1}>
+                          {editingPublication.pdf_original_name}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                )}
+
+                {/* Selected File Card */}
+                {publicationPdfFile ? (
+                  <View style={styles.pubPickedFileCard}>
+                    <View style={styles.pubPickedFileIconWrap}>
+                      <Ionicons name="document-text" size={24} color="#DC2626" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.pubPickedFileName} numberOfLines={1}>
+                        {publicationPdfFile.name || 'document.pdf'}
+                      </Text>
+                      <Text style={styles.pubPickedFileSize}>
+                        {publicationPdfFile.size
+                          ? `${(publicationPdfFile.size / (1024 * 1024)).toFixed(2)} MB • Ready to upload`
+                          : 'Ready to upload'}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.pubChangeFileBtn}
+                      onPress={handlePickPublicationPdf}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="swap-horizontal" size={14} color="#0A5554" />
+                      <Text style={styles.pubChangeFileText}>Replace</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  /* Upload Box / Trigger */
+                  <TouchableOpacity
+                    style={styles.pubUploadDropzone}
+                    onPress={handlePickPublicationPdf}
+                    activeOpacity={0.8}
+                  >
+                    <View style={styles.pubUploadDropzoneIconWrap}>
+                      <Ionicons name="cloud-upload-outline" size={24} color="#0A5554" />
+                    </View>
+                    <Text style={styles.pubUploadDropzoneTitle}>
+                      {editPublicationModalVisible
+                        ? 'Upload New PDF Document'
+                        : 'Choose PDF Document'}
+                    </Text>
+                    <Text style={styles.pubUploadDropzoneSubtitle}>
+                      PDF only, maximum 20 MB. Uploads directly to research storage.
+                    </Text>
+                    <View style={styles.pubUploadDropzoneBtn}>
+                      <Ionicons name="attach-outline" size={15} color="#FFFFFF" />
+                      <Text style={styles.pubUploadDropzoneBtnText}>Browse Files</Text>
+                    </View>
+                  </TouchableOpacity>
+                )}
+                <Text style={styles.fieldHint}>
+                  {editPublicationModalVisible
+                    ? 'Uploading a new file replaces the existing PDF. Leave unselected to keep current file.'
+                    : 'PDF only, maximum 20 MB. The file will be available for download.'}
+                </Text>
+              </View>
+
+              {/* Document Display Name */}
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>Document Display Name</Text>
                 <TextInput
                   style={styles.fieldInput}
                   value={publicationFormData.pdf_original_name}
@@ -6814,23 +6939,6 @@ export default function AdminScreen() {
                 />
                 <Text style={styles.fieldHint}>
                   The display filename presented to users when downloading the PDF.
-                </Text>
-              </View>
-
-              <View style={styles.formField}>
-                <Text style={styles.fieldLabel}>Storage Path / Download URL</Text>
-                <TextInput
-                  style={styles.fieldInput}
-                  value={publicationFormData.pdf_path}
-                  onChangeText={(val) =>
-                    setPublicationFormData((prev) => ({ ...prev, pdf_path: val }))
-                  }
-                  placeholder="e.g. publications/report.pdf or https://..."
-                  placeholderTextColor="#94A3B8"
-                  autoCapitalize="none"
-                />
-                <Text style={styles.fieldHint}>
-                  Server storage location or remote file URL for downloading.
                 </Text>
               </View>
 
@@ -9669,5 +9777,124 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     color: '#15803D',
     marginTop: 2,
+  },
+  pubCurrentFileBanner: {
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 10,
+  },
+  pubCurrentFileLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  pubCurrentFileTitle: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#166534',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  pubCurrentFileName: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#15803D',
+    marginTop: 1,
+  },
+  pubPickedFileCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#0A5554',
+    borderRadius: 12,
+    padding: 12,
+    gap: 10,
+  },
+  pubPickedFileIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    backgroundColor: '#FEE2E2',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pubPickedFileName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  pubPickedFileSize: {
+    fontSize: 11,
+    color: '#059669',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  pubChangeFileBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#E6F4F1',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#B4E6DA',
+  },
+  pubChangeFileText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0A5554',
+  },
+  pubUploadDropzone: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: '#CBD5E1',
+    borderRadius: 12,
+    paddingVertical: 20,
+    paddingHorizontal: 16,
+    gap: 6,
+  },
+  pubUploadDropzoneIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#E6F4F1',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  pubUploadDropzoneTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  pubUploadDropzoneSubtitle: {
+    fontSize: 11,
+    color: '#64748B',
+    textAlign: 'center',
+    maxWidth: 240,
+    lineHeight: 16,
+  },
+  pubUploadDropzoneBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#0A5554',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginTop: 6,
+  },
+  pubUploadDropzoneBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
 });

@@ -660,11 +660,104 @@ export async function fetchAdminPublication(token, publicationId) {
  * Create new publication via POST /api/admin/publications
  */
 export async function createAdminPublication(token, publicationData) {
+  const { pdfFile, ...fields } = publicationData;
+  const targetUrl = `${API_BASE_URL}/admin/publications`;
+
+  if (Platform.OS !== 'web' && pdfFile?.uri) {
+    try {
+      const uploadRes = await FileSystem.uploadAsync(targetUrl, pdfFile.uri, {
+        fieldName: 'pdf',
+        httpMethod: 'POST',
+        uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+        mimeType: pdfFile.mimeType || 'application/pdf',
+        parameters: {
+          title: fields.title,
+          category: fields.category,
+          excerpt: fields.excerpt || '',
+          status: fields.status || 'published',
+          ...(fields.published_at ? { published_at: fields.published_at } : {}),
+          ...(fields.pdf_original_name ? { pdf_original_name: fields.pdf_original_name } : {}),
+          ...(fields.pdf_path ? { pdf_path: fields.pdf_path } : {}),
+        },
+        headers: {
+          Accept: 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+
+      let json = {};
+      try {
+        json = JSON.parse(uploadRes.body);
+      } catch {
+        json = { message: uploadRes.body };
+      }
+
+      return {
+        ok: uploadRes.status >= 200 && uploadRes.status < 300,
+        data: json.data || null,
+        message: json.message || '',
+        errors: json.errors || null,
+      };
+    } catch (err) {
+      console.log('FileSystem publication upload error, trying FormData fallback:', err);
+    }
+  }
+
+  // Web or fallback with FormData if file is attached
+  if (pdfFile) {
+    try {
+      const formData = new FormData();
+      formData.append('title', fields.title);
+      formData.append('category', fields.category);
+      formData.append('excerpt', fields.excerpt || '');
+      formData.append('status', fields.status || 'published');
+      if (fields.published_at) formData.append('published_at', fields.published_at);
+      if (fields.pdf_original_name) formData.append('pdf_original_name', fields.pdf_original_name);
+      if (fields.pdf_path) formData.append('pdf_path', fields.pdf_path);
+
+      if (pdfFile instanceof Blob || (typeof File !== 'undefined' && pdfFile instanceof File)) {
+        formData.append('pdf', pdfFile, pdfFile.name || 'document.pdf');
+      } else if (pdfFile.file) {
+        formData.append('pdf', pdfFile.file, pdfFile.name || 'document.pdf');
+      } else if (pdfFile.uri) {
+        try {
+          const fileRes = await fetch(pdfFile.uri);
+          const blob = await fileRes.blob();
+          formData.append('pdf', blob, pdfFile.name || 'document.pdf');
+        } catch {
+          formData.append('pdf', {
+            uri: pdfFile.uri,
+            name: pdfFile.name || 'document.pdf',
+            type: pdfFile.mimeType || 'application/pdf',
+          });
+        }
+      }
+
+      const res = await fetchAdminWithFallback('/admin/publications', token, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (res) {
+        const json = await res.json();
+        return {
+          ok: res.ok,
+          data: json.data || null,
+          message: json.message || '',
+          errors: json.errors || null,
+        };
+      }
+    } catch (err) {
+      console.log('FormData publication upload error:', err);
+    }
+  }
+
+  // Pure JSON if no file object
   try {
     const res = await fetchAdminWithFallback('/admin/publications', token, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(publicationData),
+      body: JSON.stringify(fields),
     });
     if (res) {
       const json = await res.json();
@@ -685,11 +778,104 @@ export async function createAdminPublication(token, publicationData) {
  * Update publication via POST/PUT /api/admin/publications/{id}
  */
 export async function updateAdminPublication(token, publicationId, publicationData) {
+  const { pdfFile, ...fields } = publicationData;
+  const targetUrl = `${API_BASE_URL}/admin/publications/${publicationId}`;
+
+  if (Platform.OS !== 'web' && pdfFile?.uri) {
+    try {
+      const uploadRes = await FileSystem.uploadAsync(targetUrl, pdfFile.uri, {
+        fieldName: 'pdf',
+        httpMethod: 'POST',
+        uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+        mimeType: pdfFile.mimeType || 'application/pdf',
+        parameters: {
+          title: fields.title,
+          category: fields.category,
+          excerpt: fields.excerpt || '',
+          status: fields.status || 'published',
+          ...(fields.published_at ? { published_at: fields.published_at } : {}),
+          ...(fields.pdf_original_name ? { pdf_original_name: fields.pdf_original_name } : {}),
+          ...(fields.pdf_path ? { pdf_path: fields.pdf_path } : {}),
+        },
+        headers: {
+          Accept: 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+
+      let json = {};
+      try {
+        json = JSON.parse(uploadRes.body);
+      } catch {
+        json = { message: uploadRes.body };
+      }
+
+      return {
+        ok: uploadRes.status >= 200 && uploadRes.status < 300,
+        data: json.data || null,
+        message: json.message || '',
+        errors: json.errors || null,
+      };
+    } catch (err) {
+      console.log('FileSystem publication update error, trying FormData fallback:', err);
+    }
+  }
+
+  // Web or fallback with FormData if file is attached
+  if (pdfFile) {
+    try {
+      const formData = new FormData();
+      formData.append('title', fields.title);
+      formData.append('category', fields.category);
+      formData.append('excerpt', fields.excerpt || '');
+      formData.append('status', fields.status || 'published');
+      if (fields.published_at) formData.append('published_at', fields.published_at);
+      if (fields.pdf_original_name) formData.append('pdf_original_name', fields.pdf_original_name);
+      if (fields.pdf_path) formData.append('pdf_path', fields.pdf_path);
+
+      if (pdfFile instanceof Blob || (typeof File !== 'undefined' && pdfFile instanceof File)) {
+        formData.append('pdf', pdfFile, pdfFile.name || 'document.pdf');
+      } else if (pdfFile.file) {
+        formData.append('pdf', pdfFile.file, pdfFile.name || 'document.pdf');
+      } else if (pdfFile.uri) {
+        try {
+          const fileRes = await fetch(pdfFile.uri);
+          const blob = await fileRes.blob();
+          formData.append('pdf', blob, pdfFile.name || 'document.pdf');
+        } catch {
+          formData.append('pdf', {
+            uri: pdfFile.uri,
+            name: pdfFile.name || 'document.pdf',
+            type: pdfFile.mimeType || 'application/pdf',
+          });
+        }
+      }
+
+      const res = await fetchAdminWithFallback(`/admin/publications/${publicationId}`, token, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (res) {
+        const json = await res.json();
+        return {
+          ok: res.ok,
+          data: json.data || null,
+          message: json.message || '',
+          errors: json.errors || null,
+        };
+      }
+    } catch (err) {
+      console.log('FormData publication update error:', err);
+    }
+  }
+
+  // Pure JSON update if no file is being changed
   try {
     const res = await fetchAdminWithFallback(`/admin/publications/${publicationId}`, token, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(publicationData),
+      body: JSON.stringify(fields),
     });
     if (res) {
       const json = await res.json();
