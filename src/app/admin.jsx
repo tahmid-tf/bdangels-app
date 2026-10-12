@@ -14,6 +14,7 @@ import {
   Modal,
   Image,
   Linking,
+  Switch,
 } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -71,6 +72,11 @@ import {
   createAdminEvent,
   updateAdminEvent,
   deleteAdminEvent,
+  fetchAdminStartupServices,
+  createAdminStartupService,
+  updateAdminStartupService,
+  reorderAdminStartupServices,
+  deleteAdminStartupService,
 } from '../services/api';
 
 export function getViewDisplayName(key) {
@@ -483,6 +489,35 @@ export default function AdminScreen() {
     speakers: [{ name: '', designation: '' }],
     banner_file: null,
     remove_banner: false,
+  });
+
+  // Startup Services State
+  const [startupServicesList, setStartupServicesList] = useState([]);
+  const [startupServicesLoading, setStartupServicesLoading] = useState(false);
+  const [startupServicesSaving, setStartupServicesSaving] = useState(false);
+  const [startupServicesSearch, setStartupServicesSearch] = useState('');
+  const [selectedStartupServiceForView, setSelectedStartupServiceForView] = useState(null);
+  const [viewStartupServiceModalVisible, setViewStartupServiceModalVisible] = useState(false);
+  const [createStartupServiceModalVisible, setCreateStartupServiceModalVisible] = useState(false);
+  const [editStartupServiceModalVisible, setEditStartupServiceModalVisible] = useState(false);
+  const [editingStartupService, setEditingStartupService] = useState(null);
+  const [deleteStartupServiceModalVisible, setDeleteStartupServiceModalVisible] = useState(false);
+  const [selectedStartupServiceForDelete, setSelectedStartupServiceForDelete] = useState(null);
+  const [isDeletingStartupService, setIsDeletingStartupService] = useState(false);
+
+  const [startupServiceFormData, setStartupServiceFormData] = useState({
+    title: '',
+    intro: '',
+    bullets: [''],
+    footer_note: '',
+    link: '',
+    cta_label: 'Get in touch',
+    sort_order: '',
+    show_brochure_link: true,
+    brochure_url: '',
+    logo_file: null,
+    remove_logo: false,
+    remove_brochure: false,
   });
 
   // Fetch Dashboard summary data
@@ -993,6 +1028,27 @@ export default function AdminScreen() {
     [authToken, eventsSearch, eventsTypeFilter, eventsLandingFilter]
   );
 
+  // Fetch Startup Services
+  const loadStartupServices = useCallback(
+    async (token = authToken, options = {}) => {
+      if (!token) return;
+      const { silent = false } = options;
+      if (!silent) setStartupServicesLoading(true);
+      try {
+        const res = await fetchAdminStartupServices(token);
+        if (res && res.data) {
+          const list = Array.isArray(res.data) ? res.data : [];
+          setStartupServicesList(list);
+        }
+      } catch (err) {
+        console.log('Error loading startup services:', err);
+      } finally {
+        if (!silent) setStartupServicesLoading(false);
+      }
+    },
+    [authToken]
+  );
+
   // Handle Tab / Sidebar View Selection
   const handleTabChange = (tab) => {
     setActiveTab(tab);
@@ -1014,6 +1070,8 @@ export default function AdminScreen() {
       loadTeamAboutSection(authToken);
     } else if (tab === 'events') {
       loadEvents(authToken, eventsSearch, eventsTypeFilter, eventsLandingFilter);
+    } else if (tab === 'startup-services') {
+      loadStartupServices(authToken);
     } else if (tab === 'deals') {
       if (deals.length === 0) loadDeals(authToken);
     } else if (tab === 'founder-pitches') {
@@ -1032,7 +1090,6 @@ export default function AdminScreen() {
       if (banWealthOrders.length === 0) loadBanWealthOrders(authToken);
     } else if (
       [
-        'startup-services',
         'team-members',
       ].includes(tab)
     ) {
@@ -1053,6 +1110,7 @@ export default function AdminScreen() {
     if (activeTab === 'homepage-portfolios') await loadHomepagePortfolios(authToken);
     if (activeTab === 'team-about') await loadTeamAboutSection(authToken);
     if (activeTab === 'events') await loadEvents(authToken, eventsSearch, eventsTypeFilter, eventsLandingFilter);
+    if (activeTab === 'startup-services') await loadStartupServices(authToken);
     if (activeTab === 'deals') await loadDeals(authToken);
     if (activeTab === 'submissions' || activeTab === 'founder-pitches' || activeTab === 'angel-academy') {
       await loadSubmissions(authToken);
@@ -3272,6 +3330,314 @@ export default function AdminScreen() {
     } finally {
       setIsDeletingEvent(false);
       setSelectedEventForDelete(null);
+    }
+  };
+
+  // ==========================================
+  // STARTUP SERVICES HANDLERS
+  // ==========================================
+  const handleOpenCreateStartupService = () => {
+    setStartupServiceFormData({
+      title: '',
+      intro: '',
+      bullets: [''],
+      footer_note: '',
+      link: '',
+      cta_label: 'Get in touch',
+      sort_order: String(startupServicesList.length + 1),
+      show_brochure_link: true,
+      brochure_url: '',
+      logo_file: null,
+      remove_logo: false,
+      remove_brochure: false,
+    });
+    setEditingStartupService(null);
+    setCreateStartupServiceModalVisible(true);
+  };
+
+  const handleOpenEditStartupService = (item) => {
+    if (!item) return;
+    setEditingStartupService(item);
+    const bulletsArr = Array.isArray(item.bullets) && item.bullets.length > 0
+      ? [...item.bullets]
+      : [''];
+
+    setStartupServiceFormData({
+      title: item.title || '',
+      intro: item.intro || item.description || '',
+      bullets: bulletsArr,
+      footer_note: item.footer_note || '',
+      link: item.link || item.cta_url || '',
+      cta_label: item.cta_label || 'Get in touch',
+      sort_order: item.sort_order !== undefined && item.sort_order !== null ? String(item.sort_order) : '',
+      show_brochure_link: item.show_brochure_link !== undefined ? !!item.show_brochure_link : true,
+      brochure_url: item.brochure_url || '',
+      logo_file: null,
+      remove_logo: false,
+      remove_brochure: false,
+    });
+    setEditStartupServiceModalVisible(true);
+  };
+
+  const handleOpenViewStartupService = (item) => {
+    setSelectedStartupServiceForView(item);
+    setViewStartupServiceModalVisible(true);
+  };
+
+  const handlePickStartupServiceLogo = async () => {
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        type: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+        copyToCacheDirectory: true,
+      });
+
+      if (!res.canceled && res.assets && res.assets.length > 0) {
+        const file = res.assets[0];
+        if (file.size && file.size > 5 * 1024 * 1024) {
+          Alert.alert('File Limit Exceeded', 'The selected logo is larger than 5 MB.');
+          return;
+        }
+        setStartupServiceFormData((prev) => ({
+          ...prev,
+          logo_file: file,
+          remove_logo: false,
+        }));
+      }
+    } catch (err) {
+      console.log('Error picking service logo:', err);
+      Alert.alert('Notice', 'Could not open image picker.');
+    }
+  };
+
+  const handleRemoveStartupServiceLogo = () => {
+    setStartupServiceFormData((prev) => ({
+      ...prev,
+      logo_file: null,
+      remove_logo: true,
+    }));
+  };
+
+  const handleCancelStartupServiceLogoChange = () => {
+    setStartupServiceFormData((prev) => ({
+      ...prev,
+      logo_file: null,
+      remove_logo: false,
+    }));
+  };
+
+  const handleAddStartupServiceBullet = () => {
+    setStartupServiceFormData((prev) => ({
+      ...prev,
+      bullets: [...(prev.bullets || []), ''],
+    }));
+  };
+
+  const handleRemoveStartupServiceBullet = (index) => {
+    setStartupServiceFormData((prev) => {
+      const current = prev.bullets || [];
+      if (current.length <= 1) {
+        return { ...prev, bullets: [''] };
+      }
+      return {
+        ...prev,
+        bullets: current.filter((_, idx) => idx !== index),
+      };
+    });
+  };
+
+  const handleUpdateStartupServiceBullet = (text, index) => {
+    setStartupServiceFormData((prev) => {
+      const copy = [...(prev.bullets || [''])];
+      copy[index] = text;
+      return { ...prev, bullets: copy };
+    });
+  };
+
+  const buildStartupServicePayload = (formData) => {
+    const hasNewLogo = !!formData.logo_file;
+    const isRemovingLogo = !!formData.remove_logo;
+    const isRemovingBrochure = !!formData.remove_brochure;
+    const needsFormData = hasNewLogo || isRemovingLogo || isRemovingBrochure;
+    const filteredBullets = (formData.bullets || []).map((b) => (b || '').trim()).filter(Boolean);
+
+    if (needsFormData) {
+      const data = new FormData();
+      data.append('title', (formData.title || '').trim());
+      data.append('intro', (formData.intro || '').trim());
+      data.append('bullets', JSON.stringify(filteredBullets));
+      data.append('footer_note', (formData.footer_note || '').trim());
+      data.append('link', (formData.link || '').trim());
+      data.append('cta_label', (formData.cta_label || 'Get in touch').trim());
+      if (formData.sort_order !== '' && formData.sort_order !== null && formData.sort_order !== undefined) {
+        data.append('sort_order', String(formData.sort_order));
+      }
+      data.append('show_brochure_link', formData.show_brochure_link ? '1' : '0');
+      if (formData.brochure_url) {
+        data.append('brochure_url', formData.brochure_url.trim());
+      }
+      if (formData.logo_file) {
+        const uri = formData.logo_file.uri;
+        const filename = uri.split('/').pop() || 'logo.jpg';
+        const match = /\.(\w+)$/.exec(filename);
+        const type = match ? `image/${match[1]}` : 'image/jpeg';
+        data.append('logo', {
+          uri,
+          name: filename,
+          type,
+        });
+      } else if (formData.remove_logo) {
+        data.append('remove_logo', '1');
+      }
+      if (formData.remove_brochure) {
+        data.append('remove_brochure', '1');
+      }
+      return data;
+    }
+
+    return {
+      title: (formData.title || '').trim(),
+      intro: (formData.intro || '').trim(),
+      bullets: filteredBullets,
+      footer_note: (formData.footer_note || '').trim(),
+      link: (formData.link || '').trim(),
+      cta_label: (formData.cta_label || 'Get in touch').trim(),
+      sort_order: formData.sort_order !== '' && formData.sort_order !== null ? parseInt(formData.sort_order, 10) : undefined,
+      show_brochure_link: !!formData.show_brochure_link,
+      brochure_url: formData.brochure_url ? formData.brochure_url.trim() : null,
+    };
+  };
+
+  const handleSaveCreateStartupService = async () => {
+    if (!authToken) return;
+    if (!startupServiceFormData.title.trim()) {
+      Alert.alert('Required Field', 'Please enter a title for the startup service.');
+      return;
+    }
+    if (!startupServiceFormData.intro.trim()) {
+      Alert.alert('Required Field', 'Please enter an introductory description.');
+      return;
+    }
+    if (!startupServiceFormData.link.trim()) {
+      Alert.alert('Required Field', 'Please enter a CTA link (URL or mailto: link).');
+      return;
+    }
+
+    setStartupServicesSaving(true);
+    try {
+      const payload = buildStartupServicePayload(startupServiceFormData);
+      const res = await createAdminStartupService(authToken, payload);
+      if (res.ok) {
+        setCreateStartupServiceModalVisible(false);
+        Alert.alert('Success', 'Startup service created successfully!');
+        loadStartupServices(authToken);
+      } else {
+        const errorMsg = res.errors
+          ? Object.values(res.errors).flat().join('\n')
+          : res.message || 'Could not create startup service.';
+        Alert.alert('Create Failed', errorMsg);
+      }
+    } catch (err) {
+      console.log('Error creating startup service:', err);
+      Alert.alert('Error', 'An unexpected error occurred while creating service.');
+    } finally {
+      setStartupServicesSaving(false);
+    }
+  };
+
+  const handleSaveEditStartupService = async () => {
+    if (!authToken || !editingStartupService) return;
+    if (!startupServiceFormData.title.trim()) {
+      Alert.alert('Required Field', 'Please enter a title for the startup service.');
+      return;
+    }
+    if (!startupServiceFormData.intro.trim()) {
+      Alert.alert('Required Field', 'Please enter an introductory description.');
+      return;
+    }
+    if (!startupServiceFormData.link.trim()) {
+      Alert.alert('Required Field', 'Please enter a CTA link (URL or mailto: link).');
+      return;
+    }
+
+    setStartupServicesSaving(true);
+    try {
+      const payload = buildStartupServicePayload(startupServiceFormData);
+      const res = await updateAdminStartupService(authToken, editingStartupService.id, payload);
+      if (res.ok) {
+        const updated = res.data || { ...editingStartupService, ...startupServiceFormData };
+        setStartupServicesList((prev) =>
+          prev.map((s) => (s.id === editingStartupService.id ? updated : s))
+        );
+        if (selectedStartupServiceForView?.id === editingStartupService.id) {
+          setSelectedStartupServiceForView(updated);
+        }
+        setEditStartupServiceModalVisible(false);
+        setEditingStartupService(null);
+        Alert.alert('Success', 'Startup service updated successfully!');
+        loadStartupServices(authToken, { silent: true });
+      } else {
+        const errorMsg = res.errors
+          ? Object.values(res.errors).flat().join('\n')
+          : res.message || 'Could not update startup service.';
+        Alert.alert('Update Failed', errorMsg);
+      }
+    } catch (err) {
+      console.log('Error updating startup service:', err);
+      Alert.alert('Error', 'An unexpected error occurred while updating service.');
+    } finally {
+      setStartupServicesSaving(false);
+    }
+  };
+
+  const handleOpenDeleteStartupService = (item) => {
+    setSelectedStartupServiceForDelete(item);
+    setDeleteStartupServiceModalVisible(true);
+  };
+
+  const handleConfirmDeleteStartupService = async () => {
+    if (!authToken || !selectedStartupServiceForDelete) return;
+    setIsDeletingStartupService(true);
+    try {
+      const res = await deleteAdminStartupService(authToken, selectedStartupServiceForDelete.id);
+      if (res.ok) {
+        setStartupServicesList((prev) => prev.filter((s) => s.id !== selectedStartupServiceForDelete.id));
+        setDeleteStartupServiceModalVisible(false);
+        if (selectedStartupServiceForView?.id === selectedStartupServiceForDelete.id) {
+          setViewStartupServiceModalVisible(false);
+          setSelectedStartupServiceForView(null);
+        }
+        setSelectedStartupServiceForDelete(null);
+        Alert.alert('Deleted', 'Startup service deleted successfully.');
+      } else {
+        Alert.alert('Delete Failed', res.message || 'Could not delete startup service.');
+      }
+    } catch (err) {
+      console.log('Error deleting startup service:', err);
+      Alert.alert('Error', 'An unexpected error occurred while deleting service.');
+    } finally {
+      setIsDeletingStartupService(false);
+      setSelectedStartupServiceForDelete(null);
+    }
+  };
+
+  const handleMoveStartupService = async (index, direction) => {
+    if (!authToken) return;
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= startupServicesList.length) return;
+
+    const newList = [...startupServicesList];
+    const [moved] = newList.splice(index, 1);
+    newList.splice(targetIndex, 0, moved);
+
+    // Optimistically update
+    setStartupServicesList(newList);
+
+    try {
+      const orderIds = newList.map((item) => item.id);
+      await reorderAdminStartupServices(authToken, orderIds);
+    } catch (err) {
+      console.log('Error reordering startup services:', err);
+      loadStartupServices(authToken, { silent: true });
     }
   };
 
@@ -7187,25 +7553,293 @@ export default function AdminScreen() {
           {/* TAB: STARTUP SERVICES */}
           {activeTab === 'startup-services' && (
             <View style={styles.tabContent}>
+              {/* Header with Title and Add Button */}
               <View style={styles.sectionHeaderRow}>
-                <View>
+                <View style={{ flex: 1, paddingRight: 8 }}>
                   <Text style={styles.sectionHeading}>Startup Services</Text>
-                  <Text style={styles.sectionSubheading}>Value-add advisory for portfolio companies</Text>
+                  <Text style={styles.sectionSubheading}>
+                    Value-add services on public /startups
+                  </Text>
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <TouchableOpacity
+                    style={styles.teamAboutEditBtn}
+                    onPress={handleOpenCreateStartupService}
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="add" size={16} color="#FFFFFF" />
+                    <Text style={styles.teamAboutEditBtnText}>Add Service</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.refreshIconBtn}
+                    onPress={() => loadStartupServices(authToken)}
+                    disabled={startupServicesLoading}
+                  >
+                    <Ionicons
+                      name="refresh"
+                      size={18}
+                      color={Colors.forest}
+                      style={startupServicesLoading ? { opacity: 0.5 } : {}}
+                    />
+                  </TouchableOpacity>
                 </View>
               </View>
 
-              <View style={styles.cardsList}>
-                {[
-                  { title: 'Founder Readiness Advisory', desc: 'Financial modeling, valuation review, and pitch sharpening.' },
-                  { title: 'Legal & Structuring Advisory', desc: 'Term sheet review, cap table clean up, and cross-border holding setups.' },
-                  { title: 'DeckVue Due Diligence', desc: 'AI-assisted pitch deck analysis and instant market intel enrichment.' },
-                ].map((s, idx) => (
-                  <View key={`serv-${idx}`} style={styles.cmsCard}>
-                    <Text style={styles.cmsCardTitle}>{s.title}</Text>
-                    <Text style={styles.cmsCardDesc}>{s.desc}</Text>
-                  </View>
-                ))}
+              {/* Quick Metrics Chips Row */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                <View style={styles.eventLandingBadge}>
+                  <Ionicons name="cube-outline" size={13} color="#065F46" />
+                  <Text style={styles.eventLandingBadgeText}>
+                    {startupServicesList.length} Total Services
+                  </Text>
+                </View>
+                <View style={[styles.eventLandingBadge, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
+                  <Ionicons name="document-text-outline" size={13} color="#1D4ED8" />
+                  <Text style={[styles.eventLandingBadgeText, { color: '#1D4ED8' }]}>
+                    {startupServicesList.filter((s) => s.show_brochure_link).length} with Brochure
+                  </Text>
+                </View>
               </View>
+
+              {/* Real-time Search Bar */}
+              <View style={styles.searchBarContainer}>
+                <Ionicons name="search-outline" size={18} color="#64748B" style={{ marginLeft: 12 }} />
+                <TextInput
+                  style={[styles.searchInput, { paddingLeft: 8 }]}
+                  placeholder="Search services by title, intro, or bullet..."
+                  placeholderTextColor="#94A3B8"
+                  value={startupServicesSearch}
+                  onChangeText={setStartupServicesSearch}
+                  clearButtonMode="while-editing"
+                />
+                {startupServicesSearch ? (
+                  <TouchableOpacity
+                    onPress={() => setStartupServicesSearch('')}
+                    style={{ padding: 8, marginRight: 4 }}
+                  >
+                    <Ionicons name="close-circle" size={18} color="#94A3B8" />
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+
+              {/* List of Services */}
+              {startupServicesLoading && startupServicesList.length === 0 ? (
+                <View style={styles.statsLoadingBox}>
+                  <ActivityIndicator size="large" color="#0A5554" />
+                  <Text style={styles.statsLoadingText}>Loading startup services...</Text>
+                </View>
+              ) : startupServicesList.length === 0 ? (
+                <View style={[styles.emptyContainer, { backgroundColor: '#FFFFFF', borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', padding: 24 }]}>
+                  <View style={styles.statsEmptyIconWrap}>
+                    <Ionicons name="briefcase-outline" size={26} color="#94A3B8" />
+                  </View>
+                  <Text style={{ fontSize: 16, fontWeight: '700', color: '#0F172A', marginBottom: 6 }}>No Startup Services Yet</Text>
+                  <Text style={{ fontSize: 13, color: '#64748B', textAlign: 'center', marginBottom: 14 }}>
+                    Add founder and legal services to display them on the public /startups page.
+                  </Text>
+                  <TouchableOpacity
+                    style={[styles.programsAddBtn, { alignSelf: 'center' }]}
+                    onPress={handleOpenCreateStartupService}
+                  >
+                    <Ionicons name="add" size={16} color="#FFFFFF" />
+                    <Text style={styles.programsAddBtnText}>Add Your First Service</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View style={{ gap: 14 }}>
+                  {startupServicesList
+                    .filter((item) => {
+                      if (!startupServicesSearch) return true;
+                      const q = startupServicesSearch.toLowerCase();
+                      const titleMatch = (item.title || '').toLowerCase().includes(q);
+                      const introMatch = (item.intro || item.description || '').toLowerCase().includes(q);
+                      const ctaMatch = (item.cta_label || '').toLowerCase().includes(q);
+                      const bulletMatch = Array.isArray(item.bullets) && item.bullets.some((b) => (b || '').toLowerCase().includes(q));
+                      return titleMatch || introMatch || ctaMatch || bulletMatch;
+                    })
+                    .map((item, idx) => {
+                      const logoSrc = item.logo_url || item.icon_url || null;
+                      const bulletsList = Array.isArray(item.bullets) ? item.bullets : [];
+
+                      return (
+                        <View key={`startup-svc-${item.id}`} style={styles.eventCard}>
+                          {/* Card Header: Logo, Title, Order Controls */}
+                          <View style={{ padding: 14, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
+                              {logoSrc ? (
+                                <Image
+                                  source={{ uri: logoSrc }}
+                                  style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#E2E8F0', borderWidth: 1, borderColor: '#CBD5E1' }}
+                                />
+                              ) : (
+                                <View
+                                  style={{
+                                    width: 44,
+                                    height: 44,
+                                    borderRadius: 22,
+                                    backgroundColor: '#E6F4F1',
+                                    borderWidth: 1,
+                                    borderColor: '#B4E6DA',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                  }}
+                                >
+                                  <Text style={{ fontSize: 18, fontWeight: '800', color: '#0A5554' }}>
+                                    {(item.title || 'S').charAt(0).toUpperCase()}
+                                  </Text>
+                                </View>
+                              )}
+
+                              <View style={{ flex: 1 }}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginBottom: 2 }}>
+                                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+                                    <View style={{ backgroundColor: '#F1F5F9', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6 }}>
+                                      <Text style={{ fontSize: 11, fontWeight: '800', color: '#475569' }}>
+                                        #{item.sort_order || idx + 1}
+                                      </Text>
+                                    </View>
+                                    <Text style={[styles.eventTitle, { fontSize: 15, flex: 1 }]} numberOfLines={1}>
+                                      {item.title}
+                                    </Text>
+                                  </View>
+
+                                  {/* Up / Down Reordering Buttons */}
+                                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                    <TouchableOpacity
+                                      style={{ padding: 5, borderRadius: 6, backgroundColor: idx === 0 ? '#F8FAFC' : '#F1F5F9', opacity: idx === 0 ? 0.35 : 1 }}
+                                      disabled={idx === 0}
+                                      onPress={() => handleMoveStartupService(idx, 'up')}
+                                      activeOpacity={0.7}
+                                    >
+                                      <Ionicons name="arrow-up" size={13} color="#334155" />
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                      style={{ padding: 5, borderRadius: 6, backgroundColor: idx === startupServicesList.length - 1 ? '#F8FAFC' : '#F1F5F9', opacity: idx === startupServicesList.length - 1 ? 0.35 : 1 }}
+                                      disabled={idx === startupServicesList.length - 1}
+                                      onPress={() => handleMoveStartupService(idx, 'down')}
+                                      activeOpacity={0.7}
+                                    >
+                                      <Ionicons name="arrow-down" size={13} color="#334155" />
+                                    </TouchableOpacity>
+                                  </View>
+                                </View>
+
+                                {item.show_brochure_link ? (
+                                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}>
+                                    <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#10B981' }} />
+                                    <Text style={{ fontSize: 11, fontWeight: '600', color: '#059669' }}>
+                                      Brochure Link Enabled
+                                    </Text>
+                                  </View>
+                                ) : (
+                                  <Text style={{ fontSize: 11, color: '#94A3B8', marginTop: 4 }}>
+                                    Brochure Hidden
+                                  </Text>
+                                )}
+                              </View>
+                            </View>
+                          </View>
+
+                          {/* Body: Intro & Bullets Preview */}
+                          <View style={styles.eventBody}>
+                            <Text style={styles.eventDesc} numberOfLines={3}>
+                              {item.intro || item.description}
+                            </Text>
+
+                            {/* Bullets List */}
+                            {bulletsList.length > 0 ? (
+                              <View style={{ backgroundColor: '#F8FAFC', borderRadius: 8, padding: 10, borderWidth: 1, borderColor: '#F1F5F9', gap: 6, marginTop: 4 }}>
+                                <Text style={{ fontSize: 11, fontWeight: '800', color: '#475569', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                                  Key Offerings ({bulletsList.length})
+                                </Text>
+                                {bulletsList.slice(0, 3).map((bullet, bIdx) => (
+                                  <View key={bIdx} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6 }}>
+                                    <Ionicons name="checkmark-circle" size={13} color="#0D9488" style={{ marginTop: 2 }} />
+                                    <Text style={{ fontSize: 12, color: '#334155', flex: 1, lineHeight: 17 }} numberOfLines={1}>
+                                      {bullet}
+                                    </Text>
+                                  </View>
+                                ))}
+                                {bulletsList.length > 3 ? (
+                                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#0D9488', marginLeft: 19 }}>
+                                    +{bulletsList.length - 3} more points
+                                  </Text>
+                                ) : null}
+                              </View>
+                            ) : null}
+
+                            {/* Footer Note */}
+                            {item.footer_note ? (
+                              <View style={{ paddingHorizontal: 10, paddingVertical: 6, backgroundColor: '#FFFBEB', borderRadius: 6, borderWidth: 1, borderColor: '#FEF3C7' }}>
+                                <Text style={{ fontSize: 11, color: '#92400E', fontStyle: 'italic' }} numberOfLines={2}>
+                                  Note: {item.footer_note}
+                                </Text>
+                              </View>
+                            ) : null}
+
+                            {/* CTA Link Preview */}
+                            <View style={styles.eventCtaBar}>
+                              <Ionicons name="link-outline" size={14} color="#0D9488" />
+                              <Text style={styles.eventCtaBarText} numberOfLines={1}>
+                                {item.cta_label || 'Get in touch'}: {item.link || item.cta_url}
+                              </Text>
+                            </View>
+
+                            {/* Action Toolbar */}
+                            <View style={styles.eventActionsRow}>
+                              <TouchableOpacity
+                                style={styles.eventActionBtn}
+                                onPress={() => handleOpenViewStartupService(item)}
+                                activeOpacity={0.8}
+                              >
+                                <Ionicons name="eye-outline" size={14} color="#0A5554" />
+                                <Text style={styles.eventActionBtnText}>View Details</Text>
+                              </TouchableOpacity>
+
+                              <TouchableOpacity
+                                style={[styles.eventActionBtn, styles.eventActionBtnEdit]}
+                                onPress={() => handleOpenEditStartupService(item)}
+                                activeOpacity={0.8}
+                              >
+                                <Ionicons name="create-outline" size={14} color="#0284C7" />
+                                <Text style={[styles.eventActionBtnText, { color: '#0284C7' }]}>Edit</Text>
+                              </TouchableOpacity>
+
+                              <TouchableOpacity
+                                style={[styles.eventActionBtn, styles.eventActionBtnDelete]}
+                                onPress={() => handleOpenDeleteStartupService(item)}
+                                activeOpacity={0.8}
+                              >
+                                <Ionicons name="trash-outline" size={14} color="#DC2626" />
+                                <Text style={[styles.eventActionBtnText, { color: '#DC2626' }]}>Delete</Text>
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+                        </View>
+                      );
+                    })}
+                </View>
+              )}
+
+              {/* View on website link card */}
+              <TouchableOpacity
+                style={styles.statsExternalLinkCard}
+                onPress={() => {
+                  Linking.openURL('https://bdangels.co/startups#our-services').catch(() => {
+                    Alert.alert('Notice', 'Could not open https://bdangels.co/startups#our-services');
+                  });
+                }}
+                activeOpacity={0.8}
+              >
+                <View style={styles.statsExternalLinkLeft}>
+                  <Ionicons name="globe-outline" size={20} color="#0A5554" />
+                  <View>
+                    <Text style={styles.statsExternalLinkTitle}>View services on live site</Text>
+                    <Text style={styles.statsExternalLinkDesc}>bdangels.co/startups#our-services section</Text>
+                  </View>
+                </View>
+                <Ionicons name="open-outline" size={18} color="#0A5554" />
+              </TouchableOpacity>
             </View>
           )}
 
@@ -11924,6 +12558,618 @@ export default function AdminScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* ========================================== */}
+      {/* 1. VIEW STARTUP SERVICE DETAILS MODAL      */}
+      {/* ========================================== */}
+      <Modal
+        visible={viewStartupServiceModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setViewStartupServiceModalVisible(false)}
+      >
+        <SafeAreaView style={styles.editModalSafeArea}>
+          <View style={styles.editModalContainer}>
+            {/* Modal Header */}
+            <View style={styles.editModalHeader}>
+              <View style={styles.editModalHeaderLeft}>
+                <View style={styles.editModalIconWrap}>
+                  <Ionicons name="briefcase-outline" size={20} color="#0A5554" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.editModalTitle} numberOfLines={1}>
+                    Service Details
+                  </Text>
+                  <Text style={styles.editModalSubtitle} numberOfLines={1}>
+                    Public /startups offering card
+                  </Text>
+                </View>
+              </View>
+
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                {selectedStartupServiceForView?.id ? (
+                  <View style={styles.editModalIdBadge}>
+                    <Text style={styles.editModalIdBadgeText}>
+                      #{selectedStartupServiceForView.id}
+                    </Text>
+                  </View>
+                ) : null}
+                <TouchableOpacity
+                  style={styles.modalCloseBtn}
+                  onPress={() => setViewStartupServiceModalVisible(false)}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="close" size={20} color="#64748B" />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Modal Body */}
+            <ScrollView
+              style={styles.editModalScrollView}
+              contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
+              showsVerticalScrollIndicator={false}
+            >
+              {selectedStartupServiceForView ? (
+                <View style={{ gap: 16 }}>
+                  {/* Hero Card */}
+                  <View style={[styles.eventCard, { padding: 14, gap: 12 }]}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                      {selectedStartupServiceForView.logo_url || selectedStartupServiceForView.icon_url ? (
+                        <Image
+                          source={{ uri: selectedStartupServiceForView.logo_url || selectedStartupServiceForView.icon_url }}
+                          style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: '#E2E8F0', borderWidth: 1, borderColor: '#CBD5E1' }}
+                        />
+                      ) : (
+                        <View
+                          style={{
+                            width: 56,
+                            height: 56,
+                            borderRadius: 28,
+                            backgroundColor: '#E6F4F1',
+                            borderWidth: 1,
+                            borderColor: '#B4E6DA',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          <Text style={{ fontSize: 22, fontWeight: '800', color: '#0A5554' }}>
+                            {(selectedStartupServiceForView.title || 'S').charAt(0).toUpperCase()}
+                          </Text>
+                        </View>
+                      )}
+
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.eventTitle, { fontSize: 18, marginBottom: 4 }]}>
+                          {selectedStartupServiceForView.title}
+                        </Text>
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                          <View style={{ backgroundColor: '#F1F5F9', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
+                            <Text style={{ fontSize: 11, fontWeight: '800', color: '#475569' }}>
+                              Order #{selectedStartupServiceForView.sort_order || 1}
+                            </Text>
+                          </View>
+                          {selectedStartupServiceForView.show_brochure_link ? (
+                            <View style={styles.eventLandingBadge}>
+                              <Ionicons name="document-text-outline" size={12} color="#065F46" />
+                              <Text style={styles.eventLandingBadgeText}>Brochure Enabled</Text>
+                            </View>
+                          ) : (
+                            <View style={[styles.eventLandingBadge, { backgroundColor: '#F1F5F9', borderColor: '#CBD5E1' }]}>
+                              <Text style={[styles.eventLandingBadgeText, { color: '#64748B' }]}>Brochure Disabled</Text>
+                            </View>
+                          )}
+                        </View>
+                      </View>
+                    </View>
+                  </View>
+
+                  {/* Introduction Section */}
+                  <View style={{ backgroundColor: '#FFFFFF', borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', padding: 14 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '800', color: '#0A5554', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
+                      Introduction / Summary
+                    </Text>
+                    <Text style={{ fontSize: 13, color: '#334155', lineHeight: 20 }}>
+                      {selectedStartupServiceForView.intro || selectedStartupServiceForView.description}
+                    </Text>
+                  </View>
+
+                  {/* Bullet Points Section */}
+                  {Array.isArray(selectedStartupServiceForView.bullets) && selectedStartupServiceForView.bullets.length > 0 ? (
+                    <View style={{ backgroundColor: '#FFFFFF', borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', padding: 14 }}>
+                      <Text style={{ fontSize: 11, fontWeight: '800', color: '#0A5554', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>
+                        Key Offerings & Deliverables ({selectedStartupServiceForView.bullets.length})
+                      </Text>
+                      {selectedStartupServiceForView.bullets.map((b, bIdx) => (
+                        <View key={bIdx} style={styles.eventChecklistItem}>
+                          <Ionicons name="checkmark-circle" size={16} color="#0D9488" style={{ marginTop: 2 }} />
+                          <Text style={styles.eventChecklistText}>{b}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  ) : null}
+
+                  {/* Footer Note */}
+                  {selectedStartupServiceForView.footer_note ? (
+                    <View style={{ backgroundColor: '#FFFBEB', borderRadius: 12, borderWidth: 1, borderColor: '#FEF3C7', padding: 14 }}>
+                      <Text style={{ fontSize: 11, fontWeight: '800', color: '#B45309', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>
+                        Footer Notice / Small Print
+                      </Text>
+                      <Text style={{ fontSize: 12, color: '#92400E', fontStyle: 'italic', lineHeight: 18 }}>
+                        {selectedStartupServiceForView.footer_note}
+                      </Text>
+                    </View>
+                  ) : null}
+
+                  {/* CTA Action Bar */}
+                  <View style={{ backgroundColor: '#FFFFFF', borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', padding: 14, gap: 10 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '800', color: '#0A5554', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                      Call to Action (CTA)
+                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                      <View style={{ backgroundColor: '#E6F4F1', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}>
+                        <Text style={{ fontSize: 12, fontWeight: '800', color: '#0A5554' }}>
+                          {selectedStartupServiceForView.cta_label || 'Get in touch'}
+                        </Text>
+                      </View>
+                      <Text style={{ fontSize: 12, color: '#64748B', flex: 1 }} numberOfLines={1}>
+                        → {selectedStartupServiceForView.link || selectedStartupServiceForView.cta_url}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={[styles.eventActionBtn, { alignSelf: 'flex-start', marginTop: 4 }]}
+                      onPress={() => {
+                        const target = selectedStartupServiceForView.link || selectedStartupServiceForView.cta_url;
+                        if (target) {
+                          Linking.openURL(target).catch(() => Alert.alert('Notice', `Could not open link: ${target}`));
+                        }
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <Ionicons name="open-outline" size={14} color="#0A5554" />
+                      <Text style={styles.eventActionBtnText}>Test Open Link</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Brochure Section */}
+                  {selectedStartupServiceForView.show_brochure_link ? (
+                    <View style={{ backgroundColor: '#F0FDF4', borderRadius: 12, borderWidth: 1, borderColor: '#BBF7D0', padding: 14, gap: 8 }}>
+                      <Text style={{ fontSize: 11, fontWeight: '800', color: '#166534', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                        Brochure Destination
+                      </Text>
+                      <Text style={{ fontSize: 12, color: '#15803D' }} numberOfLines={1}>
+                        Target: {selectedStartupServiceForView.brochure_public_href || selectedStartupServiceForView.brochure_url || 'Default /MoU.pdf'}
+                      </Text>
+                      {selectedStartupServiceForView.brochure_pdf_url ? (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Ionicons name="document-attach-outline" size={14} color="#166534" />
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: '#166534' }}>Custom PDF File Uploaded</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
+            </ScrollView>
+
+            {/* Modal Footer */}
+            <View style={styles.editModalFooter}>
+              <TouchableOpacity
+                style={styles.editModalCancelBtn}
+                onPress={() => setViewStartupServiceModalVisible(false)}
+              >
+                <Text style={styles.editModalCancelBtnText}>Close</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.editModalSaveBtn, { backgroundColor: '#0284C7' }]}
+                onPress={() => {
+                  setViewStartupServiceModalVisible(false);
+                  handleOpenEditStartupService(selectedStartupServiceForView);
+                }}
+              >
+                <Ionicons name="create-outline" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.editModalSaveBtnText}>Edit Service</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      {/* ========================================== */}
+      {/* 2. CREATE / EDIT STARTUP SERVICE MODAL     */}
+      {/* ========================================== */}
+      <Modal
+        visible={createStartupServiceModalVisible || editStartupServiceModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => {
+          setCreateStartupServiceModalVisible(false);
+          setEditStartupServiceModalVisible(false);
+          setEditingStartupService(null);
+        }}
+      >
+        <SafeAreaView style={styles.editModalSafeArea}>
+          <View style={styles.editModalContainer}>
+            {/* Modal Header */}
+            <View style={styles.editModalHeader}>
+              <View style={styles.editModalHeaderLeft}>
+                <View style={styles.editModalIconWrap}>
+                  <Ionicons name={editingStartupService ? 'create-outline' : 'add-circle-outline'} size={20} color="#0A5554" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.editModalTitle} numberOfLines={1}>
+                    {editingStartupService ? 'Edit Startup Service' : 'Add Startup Service'}
+                  </Text>
+                  <Text style={styles.editModalSubtitle} numberOfLines={1}>
+                    Configure service card for public /startups
+                  </Text>
+                </View>
+              </View>
+
+              <TouchableOpacity
+                style={styles.modalCloseBtn}
+                onPress={() => {
+                  setCreateStartupServiceModalVisible(false);
+                  setEditStartupServiceModalVisible(false);
+                  setEditingStartupService(null);
+                }}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Form Scroll View */}
+            <ScrollView
+              style={styles.editModalScrollView}
+              contentContainerStyle={styles.editModalFormContent}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              {/* Field 1: Logo Upload Section */}
+              <View style={styles.teamAboutPhotoPickerBox}>
+                <Text style={styles.formLabel}>Service Logo (Optional)</Text>
+                <View style={styles.teamAboutPhotoPickerRow}>
+                  {startupServiceFormData.logo_file ? (
+                    <Image
+                      source={{ uri: startupServiceFormData.logo_file.uri }}
+                      style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: '#E2E8F0', borderWidth: 1, borderColor: '#CBD5E1' }}
+                    />
+                  ) : editingStartupService && (editingStartupService.logo_url || editingStartupService.icon_url) && !startupServiceFormData.remove_logo ? (
+                    <Image
+                      source={{ uri: editingStartupService.logo_url || editingStartupService.icon_url }}
+                      style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: '#E2E8F0', borderWidth: 1, borderColor: '#CBD5E1' }}
+                    />
+                  ) : (
+                    <View
+                      style={{
+                        width: 64,
+                        height: 64,
+                        borderRadius: 32,
+                        backgroundColor: '#E6F4F1',
+                        borderWidth: 1,
+                        borderColor: '#B4E6DA',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <Ionicons name="image-outline" size={24} color="#0A5554" />
+                    </View>
+                  )}
+
+                  <View style={styles.teamAboutPhotoActionsCol}>
+                    <TouchableOpacity
+                      style={styles.teamAboutPhotoChooseBtn}
+                      onPress={handlePickStartupServiceLogo}
+                      activeOpacity={0.8}
+                    >
+                      <Ionicons name="cloud-upload-outline" size={14} color="#0A5554" />
+                      <Text style={styles.teamAboutPhotoChooseBtnText}>
+                        {startupServiceFormData.logo_file ? 'Change Photo' : 'Choose Photo'}
+                      </Text>
+                    </TouchableOpacity>
+
+                    {startupServiceFormData.logo_file ? (
+                      <TouchableOpacity
+                        style={styles.teamAboutPhotoRemoveBtn}
+                        onPress={handleCancelStartupServiceLogoChange}
+                        activeOpacity={0.8}
+                      >
+                        <Ionicons name="close-circle-outline" size={14} color="#DC2626" />
+                        <Text style={styles.teamAboutPhotoRemoveBtnText}>Cancel Selected</Text>
+                      </TouchableOpacity>
+                    ) : editingStartupService && (editingStartupService.logo_url || editingStartupService.icon_url) && !startupServiceFormData.remove_logo ? (
+                      <TouchableOpacity
+                        style={styles.teamAboutPhotoRemoveBtn}
+                        onPress={handleRemoveStartupServiceLogo}
+                        activeOpacity={0.8}
+                      >
+                        <Ionicons name="trash-outline" size={14} color="#DC2626" />
+                        <Text style={styles.teamAboutPhotoRemoveBtnText}>Remove Logo</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                </View>
+                {startupServiceFormData.remove_logo ? (
+                  <View style={styles.teamAboutPhotoRemovedNotice}>
+                    <Text style={styles.teamAboutPhotoRemovedText}>Logo marked for removal on save.</Text>
+                    <TouchableOpacity
+                      style={styles.teamAboutPhotoUndoBtn}
+                      onPress={() => setStartupServiceFormData((prev) => ({ ...prev, remove_logo: false }))}
+                    >
+                      <Text style={styles.teamAboutPhotoUndoBtnText}>Undo</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
+                <Text style={{ fontSize: 11, color: '#94A3B8' }}>
+                  Square logos work best in the circular frame. Max 4 MB.
+                </Text>
+              </View>
+
+              {/* Field 2: Title */}
+              <View style={styles.formField}>
+                <Text style={styles.formLabel}>Service Title *</Text>
+                <TextInput
+                  style={styles.formInput}
+                  value={startupServiceFormData.title}
+                  onChangeText={(text) => setStartupServiceFormData((prev) => ({ ...prev, title: text }))}
+                  placeholder="e.g. Pre-seed Founder Services"
+                  placeholderTextColor="#94A3B8"
+                  maxLength={255}
+                />
+              </View>
+
+              {/* Field 3: Introduction */}
+              <View style={styles.formField}>
+                <Text style={styles.formLabel}>Introduction / Overview *</Text>
+                <TextInput
+                  style={[styles.formInput, { minHeight: 80, textAlignVertical: 'top' }]}
+                  value={startupServiceFormData.intro}
+                  onChangeText={(text) => setStartupServiceFormData((prev) => ({ ...prev, intro: text }))}
+                  placeholder="Short paragraph below the title explaining the service scope..."
+                  placeholderTextColor="#94A3B8"
+                  multiline
+                  numberOfLines={4}
+                  maxLength={5000}
+                />
+                <Text style={{ fontSize: 11, color: '#94A3B8', marginTop: 4 }}>
+                  Short paragraph displayed on the card on the public /startups page.
+                </Text>
+              </View>
+
+              {/* Field 4: Dynamic Bullet Points Builder */}
+              <View style={styles.formField}>
+                <View style={styles.formSectionHeaderRow}>
+                  <Text style={styles.formLabel}>Bullet Points (Deliverables)</Text>
+                  <TouchableOpacity
+                    style={styles.dynamicListAddBtn}
+                    onPress={handleAddStartupServiceBullet}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="add" size={14} color="#0A5554" />
+                    <Text style={styles.dynamicListAddBtnText}>Add Bullet</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {startupServiceFormData.bullets.map((b, idx) => (
+                  <View key={`svc-bullet-${idx}`} style={styles.dynamicListRow}>
+                    <TextInput
+                      style={[styles.formInput, { flex: 1 }]}
+                      value={b}
+                      onChangeText={(text) => handleUpdateStartupServiceBullet(text, idx)}
+                      placeholder={`Bullet #${idx + 1} (e.g. Cap table cleanup)`}
+                      placeholderTextColor="#94A3B8"
+                      maxLength={1000}
+                    />
+                    <TouchableOpacity
+                      style={styles.dynamicListRemoveBtn}
+                      onPress={() => handleRemoveStartupServiceBullet(idx)}
+                      activeOpacity={0.8}
+                    >
+                      <Ionicons name="trash-outline" size={16} color="#DC2626" />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+                <Text style={{ fontSize: 11, color: '#94A3B8', marginTop: 2 }}>
+                  Each bullet is rendered with a checkmark on the public card.
+                </Text>
+              </View>
+
+              {/* Field 5: Footer Note (Optional) */}
+              <View style={styles.formField}>
+                <Text style={styles.formLabel}>Footer Note (Optional)</Text>
+                <TextInput
+                  style={[styles.formInput, { minHeight: 60, textAlignVertical: 'top' }]}
+                  value={startupServiceFormData.footer_note}
+                  onChangeText={(text) => setStartupServiceFormData((prev) => ({ ...prev, footer_note: text }))}
+                  placeholder="Small print below the bullet list (e.g. Delivered as scoped packages...)"
+                  placeholderTextColor="#94A3B8"
+                  multiline
+                  numberOfLines={2}
+                  maxLength={2000}
+                />
+              </View>
+
+              {/* Field 6: CTA Link & Button Text */}
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <View style={[styles.formField, { flex: 1 }]}>
+                  <Text style={styles.formLabel}>CTA Link *</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    value={startupServiceFormData.link}
+                    onChangeText={(text) => setStartupServiceFormData((prev) => ({ ...prev, link: text }))}
+                    placeholder="https://… or mailto:…"
+                    placeholderTextColor="#94A3B8"
+                    maxLength={2048}
+                    autoCapitalize="none"
+                    keyboardType="url"
+                  />
+                </View>
+
+                <View style={[styles.formField, { flex: 1 }]}>
+                  <Text style={styles.formLabel}>Button Text (CTA) *</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    value={startupServiceFormData.cta_label}
+                    onChangeText={(text) => setStartupServiceFormData((prev) => ({ ...prev, cta_label: text }))}
+                    placeholder="Get in touch"
+                    placeholderTextColor="#94A3B8"
+                    maxLength={120}
+                  />
+                </View>
+              </View>
+
+              {/* Field 7: Display Order */}
+              <View style={styles.formField}>
+                <Text style={styles.formLabel}>Display Order (sort_order)</Text>
+                <TextInput
+                  style={styles.formInput}
+                  value={startupServiceFormData.sort_order}
+                  onChangeText={(text) => setStartupServiceFormData((prev) => ({ ...prev, sort_order: text.replace(/[^0-9]/g, '') }))}
+                  placeholder="e.g. 1"
+                  placeholderTextColor="#94A3B8"
+                  keyboardType="numeric"
+                  maxLength={6}
+                />
+                <Text style={{ fontSize: 11, color: '#94A3B8', marginTop: 4 }}>
+                  Lower numbers appear first. Leave blank to append to end.
+                </Text>
+              </View>
+
+              {/* Field 8: Brochure Settings Box */}
+              <View style={{ backgroundColor: '#F8FAFC', borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', padding: 12, gap: 12 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <View style={{ flex: 1, paddingRight: 8 }}>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>
+                      Show Brochure Link
+                    </Text>
+                    <Text style={{ fontSize: 11, color: '#64748B' }}>
+                      Show &ldquo;Click here to see our brochure&rdquo; under the card CTA
+                    </Text>
+                  </View>
+                  <Switch
+                    value={startupServiceFormData.show_brochure_link}
+                    onValueChange={(val) => setStartupServiceFormData((prev) => ({ ...prev, show_brochure_link: val }))}
+                    trackColor={{ false: '#CBD5E1', true: '#B4E6DA' }}
+                    thumbColor={startupServiceFormData.show_brochure_link ? '#0A5554' : '#FFFFFF'}
+                  />
+                </View>
+
+                <View style={styles.formField}>
+                  <Text style={styles.formLabel}>Brochure URL (Optional)</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    value={startupServiceFormData.brochure_url}
+                    onChangeText={(text) => setStartupServiceFormData((prev) => ({ ...prev, brochure_url: text }))}
+                    placeholder="https://example.com/brochure.pdf"
+                    placeholderTextColor="#94A3B8"
+                    autoCapitalize="none"
+                    keyboardType="url"
+                  />
+                  <Text style={{ fontSize: 11, color: '#94A3B8', marginTop: 4 }}>
+                    If both link and upload are empty, the public page defaults to /MoU.pdf.
+                  </Text>
+                </View>
+
+                {editingStartupService && editingStartupService.brochure_pdf_url ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#FEF3C7', padding: 10, borderRadius: 8, borderWidth: 1, borderColor: '#FDE68A' }}>
+                    <View style={{ flex: 1, paddingRight: 8 }}>
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#92400E' }}>
+                        Custom PDF File Uploaded
+                      </Text>
+                      <Text style={{ fontSize: 10, color: '#B45309' }}>
+                        {startupServiceFormData.remove_brochure ? 'Marked to be removed on save.' : 'Active on site.'}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, backgroundColor: startupServiceFormData.remove_brochure ? '#FFFFFF' : '#FEE2E2' }}
+                      onPress={() => setStartupServiceFormData((prev) => ({ ...prev, remove_brochure: !prev.remove_brochure }))}
+                    >
+                      <Text style={{ fontSize: 11, fontWeight: '800', color: startupServiceFormData.remove_brochure ? '#0A5554' : '#DC2626' }}>
+                        {startupServiceFormData.remove_brochure ? 'Keep PDF' : 'Remove PDF'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
+              </View>
+            </ScrollView>
+
+            {/* Modal Footer */}
+            <View style={styles.editModalFooter}>
+              <TouchableOpacity
+                style={styles.editModalCancelBtn}
+                onPress={() => {
+                  setCreateStartupServiceModalVisible(false);
+                  setEditStartupServiceModalVisible(false);
+                  setEditingStartupService(null);
+                }}
+                disabled={startupServicesSaving}
+              >
+                <Text style={styles.editModalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.editModalSaveBtn}
+                onPress={editingStartupService ? handleSaveEditStartupService : handleSaveCreateStartupService}
+                disabled={startupServicesSaving}
+              >
+                {startupServicesSaving ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <Ionicons name="checkmark-sharp" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                    <Text style={styles.editModalSaveBtnText}>
+                      {editingStartupService ? 'Save Changes' : 'Create Service'}
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      {/* ========================================== */}
+      {/* 3. DELETE STARTUP SERVICE MODAL           */}
+      {/* ========================================== */}
+      <Modal
+        visible={deleteStartupServiceModalVisible}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => setDeleteStartupServiceModalVisible(false)}
+      >
+        <View style={styles.deleteModalOverlay}>
+          <View style={styles.deleteModalBox}>
+            <View style={[styles.deleteModalIconWrap, { backgroundColor: '#FEE2E2' }]}>
+              <Ionicons name="trash-outline" size={26} color="#DC2626" />
+            </View>
+            <Text style={styles.deleteModalTitle}>Delete Service?</Text>
+            <Text style={styles.deleteModalMessage}>
+              Are you sure you want to permanently delete &ldquo;{selectedStartupServiceForDelete?.title}&rdquo;? It will be removed from the public /startups page.
+            </Text>
+            <View style={styles.deleteModalBtnRow}>
+              <TouchableOpacity
+                style={styles.deleteModalCancelBtn}
+                onPress={() => setDeleteStartupServiceModalVisible(false)}
+                disabled={isDeletingStartupService}
+              >
+                <Text style={styles.deleteModalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.deleteModalConfirmBtn}
+                onPress={handleConfirmDeleteStartupService}
+                disabled={isDeletingStartupService}
+              >
+                {isDeletingStartupService ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.deleteModalConfirmBtnText}>Delete Service</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -12451,6 +13697,16 @@ const styles = StyleSheet.create({
     borderColor: Colors.line,
     borderRadius: Radii.sm,
     paddingHorizontal: 12,
+    height: 44,
+  },
+  searchBarContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    marginBottom: 12,
     height: 44,
   },
   searchIcon: {

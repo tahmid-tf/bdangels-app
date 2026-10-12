@@ -1367,6 +1367,158 @@ export async function deleteAdminEvent(token, id) {
   return { ok: false, message: 'Could not delete event.' };
 }
 
+/**
+ * Fetch list of Startup Services via GET /api/admin/startup-services
+ */
+export async function fetchAdminStartupServices(token) {
+  try {
+    const res = await fetchAdminWithFallback('/admin/startup-services', token, {
+      method: 'GET',
+    });
+    if (res) {
+      const json = await res.json();
+      if (res.ok && json.data) {
+        return {
+          ok: true,
+          data: Array.isArray(json.data) ? json.data : [],
+        };
+      }
+      return {
+        ok: false,
+        data: [],
+        message: json.message || 'Failed to load startup services.',
+      };
+    }
+  } catch (err) {
+    console.log('Admin fetch startup services error:', err);
+  }
+  return { ok: false, data: [], message: 'Could not connect to server.' };
+}
+
+/**
+ * Fetch single startup service details via GET /api/admin/startup-services/{id}
+ */
+export async function fetchAdminStartupService(token, id) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/startup-services/${id}`, token, {
+      method: 'GET',
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        data: json.data || null,
+        message: json.message || '',
+      };
+    }
+  } catch (err) {
+    console.log('Admin fetch startup service error:', err);
+  }
+  return { ok: false, data: null, message: 'Could not connect to server.' };
+}
+
+/**
+ * Create a new startup service via POST /api/admin/startup-services
+ */
+export async function createAdminStartupService(token, payload) {
+  try {
+    const isFormData = typeof FormData !== 'undefined' && payload instanceof FormData;
+    const headers = isFormData ? {} : { 'Content-Type': 'application/json' };
+    const body = isFormData ? payload : JSON.stringify(payload);
+
+    const res = await fetchAdminWithFallback('/admin/startup-services', token, {
+      method: 'POST',
+      headers,
+      body,
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        data: json.data || null,
+        message: json.message || (res.ok ? 'Startup service created successfully.' : 'Failed to create startup service.'),
+        errors: json.errors || null,
+      };
+    }
+  } catch (err) {
+    console.log('Admin create startup service error:', err);
+  }
+  return { ok: false, message: 'Could not connect to server.' };
+}
+
+/**
+ * Update a startup service via POST /api/admin/startup-services/{id}
+ */
+export async function updateAdminStartupService(token, id, payload) {
+  try {
+    const isFormData = typeof FormData !== 'undefined' && payload instanceof FormData;
+    const headers = isFormData ? {} : { 'Content-Type': 'application/json' };
+    const body = isFormData ? payload : JSON.stringify(payload);
+
+    const res = await fetchAdminWithFallback(`/admin/startup-services/${id}`, token, {
+      method: 'POST',
+      headers,
+      body,
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        data: json.data || null,
+        message: json.message || (res.ok ? 'Startup service updated successfully.' : 'Failed to update startup service.'),
+        errors: json.errors || null,
+      };
+    }
+  } catch (err) {
+    console.log('Admin update startup service error:', err);
+  }
+  return { ok: false, message: 'Could not connect to server.' };
+}
+
+/**
+ * Reorder startup services via POST /api/admin/startup-services/reorder
+ */
+export async function reorderAdminStartupServices(token, orderIds) {
+  try {
+    const res = await fetchAdminWithFallback('/admin/startup-services/reorder', token, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ order: orderIds }),
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        message: json.message || 'Startup services reordered successfully.',
+      };
+    }
+  } catch (err) {
+    console.log('Admin reorder startup services error:', err);
+  }
+  return { ok: false, message: 'Could not connect to server.' };
+}
+
+/**
+ * Delete a startup service via DELETE /api/admin/startup-services/{id}
+ */
+export async function deleteAdminStartupService(token, id) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/startup-services/${id}`, token, {
+      method: 'DELETE',
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        message: json.message || 'Startup service deleted successfully.',
+      };
+    }
+  } catch (err) {
+    console.log('Admin delete startup service error:', err);
+  }
+  return { ok: false, message: 'Could not delete startup service.' };
+}
+
 
 // Embedded fallback data directly from live Laravel backend for 100% resilient rendering
 export const FALLBACK_HOME_DATA = {
