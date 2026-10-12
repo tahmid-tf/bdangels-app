@@ -921,9 +921,19 @@ export async function fetchAdminDealInvestments(token, params = {}) {
 /**
  * Fetch BAN Wealth Orders from GET /api/admin/ban-wealth-orders
  */
-export async function fetchAdminBanWealthOrders(token) {
+export async function fetchAdminBanWealthOrders(
+  token,
+  { q = '', status = '', page = 1, per_page = 25 } = {}
+) {
   try {
-    const res = await fetchAdminWithFallback('/admin/ban-wealth-orders', token);
+    const params = new URLSearchParams();
+    if (q) params.append('q', q);
+    if (status && status !== 'all') params.append('status', status);
+    if (page) params.append('page', String(page));
+    if (per_page) params.append('per_page', String(per_page));
+
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    const res = await fetchAdminWithFallback(`/admin/ban-wealth-orders${qs}`, token);
     if (res && res.ok) {
       const json = await res.json();
       return json.data || json;
@@ -932,6 +942,141 @@ export async function fetchAdminBanWealthOrders(token) {
     console.log('Admin BAN wealth orders fetch error:', err);
   }
   return null;
+}
+
+/**
+ * Fetch single BAN Wealth Order by ID from GET /api/admin/ban-wealth-orders/{id}
+ */
+export async function fetchAdminBanWealthOrder(token, orderId) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/ban-wealth-orders/${orderId}`, token);
+    if (res && res.ok) {
+      const json = await res.json();
+      return json.data || json;
+    }
+  } catch (err) {
+    console.log('Admin BAN wealth order fetch error:', err);
+  }
+  return null;
+}
+
+/**
+ * Update BAN Wealth Order status via PATCH /api/admin/ban-wealth-orders/{id}
+ */
+export async function updateAdminBanWealthOrderStatus(token, orderId, { status, review_note = '' }) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/ban-wealth-orders/${orderId}`, token, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status, review_note }),
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        data: json.data || null,
+        message: json.message || (res.ok ? 'Order updated.' : 'Could not update order status.'),
+        errors: json.errors || null,
+      };
+    }
+  } catch (err) {
+    console.log('Update BAN wealth order status error:', err);
+  }
+  return { ok: false, message: 'Network error updating order status.' };
+}
+
+/**
+ * Fetch Admin Email Campaigns & Recipients from GET /api/admin/mail-list
+ */
+export async function fetchAdminMailCampaigns(
+  token,
+  { search = '', account_status = '', payment_status = '', page = 1, per_page = 20 } = {}
+) {
+  try {
+    const params = new URLSearchParams();
+    if (search) params.append('search', search);
+    if (account_status && account_status !== 'all') params.append('account_status', account_status);
+    if (payment_status && payment_status !== 'all') params.append('payment_status', payment_status);
+    if (page) params.append('page', String(page));
+    if (per_page) params.append('per_page', String(per_page));
+
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    const res = await fetchAdminWithFallback(`/admin/mail-list${qs}`, token);
+    if (res && res.ok) {
+      const json = await res.json();
+      return json.data || json;
+    }
+  } catch (err) {
+    console.log('Admin mail list fetch error:', err);
+  }
+  return null;
+}
+
+/**
+ * Send Email Campaign broadcast via POST /api/admin/mail-list/send
+ */
+export async function sendAdminMailCampaign(token, campaignData) {
+  try {
+    const res = await fetchAdminWithFallback('/admin/mail-list/send', token, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(campaignData),
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        data: json.data || null,
+        message: json.message || (res.ok ? 'Campaign broadcast processed.' : 'Could not send campaign.'),
+        errors: json.errors || null,
+      };
+    }
+  } catch (err) {
+    console.log('Send mail campaign error:', err);
+  }
+  return { ok: false, message: 'Network error sending campaign.' };
+}
+
+/**
+ * Delete single campaign log via DELETE /api/admin/mail-list/logs/{id}
+ */
+export async function deleteAdminMailCampaignLog(token, logId) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/mail-list/logs/${logId}`, token, {
+      method: 'DELETE',
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        message: json.message || (res.ok ? 'Log deleted.' : 'Could not delete campaign log.'),
+      };
+    }
+  } catch (err) {
+    console.log('Delete mail campaign log error:', err);
+  }
+  return { ok: false, message: 'Network error deleting campaign log.' };
+}
+
+/**
+ * Clear all campaign logs via DELETE /api/admin/mail-list/logs
+ */
+export async function clearAllAdminMailCampaignLogs(token) {
+  try {
+    const res = await fetchAdminWithFallback('/admin/mail-list/logs', token, {
+      method: 'DELETE',
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        message: json.message || (res.ok ? 'All logs cleared.' : 'Could not clear campaign logs.'),
+      };
+    }
+  } catch (err) {
+    console.log('Clear all campaign logs error:', err);
+  }
+  return { ok: false, message: 'Network error clearing campaign logs.' };
 }
 
 /**

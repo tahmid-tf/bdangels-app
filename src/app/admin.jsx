@@ -58,6 +58,12 @@ import {
   fetchAdminInvestorInvestmentSuggestions,
   fetchAdminDealInvestments,
   fetchAdminBanWealthOrders,
+  fetchAdminBanWealthOrder,
+  updateAdminBanWealthOrderStatus,
+  fetchAdminMailCampaigns,
+  sendAdminMailCampaign,
+  deleteAdminMailCampaignLog,
+  clearAllAdminMailCampaignLogs,
   fetchHomePageData,
   fetchBlogsPageData,
   fetchAdminBlogs,
@@ -451,6 +457,62 @@ export default function AdminScreen() {
   // BAN Wealth Orders State
   const [banWealthOrders, setBanWealthOrders] = useState([]);
   const [banWealthOrdersLoading, setBanWealthOrdersLoading] = useState(false);
+  const [banWealthSearch, setBanWealthSearch] = useState('');
+  const [banWealthStatusFilter, setBanWealthStatusFilter] = useState('all'); // 'all' | 'pending' | 'accepted' | 'rejected'
+  const [banWealthCounts, setBanWealthCounts] = useState({ pending: 0, accepted: 0, rejected: 0 });
+  const [banWealthPagination, setBanWealthPagination] = useState({
+    currentPage: 1,
+    lastPage: 1,
+    total: 0,
+    perPage: 25,
+    from: 0,
+    to: 0,
+  });
+  const banWealthSearchTimeoutRef = useRef(null);
+
+  // BAN Wealth Order Review Modal State
+  const [viewWealthOrderModalVisible, setViewWealthOrderModalVisible] = useState(false);
+  const [selectedWealthOrder, setSelectedWealthOrder] = useState(null);
+  const [wealthReviewStatus, setWealthReviewStatus] = useState('pending');
+  const [wealthReviewNote, setWealthReviewNote] = useState('');
+  const [updatingWealthOrderStatus, setUpdatingWealthOrderStatus] = useState(false);
+
+  // Email Campaigns State
+  const [mailSubTab, setMailSubTab] = useState('logs'); // 'logs' | 'recipients'
+  const [mailCampaignLogs, setMailCampaignLogs] = useState([]);
+  const [mailRecipients, setMailRecipients] = useState([]);
+  const [mailRecipientsCount, setMailRecipientsCount] = useState(0);
+  const [mailCampaignsLoading, setMailCampaignsLoading] = useState(false);
+  const [mailSearch, setMailSearch] = useState('');
+  const [mailAccountStatusFilter, setMailAccountStatusFilter] = useState('all');
+  const [mailPaymentStatusFilter] = useState('all');
+  const [mailPagination, setMailPagination] = useState({
+    currentPage: 1,
+    lastPage: 1,
+    total: 0,
+    perPage: 20,
+    from: 0,
+    to: 0,
+  });
+  const mailSearchTimeoutRef = useRef(null);
+
+  // Email Campaign Compose & Log Modals State
+  const [composeCampaignModalVisible, setComposeCampaignModalVisible] = useState(false);
+  const [composeSending, setComposeSending] = useState(false);
+  const [composeFormData, setComposeFormData] = useState({
+    subject: '',
+    message: '',
+    send_mode: 'live', // 'live' | 'test'
+    preview_email: '',
+    target_type: 'all', // 'all' | 'free' | 'paid'
+  });
+  const [viewCampaignLogModalVisible, setViewCampaignLogModalVisible] = useState(false);
+  const [selectedCampaignLog, setSelectedCampaignLog] = useState(null);
+  const [deleteCampaignLogModalVisible, setDeleteCampaignLogModalVisible] = useState(false);
+  const [selectedLogForDelete, setSelectedLogForDelete] = useState(null);
+  const [isDeletingCampaignLog, setIsDeletingCampaignLog] = useState(false);
+  const [clearLogsModalVisible, setClearLogsModalVisible] = useState(false);
+  const [isClearingAllLogs, setIsClearingAllLogs] = useState(false);
 
   // CMS Content State
   const [, setCmsData] = useState(null);
@@ -1067,19 +1129,128 @@ export default function AdminScreen() {
   );
 
   // Fetch BAN Wealth Orders
-  const loadBanWealthOrders = useCallback(async (token = authToken) => {
-    if (!token) return;
-    setBanWealthOrdersLoading(true);
-    try {
-      const res = await fetchAdminBanWealthOrders(token);
-      const list = res?.data || (Array.isArray(res) ? res : []);
-      setBanWealthOrders(list);
-    } catch (err) {
-      console.log('Error loading BAN wealth orders:', err);
-    } finally {
-      setBanWealthOrdersLoading(false);
-    }
-  }, [authToken]);
+  const loadBanWealthOrders = useCallback(
+    async (
+      token = authToken,
+      search = banWealthSearch,
+      status = banWealthStatusFilter,
+      page = 1,
+      options = {}
+    ) => {
+      if (!token) return;
+      const { silent = false } = options;
+      if (!silent) setBanWealthOrdersLoading(true);
+      try {
+        const res = await fetchAdminBanWealthOrders(token, {
+          q: search,
+          status: status !== 'all' ? status : undefined,
+          page,
+          per_page: 25,
+        });
+
+        if (res) {
+          const ordersObj = res.orders || res;
+          const list = ordersObj?.data || (Array.isArray(ordersObj) ? ordersObj : []);
+          setBanWealthOrders(list);
+
+          if (ordersObj && ordersObj.current_page) {
+            setBanWealthPagination({
+              currentPage: ordersObj.current_page,
+              lastPage: ordersObj.last_page || 1,
+              total: ordersObj.total || list.length,
+              perPage: ordersObj.per_page || 25,
+              from: ordersObj.from || (list.length > 0 ? (ordersObj.current_page - 1) * 25 + 1 : 0),
+              to: ordersObj.to || (list.length > 0 ? (ordersObj.current_page - 1) * 25 + list.length : 0),
+            });
+          } else {
+            setBanWealthPagination({
+              currentPage: 1,
+              lastPage: 1,
+              total: list.length,
+              perPage: 25,
+              from: list.length > 0 ? 1 : 0,
+              to: list.length,
+            });
+          }
+
+          if (res.counts) {
+            setBanWealthCounts({
+              pending: Number(res.counts.pending || 0),
+              accepted: Number(res.counts.accepted || 0),
+              rejected: Number(res.counts.rejected || 0),
+            });
+          }
+        }
+      } catch (err) {
+        console.log('Error loading BAN wealth orders:', err);
+      } finally {
+        if (!silent) setBanWealthOrdersLoading(false);
+      }
+    },
+    [authToken, banWealthSearch, banWealthStatusFilter]
+  );
+
+  // Fetch Email Campaigns & Recipients
+  const loadMailCampaigns = useCallback(
+    async (
+      token = authToken,
+      search = mailSearch,
+      accountStatus = mailAccountStatusFilter,
+      paymentStatus = mailPaymentStatusFilter,
+      page = 1,
+      options = {}
+    ) => {
+      if (!token) return;
+      const { silent = false } = options;
+      if (!silent) setMailCampaignsLoading(true);
+      try {
+        const res = await fetchAdminMailCampaigns(token, {
+          search,
+          account_status: accountStatus !== 'all' ? accountStatus : undefined,
+          payment_status: paymentStatus !== 'all' ? paymentStatus : undefined,
+          page,
+          per_page: 20,
+        });
+
+        if (res) {
+          if (Array.isArray(res.recipients)) {
+            setMailRecipients(res.recipients);
+          }
+          if (typeof res.recipients_count === 'number') {
+            setMailRecipientsCount(res.recipients_count);
+          }
+          const logsObj = res.campaign_logs;
+          const logsList = logsObj?.data || (Array.isArray(logsObj) ? logsObj : []);
+          setMailCampaignLogs(logsList);
+
+          if (logsObj && logsObj.current_page) {
+            setMailPagination({
+              currentPage: logsObj.current_page,
+              lastPage: logsObj.last_page || 1,
+              total: logsObj.total || logsList.length,
+              perPage: logsObj.per_page || 20,
+              from: logsObj.from || (logsList.length > 0 ? (logsObj.current_page - 1) * 20 + 1 : 0),
+              to: logsObj.to || (logsList.length > 0 ? (logsObj.current_page - 1) * 20 + logsList.length : 0),
+            });
+          } else {
+            setMailPagination({
+              currentPage: 1,
+              lastPage: 1,
+              total: logsList.length,
+              perPage: 20,
+              from: logsList.length > 0 ? 1 : 0,
+              to: logsList.length,
+            });
+          }
+        }
+      } catch (err) {
+        console.log('Error loading mail campaigns:', err);
+      } finally {
+        if (!silent) setMailCampaignsLoading(false);
+      }
+    },
+    [authToken, mailSearch, mailAccountStatusFilter, mailPaymentStatusFilter]
+  );
 
   // Fetch CMS Content
   const loadCmsData = useCallback(async () => {
@@ -1196,6 +1367,8 @@ export default function AdminScreen() {
       if (dealInvestmentsSearchTimeoutRef.current) clearTimeout(dealInvestmentsSearchTimeoutRef.current);
       if (investorSuggestionTimeoutRef.current) clearTimeout(investorSuggestionTimeoutRef.current);
       if (startupSuggestionTimeoutRef.current) clearTimeout(startupSuggestionTimeoutRef.current);
+      if (banWealthSearchTimeoutRef.current) clearTimeout(banWealthSearchTimeoutRef.current);
+      if (mailSearchTimeoutRef.current) clearTimeout(mailSearchTimeoutRef.current);
     };
   }, []);
 
@@ -1892,6 +2065,8 @@ export default function AdminScreen() {
       if (dealInvestments.length === 0) loadDealInvestments(authToken);
     } else if (tab === 'ban-wealth-orders') {
       if (banWealthOrders.length === 0) loadBanWealthOrders(authToken);
+    } else if (tab === 'mail-campaigns' || tab === 'mail-list') {
+      if (mailCampaignLogs.length === 0 && mailRecipients.length === 0) loadMailCampaigns(authToken);
     }
   };
 
@@ -1921,7 +2096,12 @@ export default function AdminScreen() {
         loadDealInvestments(authToken, dealInvestmentsSearch, dealInvestmentsTypeFilter, dealInvestmentsPagination.currentPage),
       ]);
     }
-    if (activeTab === 'ban-wealth-orders') await loadBanWealthOrders(authToken);
+    if (activeTab === 'ban-wealth-orders') {
+      await loadBanWealthOrders(authToken, banWealthSearch, banWealthStatusFilter, banWealthPagination.currentPage);
+    }
+    if (activeTab === 'mail-campaigns' || activeTab === 'mail-list') {
+      await loadMailCampaigns(authToken, mailSearch, mailAccountStatusFilter, mailPaymentStatusFilter, mailPagination.currentPage);
+    }
     if (
       [
         'startup-services',
@@ -5688,6 +5868,304 @@ export default function AdminScreen() {
     }
   };
 
+  // ==========================================
+  // BAN WEALTH ORDERS HANDLERS
+  // ==========================================
+
+  const handleBanWealthSearchChange = (text) => {
+    setBanWealthSearch(text);
+    if (banWealthSearchTimeoutRef.current) {
+      clearTimeout(banWealthSearchTimeoutRef.current);
+    }
+    banWealthSearchTimeoutRef.current = setTimeout(() => {
+      loadBanWealthOrders(authToken, text, banWealthStatusFilter, 1);
+    }, 400);
+  };
+
+  const handleClearBanWealthSearch = () => {
+    if (banWealthSearchTimeoutRef.current) {
+      clearTimeout(banWealthSearchTimeoutRef.current);
+    }
+    setBanWealthSearch('');
+    loadBanWealthOrders(authToken, '', banWealthStatusFilter, 1);
+  };
+
+  const handleBanWealthStatusFilterChange = (status) => {
+    if (banWealthSearchTimeoutRef.current) {
+      clearTimeout(banWealthSearchTimeoutRef.current);
+    }
+    setBanWealthStatusFilter(status);
+    loadBanWealthOrders(authToken, banWealthSearch, status, 1);
+  };
+
+  const handleBanWealthPageChange = (newPage) => {
+    if (newPage < 1 || newPage > banWealthPagination.lastPage) return;
+    loadBanWealthOrders(authToken, banWealthSearch, banWealthStatusFilter, newPage);
+  };
+
+  const handleOpenReviewWealthOrder = async (order) => {
+    setSelectedWealthOrder(order);
+    setWealthReviewStatus(order.status || 'pending');
+    setWealthReviewNote(order.review_note || '');
+    setViewWealthOrderModalVisible(true);
+
+    if (authToken && order?.id) {
+      try {
+        const res = await fetchAdminBanWealthOrder(authToken, order.id);
+        if (res.ok && res.data) {
+          setSelectedWealthOrder(res.data);
+          setWealthReviewStatus(res.data.status || 'pending');
+          setWealthReviewNote(res.data.review_note || '');
+        }
+      } catch (e) {
+        console.log('Error fetching order detail:', e);
+      }
+    }
+  };
+
+  const handleUpdateWealthOrderStatus = async (statusToSet = wealthReviewStatus, noteToSet = wealthReviewNote) => {
+    if (!authToken || !selectedWealthOrder) return;
+    setUpdatingWealthOrderStatus(true);
+    try {
+      const res = await updateAdminBanWealthOrderStatus(authToken, selectedWealthOrder.id, {
+        status: statusToSet,
+        review_note: noteToSet,
+      });
+      if (res.ok) {
+        Alert.alert('Success', `BAN Wealth order #${selectedWealthOrder.reference || selectedWealthOrder.id} status updated to ${statusToSet.toUpperCase()}.`);
+        setViewWealthOrderModalVisible(false);
+        setSelectedWealthOrder(null);
+        loadBanWealthOrders(authToken, banWealthSearch, banWealthStatusFilter, banWealthPagination.currentPage, { silent: true });
+      } else {
+        const errorMsg = res.errors ? Object.values(res.errors).flat().join('\n') : res.message || 'Could not update order status.';
+        Alert.alert('Update Failed', errorMsg);
+      }
+    } catch (err) {
+      console.log('Error updating BAN wealth order:', err);
+      Alert.alert('Error', 'An unexpected error occurred while updating the order.');
+    } finally {
+      setUpdatingWealthOrderStatus(false);
+    }
+  };
+
+  const handleQuickAcceptWealthOrder = (order) => {
+    Alert.alert(
+      'Accept Wealth Order',
+      `Are you sure you want to approve order #${order.reference || order.id} for ${order.currency || 'BDT'} ${Number(order.amount || 0).toLocaleString()}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Accept Order',
+          style: 'default',
+          onPress: async () => {
+            const res = await updateAdminBanWealthOrderStatus(authToken, order.id, {
+              status: 'accepted',
+              review_note: 'Approved via mobile admin workspace.',
+            });
+            if (res.ok) {
+              Alert.alert('Approved', `Order #${order.reference || order.id} accepted successfully.`);
+              loadBanWealthOrders(authToken, banWealthSearch, banWealthStatusFilter, banWealthPagination.currentPage, { silent: true });
+            } else {
+              Alert.alert('Failed', res.message || 'Could not accept order.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleQuickRejectWealthOrder = (order) => {
+    setSelectedWealthOrder(order);
+    setWealthReviewStatus('rejected');
+    setWealthReviewNote(order.review_note || '');
+    setViewWealthOrderModalVisible(true);
+  };
+
+  // ==========================================
+  // EMAIL CAMPAIGNS HANDLERS
+  // ==========================================
+
+  const handleMailSearchChange = (text) => {
+    setMailSearch(text);
+    if (mailSearchTimeoutRef.current) {
+      clearTimeout(mailSearchTimeoutRef.current);
+    }
+    mailSearchTimeoutRef.current = setTimeout(() => {
+      loadMailCampaigns(authToken, text, mailAccountStatusFilter, mailPaymentStatusFilter, 1);
+    }, 400);
+  };
+
+  const handleClearMailSearch = () => {
+    if (mailSearchTimeoutRef.current) {
+      clearTimeout(mailSearchTimeoutRef.current);
+    }
+    setMailSearch('');
+    loadMailCampaigns(authToken, '', mailAccountStatusFilter, mailPaymentStatusFilter, 1);
+  };
+
+  const handleMailAccountStatusFilterChange = (status) => {
+    if (mailSearchTimeoutRef.current) {
+      clearTimeout(mailSearchTimeoutRef.current);
+    }
+    setMailAccountStatusFilter(status);
+    loadMailCampaigns(authToken, mailSearch, status, mailPaymentStatusFilter, 1);
+  };
+
+  const handleMailPageChange = (newPage) => {
+    if (newPage < 1 || newPage > mailPagination.lastPage) return;
+    loadMailCampaigns(authToken, mailSearch, mailAccountStatusFilter, mailPaymentStatusFilter, newPage);
+  };
+
+  const handleOpenComposeCampaign = () => {
+    setComposeFormData({
+      subject: '',
+      message: '',
+      send_mode: 'live',
+      preview_email: currentUser?.email || '',
+      target_type: 'all',
+    });
+    setComposeCampaignModalVisible(true);
+  };
+
+  const handleSendCampaign = async () => {
+    if (!authToken) return;
+    if (!composeFormData.subject.trim()) {
+      Alert.alert('Validation Error', 'Please enter a campaign email subject line.');
+      return;
+    }
+    if (!composeFormData.message.trim()) {
+      Alert.alert('Validation Error', 'Please write the broadcast email content/message.');
+      return;
+    }
+
+    const isTest = composeFormData.send_mode === 'test';
+    if (isTest && !composeFormData.preview_email.trim()) {
+      Alert.alert('Validation Error', 'Please enter a test email address.');
+      return;
+    }
+
+    // Target emails
+    let targetEmails = [];
+    if (!isTest) {
+      if (composeFormData.target_type === 'all') {
+        targetEmails = mailRecipients.map((r) => r.email).filter(Boolean);
+      } else if (composeFormData.target_type === 'free') {
+        targetEmails = mailRecipients.filter((r) => r.account_status === 'free').map((r) => r.email).filter(Boolean);
+      } else if (composeFormData.target_type === 'paid') {
+        targetEmails = mailRecipients.filter((r) => r.account_status !== 'free').map((r) => r.email).filter(Boolean);
+      }
+      if (targetEmails.length === 0) {
+        Alert.alert('Validation Error', 'No reachable recipients found for the selected target.');
+        return;
+      }
+    }
+
+    Alert.alert(
+      isTest ? 'Send Test Broadcast?' : 'Confirm Live Campaign Broadcast',
+      isTest
+        ? `Send test email to ${composeFormData.preview_email}?`
+        : `Are you sure you want to broadcast this campaign to ${targetEmails.length} recipients? Emails will be queued and sent immediately.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: isTest ? 'Send Test' : 'Broadcast Now',
+          style: isTest ? 'default' : 'destructive',
+          onPress: async () => {
+            setComposeSending(true);
+            try {
+              const payload = {
+                subject: composeFormData.subject.trim(),
+                message: composeFormData.message.trim(),
+                send_mode: composeFormData.send_mode,
+                preview_email: isTest ? composeFormData.preview_email.trim() : undefined,
+                emails: isTest ? [composeFormData.preview_email.trim()] : targetEmails,
+              };
+
+              const res = await sendAdminMailCampaign(authToken, payload);
+              if (res.ok) {
+                Alert.alert(
+                  'Success',
+                  isTest
+                    ? `Test email sent to ${composeFormData.preview_email}.`
+                    : `Campaign broadcast dispatched to ${targetEmails.length} recipients.`
+                );
+                setComposeCampaignModalVisible(false);
+                loadMailCampaigns(authToken, mailSearch, mailAccountStatusFilter, mailPaymentStatusFilter, 1);
+              } else {
+                const errorMsg = res.errors ? Object.values(res.errors).flat().join('\n') : res.message || 'Could not dispatch broadcast.';
+                Alert.alert('Dispatch Failed', errorMsg);
+              }
+            } catch (err) {
+              console.log('Error dispatching mail broadcast:', err);
+              Alert.alert('Error', 'An unexpected error occurred while dispatching broadcast.');
+            } finally {
+              setComposeSending(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleOpenViewCampaignLog = (log) => {
+    setSelectedCampaignLog(log);
+    setViewCampaignLogModalVisible(true);
+  };
+
+  const handleOpenDeleteCampaignLog = (log) => {
+    setSelectedLogForDelete(log);
+    setDeleteCampaignLogModalVisible(true);
+  };
+
+  const handleConfirmDeleteCampaignLog = async () => {
+    if (!authToken || !selectedLogForDelete) return;
+    setIsDeletingCampaignLog(true);
+    try {
+      const res = await deleteAdminMailCampaignLog(authToken, selectedLogForDelete.id);
+      if (res.ok) {
+        Alert.alert('Deleted', 'Campaign send log deleted.');
+        setDeleteCampaignLogModalVisible(false);
+        if (selectedCampaignLog && selectedCampaignLog.id === selectedLogForDelete.id) {
+          setViewCampaignLogModalVisible(false);
+        }
+        setSelectedLogForDelete(null);
+        loadMailCampaigns(authToken, mailSearch, mailAccountStatusFilter, mailPaymentStatusFilter, mailPagination.currentPage);
+      } else {
+        Alert.alert('Failed', res.message || 'Could not delete log.');
+      }
+    } catch (err) {
+      console.log('Error deleting campaign log:', err);
+      Alert.alert('Error', 'An unexpected error occurred while deleting the log.');
+    } finally {
+      setIsDeletingCampaignLog(false);
+    }
+  };
+
+  const handleOpenClearAllCampaignLogs = () => {
+    setClearLogsModalVisible(true);
+  };
+
+  const handleConfirmClearAllCampaignLogs = async () => {
+    if (!authToken) return;
+    setIsClearingAllLogs(true);
+    try {
+      const res = await clearAllAdminMailCampaignLogs(authToken);
+      if (res.ok) {
+        Alert.alert('Cleared', 'All campaign send logs have been cleared.');
+        setClearLogsModalVisible(false);
+        setViewCampaignLogModalVisible(false);
+        loadMailCampaigns(authToken, mailSearch, mailAccountStatusFilter, mailPaymentStatusFilter, 1);
+      } else {
+        Alert.alert('Failed', res.message || 'Could not clear logs (superadmin required).');
+      }
+    } catch (err) {
+      console.log('Error clearing all campaign logs:', err);
+      Alert.alert('Error', 'An unexpected error occurred while clearing logs.');
+    } finally {
+      setIsClearingAllLogs(false);
+    }
+  };
+
   // Handle Logout
   const handleLogout = () => {
     Alert.alert('Sign Out', 'Are you sure you want to log out of the admin panel?', [
@@ -8306,10 +8784,10 @@ export default function AdminScreen() {
                   <Text style={styles.sectionSubheading}>
                     {investmentsSubTab === 'completed'
                       ? investorInvestmentsPagination.total > 0
-                        ? `Showing ${investorInvestmentsPagination.from}–${investorInvestmentsPagination.to} of ${investorInvestmentsPagination.total} completed records`
+                        ? `Showing ${investorInvestmentsPagination.from}–${investorInvestmentsPagination.to} of ${investorInvestmentsPagination.total} records`
                         : 'Closed transactions and portfolio investments'
                       : dealInvestmentsPagination.total > 0
-                      ? `Showing ${dealInvestmentsPagination.from}–${dealInvestmentsPagination.to} of ${dealInvestmentsPagination.total} syndicate deals`
+                      ? `Showing ${dealInvestmentsPagination.from}–${dealInvestmentsPagination.to} of ${dealInvestmentsPagination.total} deals`
                       : 'Deal-level expressions of interest & commits'}
                   </Text>
                 </View>
@@ -8447,8 +8925,9 @@ export default function AdminScreen() {
                       styles.invSubTabText,
                       investmentsSubTab === 'completed' && styles.invSubTabTextActive,
                     ]}
+                    numberOfLines={1}
                   >
-                    Completed Records
+                    Completed
                   </Text>
                   <View
                     style={[
@@ -8489,6 +8968,7 @@ export default function AdminScreen() {
                       styles.invSubTabText,
                       investmentsSubTab === 'deals' && styles.invSubTabTextActive,
                     ]}
+                    numberOfLines={1}
                   >
                     Deal Activity
                   </Text>
@@ -8514,10 +8994,10 @@ export default function AdminScreen() {
               {investmentsSubTab === 'completed' && (
                 <View>
                   {/* Search Input */}
-                  <View style={styles.dealSearchBar}>
+                  <View style={[styles.searchBar, { marginBottom: 12 }]}>
                     <Ionicons name="search" size={18} color="#64748B" style={styles.searchIcon} />
                     <TextInput
-                      style={styles.dealSearchInput}
+                      style={styles.searchInput}
                       placeholder="Search investor, email, startup..."
                       placeholderTextColor="#94A3B8"
                       value={investorInvestmentsSearch}
@@ -8783,10 +9263,10 @@ export default function AdminScreen() {
               {investmentsSubTab === 'deals' && (
                 <View>
                   {/* Search Input */}
-                  <View style={styles.dealSearchBar}>
+                  <View style={[styles.searchBar, { marginBottom: 12 }]}>
                     <Ionicons name="search" size={18} color="#64748B" style={styles.searchIcon} />
                     <TextInput
-                      style={styles.dealSearchInput}
+                      style={styles.searchInput}
                       placeholder="Search deal title, sector, description..."
                       placeholderTextColor="#94A3B8"
                       value={dealInvestmentsSearch}
@@ -11997,37 +12477,436 @@ export default function AdminScreen() {
           {activeTab === 'ban-wealth-orders' && (
             <View style={styles.tabContent}>
               <View style={styles.sectionHeaderRow}>
-                <View>
+                <View style={{ flex: 1 }}>
                   <Text style={styles.sectionHeading}>BAN Wealth Orders</Text>
-                  <Text style={styles.sectionSubheading}>Private wealth & syndicate fund management orders</Text>
+                  <Text style={styles.sectionSubheading}>
+                    Private wealth & syndicate fund management orders ({banWealthPagination.total || 0} total)
+                  </Text>
                 </View>
                 <TouchableOpacity
                   style={styles.refreshIconBtn}
-                  onPress={() => loadBanWealthOrders(authToken)}
+                  onPress={() => loadBanWealthOrders(authToken, banWealthSearch, banWealthStatusFilter, banWealthPagination.currentPage)}
+                  activeOpacity={0.7}
                 >
                   <Ionicons name="refresh" size={18} color={Colors.forest} />
                 </TouchableOpacity>
               </View>
 
-              {banWealthOrdersLoading ? (
+              {/* 4 KPI Summary Cards */}
+              <View style={styles.metricsGrid}>
+                {/* Total Orders */}
+                <TouchableOpacity
+                  style={[styles.metricCard, styles.metricCardTeal]}
+                  onPress={() => handleBanWealthStatusFilterChange('all')}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.metricTop}>
+                    <Text style={styles.metricLabel}>Total Orders</Text>
+                    <View style={[styles.metricIconWrap, { backgroundColor: '#E6F4F1' }]}>
+                      <Ionicons name="layers" size={16} color="#0A5554" />
+                    </View>
+                  </View>
+                  <Text style={styles.metricValue}>{banWealthPagination.total || 0}</Text>
+                  <View style={styles.metricBottom}>
+                    <Text style={styles.metricDetail}>All private wealth</Text>
+                    <Ionicons name="arrow-forward" size={14} color={Colors.muted} />
+                  </View>
+                </TouchableOpacity>
+
+                {/* Pending Review */}
+                <TouchableOpacity
+                  style={[styles.metricCard, styles.metricCardGold]}
+                  onPress={() => handleBanWealthStatusFilterChange('pending')}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.metricTop}>
+                    <Text style={styles.metricLabel}>Pending</Text>
+                    <View style={[styles.metricIconWrap, { backgroundColor: '#FEF3C7' }]}>
+                      <Ionicons name="time" size={16} color="#B45309" />
+                    </View>
+                  </View>
+                  <Text style={[styles.metricValue, { color: '#B45309' }]}>
+                    {banWealthCounts.pending || 0}
+                  </Text>
+                  <View style={styles.metricBottom}>
+                    <Text style={styles.metricDetail}>Awaiting review</Text>
+                    <Ionicons name="arrow-forward" size={14} color="#B45309" />
+                  </View>
+                </TouchableOpacity>
+
+                {/* Accepted Orders */}
+                <TouchableOpacity
+                  style={[styles.metricCard, styles.metricCardTeal, { borderLeftColor: '#059669' }]}
+                  onPress={() => handleBanWealthStatusFilterChange('accepted')}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.metricTop}>
+                    <Text style={styles.metricLabel}>Accepted</Text>
+                    <View style={[styles.metricIconWrap, { backgroundColor: '#D1FAE5' }]}>
+                      <Ionicons name="checkmark-circle" size={16} color="#059669" />
+                    </View>
+                  </View>
+                  <Text style={[styles.metricValue, { color: '#059669' }]}>
+                    {banWealthCounts.accepted || 0}
+                  </Text>
+                  <View style={styles.metricBottom}>
+                    <Text style={styles.metricDetail}>Approved allocation</Text>
+                    <Ionicons name="arrow-forward" size={14} color="#059669" />
+                  </View>
+                </TouchableOpacity>
+
+                {/* Rejected Orders */}
+                <TouchableOpacity
+                  style={[styles.metricCard, { borderLeftWidth: 4, borderLeftColor: '#DC2626' }]}
+                  onPress={() => handleBanWealthStatusFilterChange('rejected')}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.metricTop}>
+                    <Text style={styles.metricLabel}>Rejected</Text>
+                    <View style={[styles.metricIconWrap, { backgroundColor: '#FEE2E2' }]}>
+                      <Ionicons name="close-circle" size={16} color="#DC2626" />
+                    </View>
+                  </View>
+                  <Text style={[styles.metricValue, { color: '#DC2626' }]}>
+                    {banWealthCounts.rejected || 0}
+                  </Text>
+                  <View style={styles.metricBottom}>
+                    <Text style={styles.metricDetail}>Declined or closed</Text>
+                    <Ionicons name="arrow-forward" size={14} color="#DC2626" />
+                  </View>
+                </TouchableOpacity>
+              </View>
+
+              {/* Permanently mounted Search Bar */}
+              <View style={styles.searchBar}>
+                <Ionicons name="search-outline" size={18} color={Colors.muted} style={styles.searchIcon} />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Search reference, investor, email, fund..."
+                  placeholderTextColor={Colors.mutedLight}
+                  value={banWealthSearch}
+                  onChangeText={handleBanWealthSearchChange}
+                  autoCapitalize="none"
+                  returnKeyType="search"
+                />
+                {banWealthSearch.length > 0 && (
+                  <TouchableOpacity onPress={handleClearBanWealthSearch} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                    <Ionicons name="close-circle" size={18} color={Colors.muted} />
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* Status Filter Chips */}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.memberFilterTabsContent}
+                style={styles.memberFilterTabsScroll}
+              >
+                {[
+                  { key: 'all', label: 'All Orders', count: banWealthPagination.total },
+                  { key: 'pending', label: 'Pending', count: banWealthCounts.pending },
+                  { key: 'accepted', label: 'Accepted', count: banWealthCounts.accepted },
+                  { key: 'rejected', label: 'Rejected', count: banWealthCounts.rejected },
+                ].map((chip) => {
+                  const isActive = banWealthStatusFilter === chip.key;
+                  return (
+                    <TouchableOpacity
+                      key={`wealth-chip-${chip.key}`}
+                      style={[styles.memberFilterChip, isActive && styles.memberFilterChipActive]}
+                      onPress={() => handleBanWealthStatusFilterChange(chip.key)}
+                      activeOpacity={0.7}
+                    >
+                      <Text
+                        style={[
+                          styles.memberFilterChipText,
+                          isActive && styles.memberFilterChipTextActive,
+                        ]}
+                      >
+                        {chip.label}
+                      </Text>
+                      <View
+                        style={[
+                          styles.memberFilterBadge,
+                          isActive ? styles.memberFilterBadgeActive : styles.memberFilterBadgeInactive,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.memberFilterBadgeText,
+                            isActive && styles.memberFilterBadgeTextActive,
+                          ]}
+                        >
+                          {chip.count !== undefined ? chip.count : 0}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+
+              {/* Order List / States */}
+              {banWealthOrdersLoading && banWealthOrders.length === 0 ? (
                 <View style={styles.listLoadingBox}>
                   <ActivityIndicator size="small" color={Colors.forest} />
                   <Text style={styles.loadingText}>Fetching wealth orders...</Text>
                 </View>
               ) : banWealthOrders.length === 0 ? (
                 <View style={styles.emptyState}>
-                  <Ionicons name="receipt-outline" size={40} color={Colors.mutedLight} />
+                  <Ionicons name="receipt-outline" size={44} color={Colors.mutedLight} />
                   <Text style={styles.emptyTitle}>No Wealth Orders</Text>
-                  <Text style={styles.emptyText}>All wealth management orders will appear here.</Text>
+                  <Text style={styles.emptyText}>
+                    {banWealthSearch || banWealthStatusFilter !== 'all'
+                      ? 'No orders match your search and filter criteria.'
+                      : 'All private wealth syndicate fund management orders will appear here.'}
+                  </Text>
+                  {(banWealthSearch.length > 0 || banWealthStatusFilter !== 'all') && (
+                    <TouchableOpacity
+                      style={styles.emptyAddBtn}
+                      onPress={() => {
+                        handleClearBanWealthSearch();
+                        handleBanWealthStatusFilterChange('all');
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.emptyAddBtnText}>Reset Filters</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
               ) : (
                 <View style={styles.cardsList}>
-                  {banWealthOrders.map((ord, idx) => (
-                    <View key={`ord-${ord.id || idx}`} style={styles.subCard}>
-                      <Text style={styles.subUserName}>Order #{ord.id}</Text>
-                      <Text style={styles.subUserEmail}>{ord.currency || 'BDT'} {ord.amount}</Text>
+                  {banWealthOrdersLoading && (
+                    <View style={styles.memberListUpdatingBar}>
+                      <ActivityIndicator size="small" color={Colors.forest} />
+                      <Text style={styles.memberListUpdatingText}>Syncing orders...</Text>
                     </View>
-                  ))}
+                  )}
+
+                  {banWealthOrders.map((ord, idx) => {
+                    const status = (ord.status || 'pending').toLowerCase();
+                    const isPending = status === 'pending';
+                    const isAccepted = status === 'accepted';
+                    const isRejected = status === 'rejected';
+
+                    const statusBg = isAccepted ? '#D1FAE5' : isRejected ? '#FEE2E2' : '#FEF3C7';
+                    const statusText = isAccepted ? '#065F46' : isRejected ? '#991B1B' : '#92400E';
+                    const statusDot = isAccepted ? '#059669' : isRejected ? '#DC2626' : '#D97706';
+
+                    const dateStr = ord.created_at
+                      ? new Date(ord.created_at).toLocaleDateString('en-GB', {
+                          day: 'numeric',
+                          month: 'short',
+                          year: 'numeric',
+                        })
+                      : 'Recent';
+
+                    const investorName = ord.full_name || ord.investor?.name || 'Investor';
+                    const investorInitial = investorName.trim().charAt(0).toUpperCase() || 'W';
+
+                    return (
+                      <View key={`bwo-${ord.id || idx}`} style={styles.wealthCard}>
+                        {/* Header: Reference + Date + Status Pill */}
+                        <View style={styles.wealthCardHeader}>
+                          <View style={{ flex: 1 }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                              <Text style={styles.wealthRefBadge}>
+                                #{ord.reference || `BWO-${ord.id}`}
+                              </Text>
+                              <Text style={styles.wealthCardDate}>{dateStr}</Text>
+                            </View>
+                          </View>
+
+                          <View style={[styles.wealthStatusPill, { backgroundColor: statusBg }]}>
+                            <View style={[styles.wealthStatusDot, { backgroundColor: statusDot }]} />
+                            <Text style={[styles.wealthStatusText, { color: statusText }]}>
+                              {status.toUpperCase()}
+                            </Text>
+                          </View>
+                        </View>
+
+                        {/* Investor Row */}
+                        <View style={styles.wealthInvestorRow}>
+                          <View style={styles.wealthAvatarCircle}>
+                            <Text style={styles.wealthAvatarText}>{investorInitial}</Text>
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.wealthInvestorName}>{investorName}</Text>
+                            <Text style={styles.wealthInvestorEmail} numberOfLines={1}>
+                              {ord.email || ord.investor?.email || 'No email provided'}
+                            </Text>
+                            {Boolean(ord.phone) && (
+                              <Text style={styles.wealthInvestorPhone}>{ord.phone}</Text>
+                            )}
+                          </View>
+                        </View>
+
+                        {/* Fund & Financials Detail Box */}
+                        <View style={styles.wealthDetailsBox}>
+                          <View style={styles.wealthFundHeader}>
+                            <Ionicons name="shield-checkmark" size={15} color="#0A5554" />
+                            <Text style={styles.wealthFundName} numberOfLines={1}>
+                              {ord.fund_name || 'BAN Private Wealth Fund'}
+                            </Text>
+                            {Boolean(ord.fund_code) && (
+                              <View style={styles.wealthFundCodeBadge}>
+                                <Text style={styles.wealthFundCodeText}>{ord.fund_code}</Text>
+                              </View>
+                            )}
+                          </View>
+
+                          {/* Financials Metric Row */}
+                          <View style={styles.wealthFinancialsRow}>
+                            <View style={styles.wealthFinancialCol}>
+                              <Text style={styles.wealthFinancialLabel}>ORDER AMOUNT</Text>
+                              <Text style={styles.wealthFinancialValue}>
+                                {ord.currency || 'BDT'} {Number(ord.amount || 0).toLocaleString()}
+                              </Text>
+                            </View>
+                            <View style={styles.wealthFinancialCol}>
+                              <Text style={styles.wealthFinancialLabel}>EST. UNITS / NAV</Text>
+                              <Text style={styles.wealthFinancialSubValue}>
+                                {ord.estimated_units ? Number(ord.estimated_units).toLocaleString() : 'N/A'} units
+                              </Text>
+                              <Text style={styles.wealthNavSubText}>
+                                NAV: {ord.nav_at_order ? `${ord.currency || 'BDT'} ${ord.nav_at_order}` : 'Current'}
+                              </Text>
+                            </View>
+                          </View>
+
+                          {/* Compliance Tags Row */}
+                          <View style={styles.wealthTagsRow}>
+                            {Boolean(ord.shariah) && (
+                              <View style={[styles.wealthMicroTag, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' }]}>
+                                <Ionicons name="leaf-outline" size={11} color="#065F46" />
+                                <Text style={[styles.wealthMicroTagText, { color: '#065F46' }]}>Shariah</Text>
+                              </View>
+                            )}
+                            {Boolean(ord.monthly) && (
+                              <View style={[styles.wealthMicroTag, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
+                                <Ionicons name="repeat-outline" size={11} color="#1E40AF" />
+                                <Text style={[styles.wealthMicroTagText, { color: '#1E40AF' }]}>Monthly SIP</Text>
+                              </View>
+                            )}
+                            {Boolean(ord.politically_exposed) && (
+                              <View style={[styles.wealthMicroTag, { backgroundColor: '#FEF3C7', borderColor: '#FDE68A' }]}>
+                                <Ionicons name="warning-outline" size={11} color="#92400E" />
+                                <Text style={[styles.wealthMicroTagText, { color: '#92400E' }]}>PEP Flag</Text>
+                              </View>
+                            )}
+                            {Boolean(ord.payment_method) && (
+                              <View style={[styles.wealthMicroTag, { backgroundColor: '#F8FAFC', borderColor: '#E2E8F0' }]}>
+                                <Ionicons name="card-outline" size={11} color="#475569" />
+                                <Text style={[styles.wealthMicroTagText, { color: '#475569' }]}>
+                                  {ord.payment_method.replace('_', ' ')}
+                                </Text>
+                              </View>
+                            )}
+                          </View>
+
+                          {/* Review Note Snippet if present */}
+                          {Boolean(ord.review_note) && (
+                            <View style={styles.wealthReviewNoteBox}>
+                              <Ionicons name="document-text-outline" size={13} color="#64748B" style={{ marginTop: 1 }} />
+                              <Text style={styles.wealthReviewNoteText} numberOfLines={2}>
+                                {ord.review_note}
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+
+                        {/* Card Actions Toolbar */}
+                        <View style={styles.wealthActionsRow}>
+                          <TouchableOpacity
+                            style={styles.wealthReviewBtn}
+                            onPress={() => handleOpenReviewWealthOrder(ord)}
+                            activeOpacity={0.8}
+                          >
+                            <Ionicons name="create-outline" size={15} color="#0A5554" />
+                            <Text style={styles.wealthReviewBtnText}>Review & Notes</Text>
+                          </TouchableOpacity>
+
+                          {isPending && (
+                            <View style={styles.wealthQuickActionsGroup}>
+                              <TouchableOpacity
+                                style={styles.wealthQuickAcceptBtn}
+                                onPress={() => handleQuickAcceptWealthOrder(ord)}
+                                activeOpacity={0.8}
+                              >
+                                <Ionicons name="checkmark" size={14} color="#FFFFFF" />
+                                <Text style={styles.wealthQuickAcceptBtnText}>Accept</Text>
+                              </TouchableOpacity>
+
+                              <TouchableOpacity
+                                style={styles.wealthQuickRejectBtn}
+                                onPress={() => handleQuickRejectWealthOrder(ord)}
+                                activeOpacity={0.8}
+                              >
+                                <Ionicons name="close" size={14} color="#DC2626" />
+                                <Text style={styles.wealthQuickRejectBtnText}>Reject</Text>
+                              </TouchableOpacity>
+                            </View>
+                          )}
+                        </View>
+                      </View>
+                    );
+                  })}
+
+                  {/* Pagination Bar */}
+                  {banWealthPagination.lastPage > 1 && (
+                    <View style={styles.paginationContainer}>
+                      <TouchableOpacity
+                        style={[
+                          styles.paginationBtn,
+                          banWealthPagination.currentPage <= 1 && styles.paginationBtnDisabled,
+                        ]}
+                        onPress={() => handleBanWealthPageChange(banWealthPagination.currentPage - 1)}
+                        disabled={banWealthPagination.currentPage <= 1 || banWealthOrdersLoading}
+                      >
+                        <Ionicons
+                          name="chevron-back"
+                          size={16}
+                          color={banWealthPagination.currentPage <= 1 ? '#9CA3AF' : '#0A5554'}
+                        />
+                        <Text
+                          style={[
+                            styles.paginationBtnText,
+                            banWealthPagination.currentPage <= 1 && styles.paginationBtnTextDisabled,
+                          ]}
+                        >
+                          Prev
+                        </Text>
+                      </TouchableOpacity>
+
+                      <View style={styles.paginationInfoBox}>
+                        <Text style={styles.paginationInfoText}>
+                          Page {banWealthPagination.currentPage} of {banWealthPagination.lastPage}
+                        </Text>
+                      </View>
+
+                      <TouchableOpacity
+                        style={[
+                          styles.paginationBtn,
+                          banWealthPagination.currentPage >= banWealthPagination.lastPage && styles.paginationBtnDisabled,
+                        ]}
+                        onPress={() => handleBanWealthPageChange(banWealthPagination.currentPage + 1)}
+                        disabled={banWealthPagination.currentPage >= banWealthPagination.lastPage || banWealthOrdersLoading}
+                      >
+                        <Text
+                          style={[
+                            styles.paginationBtnText,
+                            banWealthPagination.currentPage >= banWealthPagination.lastPage && styles.paginationBtnTextDisabled,
+                          ]}
+                        >
+                          Next
+                        </Text>
+                        <Ionicons
+                          name="chevron-forward"
+                          size={16}
+                          color={banWealthPagination.currentPage >= banWealthPagination.lastPage ? '#9CA3AF' : '#0A5554'}
+                        />
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </View>
               )}
             </View>
@@ -12037,24 +12916,542 @@ export default function AdminScreen() {
           {activeTab === 'mail-campaigns' && (
             <View style={styles.tabContent}>
               <View style={styles.sectionHeaderRow}>
-                <View>
+                <View style={{ flex: 1 }}>
                   <Text style={styles.sectionHeading}>Email Campaigns</Text>
-                  <Text style={styles.sectionSubheading}>Syndicate memos, member announcements, digests</Text>
+                  <Text style={styles.sectionSubheading}>
+                    Broadcast memos, syndicate digests & announcements
+                  </Text>
+                </View>
+                <View style={styles.sectionHeaderActions}>
+                  <TouchableOpacity
+                    style={styles.refreshIconBtn}
+                    onPress={() => loadMailCampaigns(authToken, mailSearch, mailAccountStatusFilter, mailPaymentStatusFilter, mailPagination.currentPage)}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="refresh" size={18} color={Colors.forest} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.addMemberBtn}
+                    onPress={handleOpenComposeCampaign}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="paper-plane-outline" size={15} color="#FFFFFF" />
+                    <Text style={styles.addMemberBtnText}>Compose</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
 
-              <View style={styles.cmsCard}>
-                <View style={styles.cmsCardHeader}>
-                  <View style={styles.metaPill}>
-                    <Text style={styles.metaPillText}>Digest Active</Text>
+              {/* 3 KPI Summary Cards */}
+              <View style={styles.metricsGrid}>
+                {/* Reachable Contacts */}
+                <TouchableOpacity
+                  style={[styles.metricCard, styles.metricCardTeal]}
+                  onPress={() => setMailSubTab('recipients')}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.metricTop}>
+                    <Text style={styles.metricLabel}>Reachable Contacts</Text>
+                    <View style={[styles.metricIconWrap, { backgroundColor: '#E6F4F1' }]}>
+                      <Ionicons name="people" size={16} color="#0A5554" />
+                    </View>
                   </View>
-                  <Ionicons name="mail-outline" size={18} color={Colors.forest} />
+                  <Text style={styles.metricValue}>
+                    {mailRecipientsCount || mailRecipients.length || 0}
+                  </Text>
+                  <View style={styles.metricBottom}>
+                    <Text style={styles.metricDetail}>Active directory</Text>
+                    <Ionicons name="arrow-forward" size={14} color={Colors.muted} />
+                  </View>
+                </TouchableOpacity>
+
+                {/* Broadcasts Sent */}
+                <TouchableOpacity
+                  style={[styles.metricCard, styles.metricCardBlue]}
+                  onPress={() => setMailSubTab('logs')}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.metricTop}>
+                    <Text style={styles.metricLabel}>Broadcasts Sent</Text>
+                    <View style={[styles.metricIconWrap, { backgroundColor: '#E0F2FE' }]}>
+                      <Ionicons name="mail" size={16} color="#0284C7" />
+                    </View>
+                  </View>
+                  <Text style={styles.metricValue}>{mailPagination.total || 0}</Text>
+                  <View style={styles.metricBottom}>
+                    <Text style={styles.metricDetail}>Dispatched campaigns</Text>
+                    <Ionicons name="arrow-forward" size={14} color={Colors.muted} />
+                  </View>
+                </TouchableOpacity>
+
+                {/* Dispatch Engine / Channel */}
+                <View style={[styles.metricCard, styles.metricCardPlum, { width: '100%', marginTop: 2 }]}>
+                  <View style={styles.metricTop}>
+                    <Text style={styles.metricLabel}>Broadcast Engine</Text>
+                    <View style={[styles.metricIconWrap, { backgroundColor: '#F3E8FF' }]}>
+                      <Ionicons name="shield-checkmark" size={16} color="#7E22CE" />
+                    </View>
+                  </View>
+                  <Text style={[styles.metricValue, { fontSize: 16 }]}>SMTP Gateway Ready</Text>
+                  <View style={styles.metricBottom}>
+                    <Text style={styles.metricDetail}>Queued delivery with rate-limit compliance</Text>
+                    <Ionicons name="flash-outline" size={14} color="#7E22CE" />
+                  </View>
                 </View>
-                <Text style={styles.cmsCardTitle}>Weekly Deal Memorandum</Text>
-                <Text style={styles.cmsCardDesc}>
-                  Automated notifications sent out to approved angel members whenever a new syndicate opportunity is opened.
-                </Text>
               </View>
+
+              {/* Sub-Tab Switcher: Campaign Logs vs Recipients Directory */}
+              <View style={styles.dealTabsContainer}>
+                <TouchableOpacity
+                  style={[
+                    styles.dealTabChip,
+                    mailSubTab === 'logs' && styles.dealTabChipActive,
+                  ]}
+                  onPress={() => setMailSubTab('logs')}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons
+                    name="list-outline"
+                    size={16}
+                    color={mailSubTab === 'logs' ? '#FFFFFF' : '#475569'}
+                  />
+                  <Text
+                    style={[
+                      styles.dealTabChipText,
+                      mailSubTab === 'logs' && styles.dealTabChipTextActive,
+                    ]}
+                  >
+                    Campaign Logs
+                  </Text>
+                  <View
+                    style={[
+                      styles.dealTabChipBadge,
+                      mailSubTab === 'logs' && styles.dealTabChipBadgeActive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.dealTabChipBadgeText,
+                        mailSubTab === 'logs' && styles.dealTabChipBadgeTextActive,
+                      ]}
+                    >
+                      {mailPagination.total || 0}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.dealTabChip,
+                    mailSubTab === 'recipients' && styles.dealTabChipActive,
+                  ]}
+                  onPress={() => setMailSubTab('recipients')}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons
+                    name="people-outline"
+                    size={16}
+                    color={mailSubTab === 'recipients' ? '#FFFFFF' : '#475569'}
+                  />
+                  <Text
+                    style={[
+                      styles.dealTabChipText,
+                      mailSubTab === 'recipients' && styles.dealTabChipTextActive,
+                    ]}
+                  >
+                    Recipients
+                  </Text>
+                  <View
+                    style={[
+                      styles.dealTabChipBadge,
+                      mailSubTab === 'recipients' && styles.dealTabChipBadgeActive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.dealTabChipBadgeText,
+                        mailSubTab === 'recipients' && styles.dealTabChipBadgeTextActive,
+                      ]}
+                    >
+                      {mailRecipientsCount || mailRecipients.length || 0}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              </View>
+
+              {/* Permanently mounted Search Bar */}
+              <View style={styles.searchBar}>
+                <Ionicons name="search-outline" size={18} color={Colors.muted} style={styles.searchIcon} />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder={
+                    mailSubTab === 'logs'
+                      ? 'Search campaign subject, message, sender...'
+                      : 'Search recipient name, email, phone...'
+                  }
+                  placeholderTextColor={Colors.mutedLight}
+                  value={mailSearch}
+                  onChangeText={handleMailSearchChange}
+                  autoCapitalize="none"
+                  returnKeyType="search"
+                />
+                {mailSearch.length > 0 && (
+                  <TouchableOpacity onPress={handleClearMailSearch} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                    <Ionicons name="close-circle" size={18} color={Colors.muted} />
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* SUBTAB 1: CAMPAIGN LOGS */}
+              {mailSubTab === 'logs' && (
+                <View>
+                  {/* Action row above logs: clear all logs button */}
+                  {mailCampaignLogs.length > 0 && (
+                    <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginBottom: 10 }}>
+                      <TouchableOpacity
+                        style={styles.mailClearAllBtn}
+                        onPress={handleOpenClearAllCampaignLogs}
+                        activeOpacity={0.8}
+                      >
+                        <Ionicons name="trash-outline" size={13} color="#DC2626" />
+                        <Text style={styles.mailClearAllBtnText}>Clear All Logs</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+
+                  {mailCampaignsLoading && mailCampaignLogs.length === 0 ? (
+                    <View style={styles.listLoadingBox}>
+                      <ActivityIndicator size="small" color={Colors.forest} />
+                      <Text style={styles.loadingText}>Fetching campaign logs...</Text>
+                    </View>
+                  ) : mailCampaignLogs.length === 0 ? (
+                    <View style={styles.emptyState}>
+                      <Ionicons name="mail-unread-outline" size={44} color={Colors.mutedLight} />
+                      <Text style={styles.emptyTitle}>No Campaign Broadcasts</Text>
+                      <Text style={styles.emptyText}>
+                        {mailSearch
+                          ? 'No broadcasts matched your search criteria.'
+                          : 'You haven’t dispatched any email campaigns yet. Click Compose to broadcast your first memo.'}
+                      </Text>
+                      <TouchableOpacity
+                        style={styles.emptyAddBtn}
+                        onPress={handleOpenComposeCampaign}
+                        activeOpacity={0.8}
+                      >
+                        <Ionicons name="paper-plane" size={15} color="#FFFFFF" />
+                        <Text style={styles.emptyAddBtnText}>Compose Campaign</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <View style={styles.cardsList}>
+                      {mailCampaignsLoading && (
+                        <View style={styles.memberListUpdatingBar}>
+                          <ActivityIndicator size="small" color={Colors.forest} />
+                          <Text style={styles.memberListUpdatingText}>Syncing campaign logs...</Text>
+                        </View>
+                      )}
+
+                      {mailCampaignLogs.map((log, idx) => {
+                        const isTest = log.send_mode === 'test';
+                        const sentDateStr = log.created_at
+                          ? new Date(log.created_at).toLocaleDateString('en-GB', {
+                              day: 'numeric',
+                              month: 'short',
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })
+                          : 'Recent';
+
+                        return (
+                          <View key={`log-${log.id || idx}`} style={styles.mailLogCard}>
+                            <View style={styles.mailLogHeader}>
+                              <View style={{ flex: 1, marginRight: 8 }}>
+                                <Text style={styles.mailLogSubject} numberOfLines={2}>
+                                  {log.subject || 'Untitled Broadcast'}
+                                </Text>
+                              </View>
+                              <View
+                                style={[
+                                  styles.mailModeBadge,
+                                  isTest ? styles.mailModeBadgeTest : styles.mailModeBadgeLive,
+                                ]}
+                              >
+                                <Ionicons
+                                  name={isTest ? 'flask-outline' : 'paper-plane-outline'}
+                                  size={11}
+                                  color={isTest ? '#1E40AF' : '#065F46'}
+                                />
+                                <Text
+                                  style={[
+                                    styles.mailModeBadgeText,
+                                    isTest ? { color: '#1E40AF' } : { color: '#065F46' },
+                                  ]}
+                                >
+                                  {isTest ? 'TEST' : 'LIVE'}
+                                </Text>
+                              </View>
+                            </View>
+
+                            {/* Meta Info */}
+                            <View style={styles.mailLogMetaRow}>
+                              <View style={styles.mailLogMetaItem}>
+                                <Ionicons name="time-outline" size={12} color="#64748B" />
+                                <Text style={styles.mailLogMetaText}>{sentDateStr}</Text>
+                              </View>
+                              <View style={styles.mailLogMetaItem}>
+                                <Ionicons name="person-outline" size={12} color="#64748B" />
+                                <Text style={styles.mailLogMetaText}>
+                                  {log.sender_name || 'Admin'}
+                                </Text>
+                              </View>
+                              <View style={styles.mailLogMetaItem}>
+                                <Ionicons name="people-outline" size={12} color="#0A5554" />
+                                <Text style={[styles.mailLogMetaText, { color: '#0A5554', fontWeight: '700' }]}>
+                                  {log.recipients_count || (isTest ? 1 : 0)} Recipients
+                                </Text>
+                              </View>
+                            </View>
+
+                            {/* Message Preview snippet */}
+                            {Boolean(log.message) && (
+                              <View style={styles.mailLogPreviewBox}>
+                                <Text style={styles.mailLogPreviewText} numberOfLines={2}>
+                                  {log.message.replace(/<[^>]*>/g, '').trim()}
+                                </Text>
+                              </View>
+                            )}
+
+                            {/* Actions Toolbar */}
+                            <View style={styles.mailLogActionsRow}>
+                              <TouchableOpacity
+                                style={styles.mailLogActionBtn}
+                                onPress={() => handleOpenViewCampaignLog(log)}
+                                activeOpacity={0.8}
+                              >
+                                <Ionicons name="eye-outline" size={14} color="#0A5554" />
+                                <Text style={styles.mailLogActionBtnText}>View Details</Text>
+                              </TouchableOpacity>
+
+                              <TouchableOpacity
+                                style={[styles.mailLogActionBtn, styles.mailLogActionBtnDelete]}
+                                onPress={() => handleOpenDeleteCampaignLog(log)}
+                                activeOpacity={0.8}
+                              >
+                                <Ionicons name="trash-outline" size={14} color="#DC2626" />
+                                <Text style={[styles.mailLogActionBtnText, { color: '#DC2626' }]}>
+                                  Delete
+                                </Text>
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+                        );
+                      })}
+
+                      {/* Pagination Bar for logs */}
+                      {mailPagination.lastPage > 1 && (
+                        <View style={styles.paginationContainer}>
+                          <TouchableOpacity
+                            style={[
+                              styles.paginationBtn,
+                              mailPagination.currentPage <= 1 && styles.paginationBtnDisabled,
+                            ]}
+                            onPress={() => handleMailPageChange(mailPagination.currentPage - 1)}
+                            disabled={mailPagination.currentPage <= 1 || mailCampaignsLoading}
+                          >
+                            <Ionicons
+                              name="chevron-back"
+                              size={16}
+                              color={mailPagination.currentPage <= 1 ? '#9CA3AF' : '#0A5554'}
+                            />
+                            <Text
+                              style={[
+                                styles.paginationBtnText,
+                                mailPagination.currentPage <= 1 && styles.paginationBtnTextDisabled,
+                              ]}
+                            >
+                              Prev
+                            </Text>
+                          </TouchableOpacity>
+
+                          <View style={styles.paginationInfoBox}>
+                            <Text style={styles.paginationInfoText}>
+                              Page {mailPagination.currentPage} of {mailPagination.lastPage}
+                            </Text>
+                          </View>
+
+                          <TouchableOpacity
+                            style={[
+                              styles.paginationBtn,
+                              mailPagination.currentPage >= mailPagination.lastPage && styles.paginationBtnDisabled,
+                            ]}
+                            onPress={() => handleMailPageChange(mailPagination.currentPage + 1)}
+                            disabled={mailPagination.currentPage >= mailPagination.lastPage || mailCampaignsLoading}
+                          >
+                            <Text
+                              style={[
+                                styles.paginationBtnText,
+                                mailPagination.currentPage >= mailPagination.lastPage && styles.paginationBtnTextDisabled,
+                              ]}
+                            >
+                              Next
+                            </Text>
+                            <Ionicons
+                              name="chevron-forward"
+                              size={16}
+                              color={mailPagination.currentPage >= mailPagination.lastPage ? '#9CA3AF' : '#0A5554'}
+                            />
+                          </TouchableOpacity>
+                        </View>
+                      )}
+                    </View>
+                  )}
+                </View>
+              )}
+
+              {/* SUBTAB 2: RECIPIENTS DIRECTORY */}
+              {mailSubTab === 'recipients' && (
+                <View>
+                  {/* Filter Chips for Account Status */}
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.memberFilterTabsContent}
+                    style={styles.memberFilterTabsScroll}
+                  >
+                    {[
+                      { key: 'all', label: 'All Recipients', count: mailRecipients.length },
+                      {
+                        key: 'free',
+                        label: 'Free Members',
+                        count: mailRecipients.filter((r) => r.account_status === 'free').length,
+                      },
+                      {
+                        key: 'paid',
+                        label: 'Paid Angels',
+                        count: mailRecipients.filter((r) => r.account_status !== 'free').length,
+                      },
+                    ].map((chip) => {
+                      const isActive = mailAccountStatusFilter === chip.key;
+                      return (
+                        <TouchableOpacity
+                          key={`rec-filter-${chip.key}`}
+                          style={[styles.memberFilterChip, isActive && styles.memberFilterChipActive]}
+                          onPress={() => handleMailAccountStatusFilterChange(chip.key)}
+                          activeOpacity={0.7}
+                        >
+                          <Text
+                            style={[
+                              styles.memberFilterChipText,
+                              isActive && styles.memberFilterChipTextActive,
+                            ]}
+                          >
+                            {chip.label}
+                          </Text>
+                          <View
+                            style={[
+                              styles.memberFilterBadge,
+                              isActive ? styles.memberFilterBadgeActive : styles.memberFilterBadgeInactive,
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.memberFilterBadgeText,
+                                isActive && styles.memberFilterBadgeTextActive,
+                              ]}
+                            >
+                              {chip.count}
+                            </Text>
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+
+                  {/* Recipients List */}
+                  {mailRecipients.length === 0 ? (
+                    <View style={styles.emptyState}>
+                      <Ionicons name="people-outline" size={44} color={Colors.mutedLight} />
+                      <Text style={styles.emptyTitle}>No Recipients Found</Text>
+                      <Text style={styles.emptyText}>
+                        No reachable contacts match the current query.
+                      </Text>
+                    </View>
+                  ) : (
+                    <View style={styles.cardsList}>
+                      {mailRecipients
+                        .filter((rec) => {
+                          if (mailAccountStatusFilter === 'free') return rec.account_status === 'free';
+                          if (mailAccountStatusFilter === 'paid') return rec.account_status !== 'free';
+                          return true;
+                        })
+                        .filter((rec) => {
+                          if (!mailSearch.trim()) return true;
+                          const q = mailSearch.toLowerCase();
+                          return (
+                            (rec.name && rec.name.toLowerCase().includes(q)) ||
+                            (rec.email && rec.email.toLowerCase().includes(q)) ||
+                            (rec.phone && rec.phone.toLowerCase().includes(q))
+                          );
+                        })
+                        .slice(0, 50)
+                        .map((rec, idx) => {
+                          const initial = (rec.name || 'M').charAt(0).toUpperCase();
+                          const isPaid = rec.account_status !== 'free';
+
+                          return (
+                            <View key={`rec-${rec.id || idx}`} style={styles.recipientCard}>
+                              <View style={styles.recipientAvatarCircle}>
+                                <Text style={styles.recipientAvatarText}>{initial}</Text>
+                              </View>
+                              <View style={{ flex: 1 }}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                  <Text style={styles.recipientName}>{rec.name || 'Anonymous'}</Text>
+                                  <View
+                                    style={[
+                                      styles.recipientTierBadge,
+                                      isPaid ? styles.recipientTierPaid : styles.recipientTierFree,
+                                    ]}
+                                  >
+                                    <Text
+                                      style={[
+                                        styles.recipientTierBadgeText,
+                                        isPaid ? { color: '#065F46' } : { color: '#475569' },
+                                      ]}
+                                    >
+                                      {isPaid ? 'PAID' : 'FREE'}
+                                    </Text>
+                                  </View>
+                                </View>
+                                <Text style={styles.recipientEmail} numberOfLines={1}>
+                                  {rec.email || 'No email'}
+                                </Text>
+                                {Boolean(rec.phone) && (
+                                  <Text style={styles.recipientPhone}>{rec.phone}</Text>
+                                )}
+                              </View>
+                              <TouchableOpacity
+                                style={styles.recipientDirectBtn}
+                                onPress={() => {
+                                  setComposeFormData({
+                                    subject: '',
+                                    message: '',
+                                    send_mode: 'test',
+                                    preview_email: rec.email || '',
+                                    target_type: 'all',
+                                  });
+                                  setComposeCampaignModalVisible(true);
+                                }}
+                                activeOpacity={0.7}
+                              >
+                                <Ionicons name="mail-outline" size={16} color="#0A5554" />
+                              </TouchableOpacity>
+                            </View>
+                          );
+                        })}
+                    </View>
+                  )}
+                </View>
+              )}
             </View>
           )}
         </ScrollView>
@@ -20674,6 +22071,605 @@ export default function AdminScreen() {
           </View>
         </View>
       </Modal>
+      {/* MODAL: VIEW & REVIEW BAN WEALTH ORDER */}
+      <Modal
+        visible={viewWealthOrderModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setViewWealthOrderModalVisible(false)}
+      >
+        <View style={styles.editModalSafeArea}>
+          <View style={[styles.editModalContainer, { marginTop: 40 }]}>
+            <View style={styles.editModalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                <View
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 18,
+                    backgroundColor: '#E6F4F1',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Ionicons name="shield-checkmark" size={20} color="#0A5554" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.editModalTitle}>BAN Wealth Order Review</Text>
+                  <Text style={styles.editModalSubtitle} numberOfLines={1}>
+                    #{selectedWealthOrder?.reference || selectedWealthOrder?.id} • {selectedWealthOrder?.fund_name || 'Private Wealth'}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => setViewWealthOrderModalVisible(false)}
+                style={styles.editModalCloseBtn}
+              >
+                <Ionicons name="close" size={22} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              style={styles.editModalContent}
+              contentContainerStyle={{ paddingBottom: 40 }}
+              showsVerticalScrollIndicator={false}
+            >
+              {/* Investor Profile Box */}
+              <View style={styles.wealthModalBox}>
+                <Text style={styles.wealthModalBoxHeading}>INVESTOR INFORMATION</Text>
+                <View style={styles.subDetailRow}>
+                  <Text style={styles.subDetailLabel}>Full Name</Text>
+                  <Text style={styles.subDetailValue}>
+                    {selectedWealthOrder?.full_name || selectedWealthOrder?.investor?.name || 'N/A'}
+                  </Text>
+                </View>
+                <View style={styles.subDetailRow}>
+                  <Text style={styles.subDetailLabel}>Email</Text>
+                  <Text style={styles.subDetailValue}>
+                    {selectedWealthOrder?.email || selectedWealthOrder?.investor?.email || 'N/A'}
+                  </Text>
+                </View>
+                <View style={styles.subDetailRow}>
+                  <Text style={styles.subDetailLabel}>Phone</Text>
+                  <Text style={styles.subDetailValue}>
+                    {selectedWealthOrder?.phone || 'N/A'}
+                  </Text>
+                </View>
+              </View>
+
+              {/* Fund & Allocation Box */}
+              <View style={styles.wealthModalBox}>
+                <Text style={styles.wealthModalBoxHeading}>ALLOCATION & FINANCIALS</Text>
+                <View style={styles.subDetailRow}>
+                  <Text style={styles.subDetailLabel}>Fund Target</Text>
+                  <Text style={styles.subDetailValue}>
+                    {selectedWealthOrder?.fund_name || 'BAN Private Wealth Fund'} ({selectedWealthOrder?.fund_code || 'BAPW'})
+                  </Text>
+                </View>
+                <View style={styles.subDetailRow}>
+                  <Text style={styles.subDetailLabel}>Order Amount</Text>
+                  <Text style={[styles.subDetailValue, { color: '#0A5554', fontWeight: '800' }]}>
+                    {selectedWealthOrder?.currency || 'BDT'} {Number(selectedWealthOrder?.amount || 0).toLocaleString()}
+                  </Text>
+                </View>
+                <View style={styles.subDetailRow}>
+                  <Text style={styles.subDetailLabel}>NAV at Order</Text>
+                  <Text style={styles.subDetailValue}>
+                    {selectedWealthOrder?.nav_at_order ? `${selectedWealthOrder?.currency || 'BDT'} ${selectedWealthOrder?.nav_at_order}` : 'N/A'}
+                  </Text>
+                </View>
+                <View style={styles.subDetailRow}>
+                  <Text style={styles.subDetailLabel}>Estimated Units</Text>
+                  <Text style={styles.subDetailValue}>
+                    {selectedWealthOrder?.estimated_units ? Number(selectedWealthOrder?.estimated_units).toLocaleString() : 'N/A'}
+                  </Text>
+                </View>
+                <View style={styles.subDetailRow}>
+                  <Text style={styles.subDetailLabel}>Payment Method</Text>
+                  <Text style={styles.subDetailValue}>
+                    {selectedWealthOrder?.payment_method ? selectedWealthOrder?.payment_method.replace('_', ' ') : 'Bank Transfer'}
+                  </Text>
+                </View>
+                {Boolean(selectedWealthOrder?.payment_reference) && (
+                  <View style={styles.subDetailRow}>
+                    <Text style={styles.subDetailLabel}>Payment Reference</Text>
+                    <Text style={styles.subDetailValueMono}>
+                      {selectedWealthOrder?.payment_reference}
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              {/* Compliance Badges */}
+              <View style={styles.wealthModalBox}>
+                <Text style={styles.wealthModalBoxHeading}>COMPLIANCE & PREFERENCES</Text>
+                <View style={styles.subDetailRow}>
+                  <Text style={styles.subDetailLabel}>Shariah Compliant</Text>
+                  <Text style={[styles.subDetailValue, { color: selectedWealthOrder?.shariah ? '#059669' : '#64748B' }]}>
+                    {selectedWealthOrder?.shariah ? 'Yes (Strict Shariah Filter)' : 'Standard'}
+                  </Text>
+                </View>
+                <View style={styles.subDetailRow}>
+                  <Text style={styles.subDetailLabel}>Monthly SIP</Text>
+                  <Text style={styles.subDetailValue}>
+                    {selectedWealthOrder?.monthly ? 'Yes (Recurring Monthly)' : 'One-time Allocation'}
+                  </Text>
+                </View>
+                <View style={styles.subDetailRow}>
+                  <Text style={styles.subDetailLabel}>Politically Exposed (PEP)</Text>
+                  <Text style={[styles.subDetailValue, { color: selectedWealthOrder?.politically_exposed ? '#DC2626' : '#64748B' }]}>
+                    {selectedWealthOrder?.politically_exposed ? 'Flagged (Requires Enhanced Due Diligence)' : 'No'}
+                  </Text>
+                </View>
+              </View>
+
+              {/* Status & Review Form */}
+              <View style={[styles.wealthModalBox, { borderColor: '#B4E6DA', backgroundColor: '#F0FDFA' }]}>
+                <Text style={[styles.wealthModalBoxHeading, { color: '#0A5554' }]}>
+                  DECISION & REVIEW STATUS
+                </Text>
+
+                {/* Status Selector */}
+                <Text style={styles.editInputLabel}>Order Status</Text>
+                <View style={styles.wealthStatusSelectorRow}>
+                  {[
+                    { key: 'pending', label: 'Pending', icon: 'time-outline', activeBg: '#FEF3C7', activeText: '#92400E', activeBorder: '#F59E0B' },
+                    { key: 'accepted', label: 'Accepted', icon: 'checkmark-circle-outline', activeBg: '#D1FAE5', activeText: '#065F46', activeBorder: '#10B981' },
+                    { key: 'rejected', label: 'Rejected', icon: 'close-circle-outline', activeBg: '#FEE2E2', activeText: '#991B1B', activeBorder: '#EF4444' },
+                  ].map((st) => {
+                    const isSelected = wealthReviewStatus === st.key;
+                    return (
+                      <TouchableOpacity
+                        key={`st-choice-${st.key}`}
+                        style={[
+                          styles.wealthStatusChoiceBtn,
+                          isSelected && { backgroundColor: st.activeBg, borderColor: st.activeBorder },
+                        ]}
+                        onPress={() => setWealthReviewStatus(st.key)}
+                        activeOpacity={0.8}
+                      >
+                        <Ionicons
+                          name={st.icon}
+                          size={16}
+                          color={isSelected ? st.activeText : '#64748B'}
+                        />
+                        <Text
+                          style={[
+                            styles.wealthStatusChoiceText,
+                            isSelected && { color: st.activeText, fontWeight: '800' },
+                          ]}
+                        >
+                          {st.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                {/* Review Notes Input */}
+                <Text style={[styles.editInputLabel, { marginTop: 14 }]}>Internal Review Note</Text>
+                <TextInput
+                  style={[styles.editTextInput, { height: 90, textAlignVertical: 'top', paddingTop: 10 }]}
+                  multiline
+                  numberOfLines={3}
+                  placeholder="Enter compliance notes, bank voucher confirmation, or rejection reason..."
+                  placeholderTextColor="#94A3B8"
+                  value={wealthReviewNote}
+                  onChangeText={setWealthReviewNote}
+                />
+              </View>
+
+              {/* Action Buttons */}
+              <View style={styles.editActionRow}>
+                <TouchableOpacity
+                  style={styles.editCancelBtn}
+                  onPress={() => setViewWealthOrderModalVisible(false)}
+                  disabled={updatingWealthOrderStatus}
+                >
+                  <Text style={styles.editCancelBtnText}>Cancel</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.editSaveBtn, { backgroundColor: '#0A5554' }]}
+                  onPress={() => handleUpdateWealthOrderStatus()}
+                  disabled={updatingWealthOrderStatus}
+                >
+                  {updatingWealthOrderStatus ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.editSaveBtnText}>Save Status & Note</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* MODAL: COMPOSE EMAIL CAMPAIGN */}
+      <Modal
+        visible={composeCampaignModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setComposeCampaignModalVisible(false)}
+      >
+        <View style={styles.editModalSafeArea}>
+          <View style={[styles.editModalContainer, { marginTop: 40 }]}>
+            <View style={styles.editModalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                <View
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 18,
+                    backgroundColor: '#E6F4F1',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Ionicons name="paper-plane" size={18} color="#0A5554" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.editModalTitle}>Compose Email Campaign</Text>
+                  <Text style={styles.editModalSubtitle}>
+                    Broadcast announcement or syndicate memo
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => setComposeCampaignModalVisible(false)}
+                style={styles.editModalCloseBtn}
+              >
+                <Ionicons name="close" size={22} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              style={styles.editModalContent}
+              contentContainerStyle={{ paddingBottom: 40 }}
+              showsVerticalScrollIndicator={false}
+            >
+              {/* Send Mode Toggle: Live Broadcast vs Test Preview */}
+              <Text style={styles.editInputLabel}>Broadcast Delivery Mode</Text>
+              <View style={styles.mailModeSwitchRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.mailModeSwitchBtn,
+                    composeFormData.send_mode === 'live' && styles.mailModeSwitchBtnActiveLive,
+                  ]}
+                  onPress={() => setComposeFormData((prev) => ({ ...prev, send_mode: 'live' }))}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons
+                    name="paper-plane-outline"
+                    size={16}
+                    color={composeFormData.send_mode === 'live' ? '#065F46' : '#64748B'}
+                  />
+                  <Text
+                    style={[
+                      styles.mailModeSwitchText,
+                      composeFormData.send_mode === 'live' && { color: '#065F46', fontWeight: '800' },
+                    ]}
+                  >
+                    Live Broadcast
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.mailModeSwitchBtn,
+                    composeFormData.send_mode === 'test' && styles.mailModeSwitchBtnActiveTest,
+                  ]}
+                  onPress={() => setComposeFormData((prev) => ({ ...prev, send_mode: 'test' }))}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons
+                    name="flask-outline"
+                    size={16}
+                    color={composeFormData.send_mode === 'test' ? '#1E40AF' : '#64748B'}
+                  />
+                  <Text
+                    style={[
+                      styles.mailModeSwitchText,
+                      composeFormData.send_mode === 'test' && { color: '#1E40AF', fontWeight: '800' },
+                    ]}
+                  >
+                    Send Test Preview
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* If Live: Target Audience Selector */}
+              {composeFormData.send_mode === 'live' ? (
+                <View style={{ marginTop: 12 }}>
+                  <Text style={styles.editInputLabel}>Recipient Target Group</Text>
+                  <View style={styles.mailTargetGroupRow}>
+                    {[
+                      { key: 'all', label: `All Members (${mailRecipients.length})` },
+                      { key: 'free', label: `Free Tier (${mailRecipients.filter((r) => r.account_status === 'free').length})` },
+                      { key: 'paid', label: `Paid Angels (${mailRecipients.filter((r) => r.account_status !== 'free').length})` },
+                    ].map((tg) => {
+                      const isSel = composeFormData.target_type === tg.key;
+                      return (
+                        <TouchableOpacity
+                          key={`tg-${tg.key}`}
+                          style={[
+                            styles.mailTargetChip,
+                            isSel && styles.mailTargetChipActive,
+                          ]}
+                          onPress={() => setComposeFormData((prev) => ({ ...prev, target_type: tg.key }))}
+                          activeOpacity={0.7}
+                        >
+                          <Text
+                            style={[
+                              styles.mailTargetChipText,
+                              isSel && styles.mailTargetChipTextActive,
+                            ]}
+                          >
+                            {tg.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+              ) : (
+                /* If Test: Preview Email Input */
+                <View style={{ marginTop: 12 }}>
+                  <Text style={styles.editInputLabel}>Send Test Preview To *</Text>
+                  <TextInput
+                    style={styles.editTextInput}
+                    placeholder="e.g. your-email@bdangels.co"
+                    placeholderTextColor="#94A3B8"
+                    value={composeFormData.preview_email}
+                    onChangeText={(text) => setComposeFormData((prev) => ({ ...prev, preview_email: text }))}
+                    autoCapitalize="none"
+                    keyboardType="email-address"
+                  />
+                </View>
+              )}
+
+              {/* Subject Input */}
+              <View style={{ marginTop: 14 }}>
+                <Text style={styles.editInputLabel}>Email Subject Line *</Text>
+                <TextInput
+                  style={styles.editTextInput}
+                  placeholder="e.g. BDAngels Memo: New FinTech Syndicate Opportunity"
+                  placeholderTextColor="#94A3B8"
+                  value={composeFormData.subject}
+                  onChangeText={(text) => setComposeFormData((prev) => ({ ...prev, subject: text }))}
+                />
+              </View>
+
+              {/* Message Content Input */}
+              <View style={{ marginTop: 14 }}>
+                <Text style={styles.editInputLabel}>Broadcast Content / Message *</Text>
+                <TextInput
+                  style={[styles.editTextInput, { height: 160, textAlignVertical: 'top', paddingTop: 12 }]}
+                  multiline
+                  numberOfLines={8}
+                  placeholder="Write your email body text here. You may use paragraphs and plain text formatting..."
+                  placeholderTextColor="#94A3B8"
+                  value={composeFormData.message}
+                  onChangeText={(text) => setComposeFormData((prev) => ({ ...prev, message: text }))}
+                />
+              </View>
+
+              {/* Gateway Notification Box */}
+              <View style={styles.mailGatewayInfoBox}>
+                <Ionicons name="information-circle-outline" size={16} color="#0A5554" style={{ marginTop: 1 }} />
+                <Text style={styles.mailGatewayInfoText}>
+                  {composeFormData.send_mode === 'live'
+                    ? 'Broadcasts are dispatched through Bangladesh Angels Network background mail queue. Recipient unsubscribes and tracking are automatically handled.'
+                    : 'A single preview copy will be sent to your test address with identical styling and formatting.'}
+                </Text>
+              </View>
+
+              {/* Buttons */}
+              <View style={[styles.editActionRow, { marginTop: 20 }]}>
+                <TouchableOpacity
+                  style={styles.editCancelBtn}
+                  onPress={() => setComposeCampaignModalVisible(false)}
+                  disabled={composeSending}
+                >
+                  <Text style={styles.editCancelBtnText}>Cancel</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.editSaveBtn,
+                    composeFormData.send_mode === 'test'
+                      ? { backgroundColor: '#0284C7' }
+                      : { backgroundColor: '#0A5554' },
+                  ]}
+                  onPress={handleSendCampaign}
+                  disabled={composeSending}
+                >
+                  {composeSending ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Ionicons
+                        name={composeFormData.send_mode === 'test' ? 'flask-outline' : 'paper-plane'}
+                        size={15}
+                        color="#FFFFFF"
+                      />
+                      <Text style={styles.editSaveBtnText}>
+                        {composeFormData.send_mode === 'test' ? 'Send Test Email' : 'Broadcast Now'}
+                      </Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* MODAL: VIEW CAMPAIGN LOG DETAILS */}
+      <Modal
+        visible={viewCampaignLogModalVisible}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => setViewCampaignLogModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCardCenter, { maxHeight: '85%' }]}>
+            <View style={styles.modalTopBarTeal} />
+            <View style={styles.modalHeaderRow}>
+              <View style={{ flex: 1, marginRight: 8 }}>
+                <Text style={styles.modalHeaderTitle} numberOfLines={2}>
+                  {selectedCampaignLog?.subject || 'Campaign Log'}
+                </Text>
+                <Text style={styles.modalHeaderSubtitle}>
+                  Sent {selectedCampaignLog?.created_at ? new Date(selectedCampaignLog.created_at).toLocaleString() : 'N/A'}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setViewCampaignLogModalVisible(false)}
+                style={styles.modalCloseBtn}
+              >
+                <Ionicons name="close" size={22} color={Colors.muted} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              style={{ maxHeight: 400, marginTop: 12 }}
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={styles.subDetailBox}>
+                <Text style={styles.subDetailBoxHeading}>TRANSMISSION SUMMARY</Text>
+                <View style={styles.subDetailRow}>
+                  <Text style={styles.subDetailLabel}>Mode</Text>
+                  <Text style={[styles.subDetailValue, { fontWeight: '800', color: selectedCampaignLog?.send_mode === 'test' ? '#1E40AF' : '#065F46' }]}>
+                    {selectedCampaignLog?.send_mode === 'test' ? 'TEST PREVIEW' : 'LIVE BROADCAST'}
+                  </Text>
+                </View>
+                <View style={styles.subDetailRow}>
+                  <Text style={styles.subDetailLabel}>Sender</Text>
+                  <Text style={styles.subDetailValue}>
+                    {selectedCampaignLog?.sender_name || 'Admin'}
+                  </Text>
+                </View>
+                <View style={styles.subDetailRow}>
+                  <Text style={styles.subDetailLabel}>Recipients Count</Text>
+                  <Text style={styles.subDetailValue}>
+                    {selectedCampaignLog?.recipients_count || (selectedCampaignLog?.send_mode === 'test' ? 1 : 0)} contacts
+                  </Text>
+                </View>
+                {Boolean(selectedCampaignLog?.preview_email) && (
+                  <View style={styles.subDetailRow}>
+                    <Text style={styles.subDetailLabel}>Preview Address</Text>
+                    <Text style={styles.subDetailValueMono}>
+                      {selectedCampaignLog?.preview_email}
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              <Text style={[styles.subDetailBoxHeading, { marginTop: 12, marginBottom: 6 }]}>
+                MESSAGE BODY
+              </Text>
+              <View style={styles.mailBodyDisplayBox}>
+                <Text style={styles.mailBodyDisplayText} selectable>
+                  {selectedCampaignLog?.message || 'No text content recorded.'}
+                </Text>
+              </View>
+            </ScrollView>
+
+            <TouchableOpacity
+              style={[styles.modalSubmitBtnTeal, { marginTop: 16 }]}
+              onPress={() => setViewCampaignLogModalVisible(false)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.modalSubmitBtnText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* MODAL: DELETE CAMPAIGN LOG */}
+      <Modal
+        visible={deleteCampaignLogModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setDeleteCampaignLogModalVisible(false)}
+      >
+        <View style={styles.deleteModalOverlay}>
+          <View style={styles.deleteModalBox}>
+            <View style={[styles.deleteModalIconWrap, { backgroundColor: '#FEE2E2' }]}>
+              <Ionicons name="trash-outline" size={26} color="#DC2626" />
+            </View>
+            <Text style={styles.deleteModalTitle}>Delete Campaign Log?</Text>
+            <Text style={styles.deleteModalMessage}>
+              Are you sure you want to delete this broadcast log?{'\n\n'}
+              <Text style={{ fontWeight: '800', color: '#0F172A' }}>
+                {selectedLogForDelete?.subject || 'Campaign broadcast'}
+              </Text>
+            </Text>
+            <View style={styles.deleteModalBtnRow}>
+              <TouchableOpacity
+                style={styles.deleteModalCancelBtn}
+                onPress={() => setDeleteCampaignLogModalVisible(false)}
+                disabled={isDeletingCampaignLog}
+              >
+                <Text style={styles.deleteModalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.deleteModalConfirmBtn}
+                onPress={handleConfirmDeleteCampaignLog}
+                disabled={isDeletingCampaignLog}
+              >
+                {isDeletingCampaignLog ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.deleteModalConfirmBtnText}>Delete Log</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* MODAL: CLEAR ALL CAMPAIGN LOGS */}
+      <Modal
+        visible={clearLogsModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setClearLogsModalVisible(false)}
+      >
+        <View style={styles.deleteModalOverlay}>
+          <View style={styles.deleteModalBox}>
+            <View style={[styles.deleteModalIconWrap, { backgroundColor: '#FEE2E2' }]}>
+              <Ionicons name="alert-circle-outline" size={26} color="#DC2626" />
+            </View>
+            <Text style={styles.deleteModalTitle}>Clear All Campaign Logs?</Text>
+            <Text style={styles.deleteModalMessage}>
+              Are you sure you want to permanently clear all broadcast campaign records? This operation cannot be undone.
+            </Text>
+            <View style={styles.deleteModalBtnRow}>
+              <TouchableOpacity
+                style={styles.deleteModalCancelBtn}
+                onPress={() => setClearLogsModalVisible(false)}
+                disabled={isClearingAllLogs}
+              >
+                <Text style={styles.deleteModalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.deleteModalConfirmBtn}
+                onPress={handleConfirmClearAllCampaignLogs}
+                disabled={isClearingAllLogs}
+              >
+                {isClearingAllLogs ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.deleteModalConfirmBtnText}>Clear All</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -26718,6 +28714,515 @@ const styles = StyleSheet.create({
   },
   invFormCurrChipTextActive: {
     color: '#FFFFFF',
+  },
+
+  // BAN Wealth Orders Styles
+  wealthCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: Radii.md,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    ...Shadows.card,
+    gap: 12,
+  },
+  wealthCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  wealthRefBadge: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0A5554',
+  },
+  wealthCardDate: {
+    fontSize: 11,
+    color: Colors.muted,
+  },
+  wealthStatusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: Radii.pill,
+  },
+  wealthStatusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  wealthStatusText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  wealthInvestorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  wealthAvatarCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#E6F4F1',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  wealthAvatarText: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0A5554',
+  },
+  wealthInvestorName: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: Colors.ink,
+  },
+  wealthInvestorEmail: {
+    fontSize: 12,
+    color: Colors.muted,
+  },
+  wealthInvestorPhone: {
+    fontSize: 11,
+    color: Colors.mutedLight,
+    marginTop: 1,
+  },
+  wealthDetailsBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 8,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    gap: 8,
+  },
+  wealthFundHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  wealthFundName: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+    flex: 1,
+  },
+  wealthFundCodeBadge: {
+    backgroundColor: '#E0F2FE',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  wealthFundCodeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#0284C7',
+  },
+  wealthFinancialsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: '#EEF2F6',
+  },
+  wealthFinancialCol: {
+    flex: 1,
+  },
+  wealthFinancialLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#64748B',
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  wealthFinancialValue: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0A5554',
+  },
+  wealthFinancialSubValue: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  wealthNavSubText: {
+    fontSize: 10,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  wealthTagsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    paddingTop: 4,
+  },
+  wealthMicroTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  wealthMicroTagText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  wealthReviewNoteBox: {
+    flexDirection: 'row',
+    gap: 6,
+    backgroundColor: '#FFFFFF',
+    padding: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginTop: 4,
+  },
+  wealthReviewNoteText: {
+    fontSize: 11,
+    color: '#475569',
+    flex: 1,
+    fontStyle: 'italic',
+  },
+  wealthActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: Colors.lineLight,
+  },
+  wealthReviewBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#E6F4F1',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: Radii.sm,
+  },
+  wealthReviewBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0A5554',
+  },
+  wealthQuickActionsGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  wealthQuickAcceptBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#059669',
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: Radii.sm,
+  },
+  wealthQuickAcceptBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  wealthQuickRejectBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: Radii.sm,
+  },
+  wealthQuickRejectBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#DC2626',
+  },
+  wealthModalBox: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 12,
+  },
+  wealthModalBoxHeading: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.8,
+    marginBottom: 8,
+  },
+  wealthStatusSelectorRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 4,
+  },
+  wealthStatusChoiceBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 9,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+  },
+  wealthStatusChoiceText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+
+  // Email Campaigns Styles
+  mailClearAllBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: '#FEF2F2',
+  },
+  mailClearAllBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#DC2626',
+  },
+  mailLogCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: Radii.md,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    ...Shadows.card,
+    gap: 10,
+  },
+  mailLogHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+  },
+  mailLogSubject: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: Colors.ink,
+  },
+  mailModeBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: Radii.pill,
+  },
+  mailModeBadgeTest: {
+    backgroundColor: '#DBEAFE',
+  },
+  mailModeBadgeLive: {
+    backgroundColor: '#D1FAE5',
+  },
+  mailModeBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  mailLogMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  mailLogMetaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  mailLogMetaText: {
+    fontSize: 11,
+    color: '#64748B',
+  },
+  mailLogPreviewBox: {
+    backgroundColor: '#F8FAFC',
+    padding: 10,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  mailLogPreviewText: {
+    fontSize: 12,
+    color: '#475569',
+    lineHeight: 17,
+  },
+  mailLogActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: Colors.lineLight,
+  },
+  mailLogActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#E6F4F1',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: Radii.sm,
+  },
+  mailLogActionBtnDelete: {
+    backgroundColor: '#FEE2E2',
+  },
+  mailLogActionBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0A5554',
+  },
+  recipientCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: Radii.md,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    ...Shadows.card,
+  },
+  recipientAvatarCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#E6F4F1',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recipientAvatarText: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0A5554',
+  },
+  recipientName: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: Colors.ink,
+  },
+  recipientEmail: {
+    fontSize: 11,
+    color: Colors.muted,
+  },
+  recipientPhone: {
+    fontSize: 10,
+    color: Colors.mutedLight,
+  },
+  recipientTierBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: Radii.pill,
+  },
+  recipientTierPaid: {
+    backgroundColor: '#D1FAE5',
+  },
+  recipientTierFree: {
+    backgroundColor: '#F1F5F9',
+  },
+  recipientTierBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  recipientDirectBtn: {
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: '#E6F4F1',
+  },
+  mailModeSwitchRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 4,
+  },
+  mailModeSwitchBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+  },
+  mailModeSwitchBtnActiveLive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#10B981',
+  },
+  mailModeSwitchBtnActiveTest: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#3B82F6',
+  },
+  mailModeSwitchText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  mailTargetGroupRow: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+    marginTop: 4,
+  },
+  mailTargetChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  mailTargetChipActive: {
+    backgroundColor: '#0A5554',
+    borderColor: '#0A5554',
+  },
+  mailTargetChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  mailTargetChipTextActive: {
+    color: '#FFFFFF',
+  },
+  mailGatewayInfoBox: {
+    flexDirection: 'row',
+    gap: 8,
+    backgroundColor: '#F0FDFA',
+    borderWidth: 1,
+    borderColor: '#B4E6DA',
+    padding: 10,
+    borderRadius: 8,
+    marginTop: 14,
+  },
+  mailGatewayInfoText: {
+    fontSize: 11,
+    color: '#0F7359',
+    flex: 1,
+    lineHeight: 16,
+  },
+  mailBodyDisplayBox: {
+    backgroundColor: '#F8FAFC',
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  mailBodyDisplayText: {
+    fontSize: 13,
+    color: '#1E293B',
+    lineHeight: 19,
   },
 });
 
