@@ -129,13 +129,18 @@ async function fetchAdminWithFallback(endpointPath, token, fetchOptions = {}) {
     ...(fetchOptions.headers || {}),
   };
 
+  let lastRes = null;
   for (const base of endpoints) {
     try {
       const res = await fetch(`${base}${cleanPath}`, {
         ...fetchOptions,
         headers,
       });
+      lastRes = res;
       if (res.ok) {
+        return res;
+      }
+      if (res.status >= 400 && res.status < 500) {
         return res;
       }
     } catch (err) {
@@ -143,7 +148,7 @@ async function fetchAdminWithFallback(endpointPath, token, fetchOptions = {}) {
     }
   }
 
-  return null;
+  return lastRes;
 }
 
 /**
@@ -163,19 +168,27 @@ export async function fetchAdminDashboard(token) {
 }
 
 /**
- * Fetch Admin Members list from GET /api/admin/members
+ * Fetch Admin Members list with pagination and filters from GET /api/admin/members
  */
-export async function fetchAdminMembers(token, { search = '', status = '', per_page = 20 } = {}) {
+export async function fetchAdminMembers(
+  token,
+  { search = '', status = '', page = 1, per_page = 15, role = '', account_status = '' } = {}
+) {
   try {
     const params = new URLSearchParams();
     if (search) params.append('search', search);
-    if (status) params.append('status', status);
-    params.append('per_page', String(per_page));
+    if (status && status !== 'all') {
+      params.append('status', status === 'pending' ? 'pending_approval' : status);
+    }
+    if (page) params.append('page', String(page));
+    if (per_page) params.append('per_page', String(per_page));
+    if (role) params.append('role', role);
+    if (account_status) params.append('account_status', account_status);
 
     const res = await fetchAdminWithFallback(`/admin/members?${params.toString()}`, token);
     if (res && res.ok) {
       const json = await res.json();
-      return json.data || json;
+      return json; // Contains json.data (Laravel paginator) and json.counts
     }
   } catch (err) {
     console.log('Admin members fetch error:', err);
@@ -193,12 +206,118 @@ export async function approveAdminMember(token, userId) {
     });
     if (res) {
       const json = await res.json();
-      return { ok: res.ok, message: json.message || '' };
+      return { ok: res.ok, data: json.data || null, message: json.message || '' };
     }
   } catch (err) {
     console.log('Admin approve member error:', err);
   }
   return { ok: false, message: 'Could not approve member.' };
+}
+
+/**
+ * Update member account status tier (free, core, advanced, institutional) via PATCH /api/admin/members/{userId}/status
+ */
+export async function updateAdminMemberStatus(token, userId, { account_status, status, mode } = {}) {
+  try {
+    const body = {};
+    if (account_status) body.account_status = account_status;
+    if (status) body.status = status;
+    if (mode) body.mode = mode;
+
+    const res = await fetchAdminWithFallback(`/admin/members/${userId}/status`, token, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (res) {
+      const json = await res.json();
+      return { ok: res.ok, data: json.data || null, message: json.message || '' };
+    }
+  } catch (err) {
+    console.log('Admin update status error:', err);
+  }
+  return { ok: false, message: 'Could not update status tier.' };
+}
+
+/**
+ * Update member mode (active / inactive) via PATCH /api/admin/members/{userId}/mode
+ */
+export async function updateAdminMemberMode(token, userId, mode) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/members/${userId}/mode`, token, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: mode }),
+    });
+    if (res) {
+      const json = await res.json();
+      return { ok: res.ok, data: json.data || null, message: json.message || '' };
+    }
+  } catch (err) {
+    console.log('Admin update mode error:', err);
+  }
+  return { ok: false, message: 'Could not update member mode.' };
+}
+
+/**
+ * Update member full details via POST /api/admin/members/{userId}
+ */
+export async function updateAdminMember(token, userId, memberData) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/members/${userId}`, token, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(memberData),
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        data: json.data || null,
+        message: json.message || '',
+        errors: json.errors || null,
+      };
+    }
+  } catch (err) {
+    console.log('Admin update member error:', err);
+  }
+  return { ok: false, message: 'Could not update member details.' };
+}
+
+/**
+ * Delete a member via DELETE /api/admin/members/{userId}
+ */
+export async function deleteAdminMember(token, userId) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/members/${userId}`, token, {
+      method: 'DELETE',
+    });
+    if (res) {
+      const json = await res.json();
+      return { ok: res.ok, message: json.message || 'Member removed successfully.' };
+    }
+  } catch (err) {
+    console.log('Admin delete member error:', err);
+  }
+  return { ok: false, message: 'Could not delete member.' };
+}
+
+/**
+ * Verify member email via POST /api/admin/members/{userId}/verify-email
+ */
+export async function verifyAdminMemberEmail(token, userId) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/members/${userId}/verify-email`, token, {
+      method: 'POST',
+    });
+    if (res) {
+      const json = await res.json();
+      return { ok: res.ok, data: json.data || null, message: json.message || '' };
+    }
+  } catch (err) {
+    console.log('Admin verify email error:', err);
+  }
+  return { ok: false, message: 'Could not verify member email.' };
 }
 
 /**

@@ -11,6 +11,8 @@ import {
   RefreshControl,
   TextInput,
   Alert,
+  Modal,
+  Image,
 } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -21,6 +23,11 @@ import {
   fetchAdminDashboard,
   fetchAdminMembers,
   approveAdminMember,
+  updateAdminMemberStatus,
+  updateAdminMemberMode,
+  updateAdminMember,
+  deleteAdminMember,
+  verifyAdminMemberEmail,
   fetchAdminDeals,
   fetchAdminFounderPitches,
   fetchAdminAngelAcademy,
@@ -81,6 +88,22 @@ export function getViewDisplayName(key) {
   }
 }
 
+const COUNTRIES_LIST = [
+  'Bangladesh',
+  'United States',
+  'United Kingdom',
+  'Singapore',
+  'Canada',
+  'India',
+  'United Arab Emirates',
+  'Australia',
+  'Malaysia',
+  'Germany',
+  'Saudi Arabia',
+  'Japan',
+  'Other',
+];
+
 export default function AdminScreen() {
   const [currentUser, setCurrentUser] = useState(null);
   const [authToken, setAuthToken] = useState(null);
@@ -120,8 +143,54 @@ export default function AdminScreen() {
   const [members, setMembers] = useState([]);
   const [membersLoading, setMembersLoading] = useState(false);
   const [memberSearch, setMemberSearch] = useState('');
-  const [memberStatusFilter, setMemberStatusFilter] = useState('all'); // 'all' | 'active' | 'pending_approval'
+  const [memberStatusFilter, setMemberStatusFilter] = useState('all'); // 'all' | 'active' | 'inactive' | 'pending' | 'featured'
+  const [memberCounts, setMemberCounts] = useState({ all: 0, active: 0, inactive: 0, pending: 0, featured: 0 });
+  const [memberPagination, setMemberPagination] = useState({
+    currentPage: 1,
+    lastPage: 1,
+    total: 0,
+    perPage: 15,
+    from: 1,
+    to: 15,
+  });
   const [approvingUserId, setApprovingUserId] = useState(null);
+  const [verifyingEmailUserId, setVerifyingEmailUserId] = useState(null);
+  const [updatingTierUserId, setUpdatingTierUserId] = useState(null);
+  const [updatingModeUserId, setUpdatingModeUserId] = useState(null);
+
+  // Status Tier Modal State
+  const [tierModalVisible, setTierModalVisible] = useState(false);
+  const [selectedMemberForTier, setSelectedMemberForTier] = useState(null);
+
+  // Mode Confirmation Modal State
+  const [modeModalVisible, setModeModalVisible] = useState(false);
+  const [selectedMemberForMode, setSelectedMemberForMode] = useState(null);
+  const [targetMode, setTargetMode] = useState('active');
+  const [isModeUpdating, setIsModeUpdating] = useState(false);
+
+  // Delete Member Modal State
+  const [deleteModalVisible, setDeleteModalVisible] = useState(false);
+  const [selectedMemberForDelete, setSelectedMemberForDelete] = useState(null);
+  const [isDeletingMember, setIsDeletingMember] = useState(false);
+
+  // Edit Member Modal State
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [editingMember, setEditingMember] = useState(null);
+  const [editFormData, setEditFormData] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    gender: 'male',
+    primary_country: 'Bangladesh',
+    organization: '',
+    designation: '',
+    preference_sector: '',
+    role: 'investor',
+    account_status: 'free',
+    status: 'active',
+    password: '',
+  });
+  const [editSaving, setEditSaving] = useState(false);
 
   // Deals Tab State
   const [deals, setDeals] = useState([]);
@@ -275,21 +344,56 @@ export default function AdminScreen() {
     checkAuth();
   }, [loadDashboard, loadNotifications]);
 
-  // Fetch Members
-  const loadMembers = useCallback(async (token = authToken, search = memberSearch, status = memberStatusFilter) => {
-    if (!token) return;
-    setMembersLoading(true);
-    try {
-      const filterStatus = status === 'all' ? '' : status;
-      const res = await fetchAdminMembers(token, { search, status: filterStatus, per_page: 50 });
-      const list = res?.data || (Array.isArray(res) ? res : []);
-      setMembers(list);
-    } catch (err) {
-      console.log('Error loading members:', err);
-    } finally {
-      setMembersLoading(false);
-    }
-  }, [authToken, memberSearch, memberStatusFilter]);
+  // Fetch Members with Pagination, Search & Filters
+  const loadMembers = useCallback(
+    async (token = authToken, search = memberSearch, status = memberStatusFilter, page = 1) => {
+      if (!token) return;
+      setMembersLoading(true);
+      try {
+        const filterStatus = status === 'all' ? '' : status;
+        const res = await fetchAdminMembers(token, {
+          search,
+          status: filterStatus,
+          page,
+          per_page: 15,
+        });
+        if (res) {
+          const paginator = res.data || res;
+          const list = Array.isArray(paginator) ? paginator : paginator.data || [];
+          setMembers(list);
+
+          if (paginator.current_page !== undefined) {
+            setMemberPagination({
+              currentPage: paginator.current_page || 1,
+              lastPage: paginator.last_page || 1,
+              total: paginator.total || list.length,
+              perPage: paginator.per_page || 15,
+              from: paginator.from || (list.length > 0 ? (paginator.current_page - 1) * 15 + 1 : 0),
+              to: paginator.to || (list.length > 0 ? (paginator.current_page - 1) * 15 + list.length : 0),
+            });
+          } else {
+            setMemberPagination({
+              currentPage: 1,
+              lastPage: 1,
+              total: list.length,
+              perPage: 15,
+              from: list.length > 0 ? 1 : 0,
+              to: list.length,
+            });
+          }
+
+          if (res.counts) {
+            setMemberCounts(res.counts);
+          }
+        }
+      } catch (err) {
+        console.log('Error loading members:', err);
+      } finally {
+        setMembersLoading(false);
+      }
+    },
+    [authToken, memberSearch, memberStatusFilter]
+  );
 
   // Fetch Deals
   const loadDeals = useCallback(async (token = authToken, search = dealSearch, type = dealTypeFilter) => {
@@ -418,8 +522,9 @@ export default function AdminScreen() {
                 Alert.alert('Success', res.message || `${memberName} has been approved.`);
                 // Update local state immediately
                 setMembers((prev) =>
-                  prev.map((m) => (m.id === userId ? { ...m, is_approved: true, account_status: 'active' } : m))
+                  prev.map((m) => (m.id === userId ? { ...m, is_approved: true } : m))
                 );
+                loadMembers(authToken, memberSearch, memberStatusFilter, memberPagination.currentPage);
                 // Also update dashboard data if loaded
                 loadDashboard(authToken);
               } else {
@@ -435,6 +540,208 @@ export default function AdminScreen() {
         },
       ]
     );
+  };
+
+  // Handle Verify Member Email
+  const handleVerifyEmail = async (userId, memberName) => {
+    Alert.alert(
+      'Verify Member Email',
+      `Mark email address for ${memberName || 'this member'} as verified?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Verify Email',
+          style: 'default',
+          onPress: async () => {
+            setVerifyingEmailUserId(userId);
+            try {
+              const res = await verifyAdminMemberEmail(authToken, userId);
+              if (res.ok) {
+                Alert.alert('Success', res.message || 'Member email marked as verified.');
+                setMembers((prev) =>
+                  prev.map((m) => (m.id === userId ? { ...m, is_email_verified: true } : m))
+                );
+                loadMembers(authToken, memberSearch, memberStatusFilter, memberPagination.currentPage);
+              } else {
+                Alert.alert('Verification Failed', res.message || 'Could not verify email.');
+              }
+            } catch (err) {
+              console.log('Verify email exception:', err);
+              Alert.alert('Error', 'An error occurred while verifying member email.');
+            } finally {
+              setVerifyingEmailUserId(null);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // Status Tier Handlers
+  const handleOpenTierModal = (member) => {
+    setSelectedMemberForTier(member);
+    setTierModalVisible(true);
+  };
+
+  const handleChangeTier = async (newTier) => {
+    if (!selectedMemberForTier || !authToken) return;
+    const memberId = selectedMemberForTier.id;
+    setUpdatingTierUserId(memberId);
+    setTierModalVisible(false);
+    try {
+      const res = await updateAdminMemberStatus(authToken, memberId, { account_status: newTier });
+      if (res.ok) {
+        setMembers((prev) =>
+          prev.map((m) => (m.id === memberId ? { ...m, account_status: newTier, tier_name: newTier } : m))
+        );
+        loadMembers(authToken, memberSearch, memberStatusFilter, memberPagination.currentPage);
+      } else {
+        Alert.alert('Update Failed', res.message || 'Could not update status tier.');
+      }
+    } catch (err) {
+      console.log('Error updating tier:', err);
+      Alert.alert('Error', 'An unexpected error occurred while updating status tier.');
+    } finally {
+      setUpdatingTierUserId(null);
+      setSelectedMemberForTier(null);
+    }
+  };
+
+  // Mode Handlers (Active <-> Inactive)
+  const handleOpenModeModal = (member, requestedMode) => {
+    setSelectedMemberForMode(member);
+    const target = requestedMode || (member.status === 'active' ? 'inactive' : 'active');
+    setTargetMode(target);
+    setModeModalVisible(true);
+  };
+
+  const handleConfirmModeChange = async () => {
+    if (!selectedMemberForMode || !authToken) return;
+    const memberId = selectedMemberForMode.id;
+    setIsModeUpdating(true);
+    setUpdatingModeUserId(memberId);
+    try {
+      const res = await updateAdminMemberMode(authToken, memberId, targetMode);
+      if (res.ok) {
+        setMembers((prev) =>
+          prev.map((m) => (m.id === memberId ? { ...m, status: targetMode, is_active: targetMode === 'active' } : m))
+        );
+        setModeModalVisible(false);
+        loadMembers(authToken, memberSearch, memberStatusFilter, memberPagination.currentPage);
+      } else {
+        Alert.alert('Update Failed', res.message || 'Could not update member mode.');
+      }
+    } catch (err) {
+      console.log('Error updating mode:', err);
+      Alert.alert('Error', 'An unexpected error occurred while updating member mode.');
+    } finally {
+      setIsModeUpdating(false);
+      setUpdatingModeUserId(null);
+      setSelectedMemberForMode(null);
+    }
+  };
+
+  // Delete Member Handlers
+  const handleOpenDeleteModal = (member) => {
+    setSelectedMemberForDelete(member);
+    setDeleteModalVisible(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!selectedMemberForDelete || !authToken) return;
+    const memberId = selectedMemberForDelete.id;
+    setIsDeletingMember(true);
+    try {
+      const res = await deleteAdminMember(authToken, memberId);
+      if (res.ok) {
+        setMembers((prev) => prev.filter((m) => m.id !== memberId));
+        setMemberPagination((prev) => ({
+          ...prev,
+          total: Math.max(0, prev.total - 1),
+        }));
+        setDeleteModalVisible(false);
+        Alert.alert('Member Removed', 'The member has been deleted successfully.');
+        loadMembers(authToken, memberSearch, memberStatusFilter, memberPagination.currentPage);
+      } else {
+        Alert.alert('Delete Failed', res.message || 'Could not remove member.');
+      }
+    } catch (err) {
+      console.log('Error deleting member:', err);
+      Alert.alert('Error', 'An unexpected error occurred while deleting member.');
+    } finally {
+      setIsDeletingMember(false);
+      setSelectedMemberForDelete(null);
+    }
+  };
+
+  // Edit Member Handlers
+  const handleOpenEditModal = (member) => {
+    setEditingMember(member);
+    setEditFormData({
+      name: member.name || '',
+      email: member.email || '',
+      phone: member.phone || '',
+      gender: member.gender || 'male',
+      primary_country: member.primary_country || member.country || 'Bangladesh',
+      organization: member.organization || member.company_name || '',
+      designation: member.designation || '',
+      preference_sector: member.preference_sector || '',
+      role: member.role || 'investor',
+      account_status: member.account_status || 'free',
+      status: member.status || 'active',
+      password: '',
+    });
+    setEditModalVisible(true);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingMember || !authToken) return;
+    if (!editFormData.name.trim()) {
+      Alert.alert('Validation Error', 'Full Name is required.');
+      return;
+    }
+    if (!editFormData.email.trim()) {
+      Alert.alert('Validation Error', 'Email address is required.');
+      return;
+    }
+    setEditSaving(true);
+    try {
+      const payload = {
+        name: editFormData.name.trim(),
+        email: editFormData.email.trim(),
+        phone: editFormData.phone.trim(),
+        gender: editFormData.gender,
+        primary_country: editFormData.primary_country,
+        organization: editFormData.organization.trim(),
+        company_name: editFormData.organization.trim(),
+        designation: editFormData.designation.trim(),
+        preference_sector: editFormData.preference_sector.trim(),
+        role: editFormData.role,
+        account_status: editFormData.account_status,
+        status: editFormData.status,
+      };
+      if (editFormData.password.trim()) {
+        payload.password = editFormData.password.trim();
+      }
+
+      const res = await updateAdminMember(authToken, editingMember.id, payload);
+      if (res.ok) {
+        Alert.alert('Success', 'Member details updated successfully.');
+        setEditModalVisible(false);
+        setEditingMember(null);
+        loadMembers(authToken, memberSearch, memberStatusFilter, memberPagination.currentPage);
+      } else {
+        const errorText = res.errors
+          ? Object.values(res.errors).flat().join('\n')
+          : res.message || 'Could not update member.';
+        Alert.alert('Update Failed', errorText);
+      }
+    } catch (err) {
+      console.log('Error saving member edit:', err);
+      Alert.alert('Error', 'An unexpected error occurred while saving member details.');
+    } finally {
+      setEditSaving(false);
+    }
   };
 
   // Handle Logout
@@ -886,19 +1193,30 @@ export default function AdminScreen() {
             </View>
           )}
 
-          {/* TAB 2: MEMBERS */}
+          {/* TAB 2: MEMBERS MANAGEMENT */}
           {activeTab === 'members' && (
             <View style={styles.tabContent}>
+              {/* Header with Title and Pagination Summary */}
               <View style={styles.sectionHeaderRow}>
-                <View>
+                <View style={{ flex: 1 }}>
                   <Text style={styles.sectionHeading}>Member Management</Text>
-                  <Text style={styles.sectionSubheading}>Manage angel investors and account access</Text>
+                  <Text style={styles.sectionSubheading}>
+                    {memberPagination.total > 0
+                      ? `Showing ${memberPagination.from}–${memberPagination.to} of ${memberPagination.total} members`
+                      : 'Directory of angel investors, access tiers & statuses'}
+                  </Text>
                 </View>
                 <TouchableOpacity
                   style={styles.refreshIconBtn}
-                  onPress={() => loadMembers(authToken, memberSearch, memberStatusFilter)}
+                  onPress={() => loadMembers(authToken, memberSearch, memberStatusFilter, memberPagination.currentPage)}
+                  disabled={membersLoading}
                 >
-                  <Ionicons name="refresh" size={18} color={Colors.forest} />
+                  <Ionicons
+                    name="refresh"
+                    size={18}
+                    color={Colors.forest}
+                    style={membersLoading ? { opacity: 0.5 } : {}}
+                  />
                 </TouchableOpacity>
               </View>
 
@@ -907,12 +1225,12 @@ export default function AdminScreen() {
                 <Ionicons name="search" size={18} color={Colors.muted} style={styles.searchIcon} />
                 <TextInput
                   style={styles.searchInput}
-                  placeholder="Search by name, email, or phone..."
+                  placeholder="Search name, email, phone, company..."
                   placeholderTextColor={Colors.mutedLight}
                   value={memberSearch}
                   onChangeText={(val) => {
                     setMemberSearch(val);
-                    loadMembers(authToken, val, memberStatusFilter);
+                    loadMembers(authToken, val, memberStatusFilter, 1);
                   }}
                   autoCapitalize="none"
                   returnKeyType="search"
@@ -921,7 +1239,7 @@ export default function AdminScreen() {
                   <TouchableOpacity
                     onPress={() => {
                       setMemberSearch('');
-                      loadMembers(authToken, '', memberStatusFilter);
+                      loadMembers(authToken, '', memberStatusFilter, 1);
                     }}
                   >
                     <Ionicons name="close-circle" size={18} color={Colors.muted} />
@@ -929,49 +1247,57 @@ export default function AdminScreen() {
                 )}
               </View>
 
-              {/* Filter Chips */}
-              <View style={styles.filterChipsRow}>
-                <TouchableOpacity
-                  style={[styles.filterChip, memberStatusFilter === 'all' && styles.filterChipActive]}
-                  onPress={() => {
-                    setMemberStatusFilter('all');
-                    loadMembers(authToken, memberSearch, 'all');
-                  }}
-                >
-                  <Text style={[styles.filterChipText, memberStatusFilter === 'all' && styles.filterChipTextActive]}>
-                    All
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.filterChip, memberStatusFilter === 'active' && styles.filterChipActive]}
-                  onPress={() => {
-                    setMemberStatusFilter('active');
-                    loadMembers(authToken, memberSearch, 'active');
-                  }}
-                >
-                  <Text style={[styles.filterChipText, memberStatusFilter === 'active' && styles.filterChipTextActive]}>
-                    Active
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.filterChip, memberStatusFilter === 'pending_approval' && styles.filterChipActive]}
-                  onPress={() => {
-                    setMemberStatusFilter('pending_approval');
-                    loadMembers(authToken, memberSearch, 'pending_approval');
-                  }}
-                >
-                  <Text
-                    style={[
-                      styles.filterChipText,
-                      memberStatusFilter === 'pending_approval' && styles.filterChipTextActive,
-                    ]}
-                  >
-                    Pending Approval
-                  </Text>
-                </TouchableOpacity>
-              </View>
+              {/* Filter Tabs matching Web Livewire with Count Badges */}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.memberFilterScroll}
+              >
+                {[
+                  { key: 'all', label: 'All', count: memberCounts.all || memberPagination.total },
+                  { key: 'active', label: 'Active', count: memberCounts.active },
+                  { key: 'inactive', label: 'Inactive', count: memberCounts.inactive },
+                  { key: 'pending', label: 'Pending Approval', count: memberCounts.pending },
+                  { key: 'featured', label: 'Featured', count: memberCounts.featured },
+                ].map((tab) => {
+                  const isActive = memberStatusFilter === tab.key;
+                  return (
+                    <TouchableOpacity
+                      key={`member-filter-${tab.key}`}
+                      style={[styles.memberFilterChip, isActive && styles.memberFilterChipActive]}
+                      onPress={() => {
+                        setMemberStatusFilter(tab.key);
+                        loadMembers(authToken, memberSearch, tab.key, 1);
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Text
+                        style={[
+                          styles.memberFilterChipText,
+                          isActive && styles.memberFilterChipTextActive,
+                        ]}
+                      >
+                        {tab.label}
+                      </Text>
+                      <View
+                        style={[
+                          styles.memberFilterBadge,
+                          isActive ? styles.memberFilterBadgeActive : styles.memberFilterBadgeInactive,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.memberFilterBadgeText,
+                            isActive && styles.memberFilterBadgeTextActive,
+                          ]}
+                        >
+                          {tab.count !== undefined ? tab.count : 0}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
 
               {/* Members List */}
               {membersLoading ? (
@@ -981,15 +1307,46 @@ export default function AdminScreen() {
                 </View>
               ) : members.length === 0 ? (
                 <View style={styles.emptyState}>
-                  <Ionicons name="people-outline" size={40} color={Colors.mutedLight} />
+                  <Ionicons name="people-outline" size={44} color={Colors.mutedLight} />
                   <Text style={styles.emptyTitle}>No members found</Text>
-                  <Text style={styles.emptyText}>Try adjusting your search query or status filter.</Text>
+                  <Text style={styles.emptyText}>
+                    No members match your current search query or filter scope.
+                  </Text>
                 </View>
               ) : (
                 <View style={styles.cardsList}>
                   {members.map((member) => {
                     const isApproved = Boolean(member.is_approved);
                     const isApproving = approvingUserId === member.id;
+                    const isVerifying = verifyingEmailUserId === member.id;
+                    const isUpdatingTier = updatingTierUserId === member.id;
+                    const isUpdatingMode = updatingModeUserId === member.id;
+                    const isCurrentUser = member.id === currentUser?.id;
+
+                    // Status Tier Style & Label
+                    const tierConfig = (() => {
+                      const t = String(member.account_status || 'free').toLowerCase();
+                      switch (t) {
+                        case 'core':
+                          return { dot: '#10B981', text: '#065F46', bg: '#ECFDF5', border: '#A7F3D0', label: 'Core Tier' };
+                        case 'advanced':
+                          return { dot: '#14B8A6', text: '#0F766E', bg: '#F0FDFA', border: '#99F6E4', label: 'Advanced Tier' };
+                        case 'institutional':
+                          return { dot: '#A855F7', text: '#6B21A8', bg: '#FAF5FF', border: '#E9D5FF', label: 'Institutional' };
+                        default:
+                          return { dot: '#9CA3AF', text: '#374151', bg: '#F3F4F6', border: '#D1D5DB', label: 'Free Tier' };
+                      }
+                    })();
+
+                    // Mode Style & Label (Active vs Inactive)
+                    const modeConfig = (() => {
+                      const m = String(member.status || 'active').toLowerCase();
+                      if (m === 'inactive') {
+                        return { dot: '#9CA3AF', text: '#4B5563', bg: '#F3F4F6', border: '#D1D5DB', label: 'Inactive' };
+                      }
+                      return { dot: '#10B981', text: '#065F46', bg: '#ECFDF5', border: '#A7F3D0', label: 'Active' };
+                    })();
+
                     const joinedDate = member.created_at
                       ? new Date(member.created_at).toLocaleDateString('en-US', {
                           month: 'short',
@@ -999,59 +1356,160 @@ export default function AdminScreen() {
                       : 'N/A';
 
                     return (
-                      <View key={`member-${member.id}`} style={styles.memberCard}>
+                      <View key={`member-${member.id}`} style={styles.memberCardEnhanced}>
+                        {/* 1. Header: Avatar, Name, Email, Badges */}
                         <View style={styles.memberCardTop}>
-                          <View style={styles.avatarCircleLarge}>
-                            <Text style={styles.avatarTextLarge}>
-                              {(member.name || 'U').charAt(0).toUpperCase()}
-                            </Text>
-                          </View>
+                          {member.profile_photo_url ? (
+                            <Image
+                              source={{ uri: member.profile_photo_url }}
+                              style={styles.avatarPhoto}
+                              resizeMode="cover"
+                            />
+                          ) : (
+                            <View style={styles.avatarCircleLarge}>
+                              <Text style={styles.avatarTextLarge}>
+                                {(member.name || 'U').charAt(0).toUpperCase()}
+                              </Text>
+                            </View>
+                          )}
+
                           <View style={styles.memberInfo}>
                             <View style={styles.memberTitleRow}>
-                              <Text style={styles.memberName}>{member.name}</Text>
+                              <Text style={styles.memberName} numberOfLines={1}>
+                                {member.name}
+                              </Text>
+                              {isCurrentUser && (
+                                <View style={styles.youBadge}>
+                                  <Text style={styles.youBadgeText}>You</Text>
+                                </View>
+                              )}
                               {member.role === 'admin' && (
                                 <View style={styles.adminRolePill}>
                                   <Text style={styles.adminRolePillText}>ADMIN</Text>
                                 </View>
                               )}
                             </View>
-                            <Text style={styles.memberEmail}>{member.email}</Text>
-                            {Boolean(member.phone) && (
-                              <Text style={styles.memberPhone}>📞 {member.phone}</Text>
+                            <Text style={styles.memberEmail} numberOfLines={1}>
+                              {member.email}
+                            </Text>
+                            <View style={styles.memberMetaRow}>
+                              <Text style={styles.memberMetaText}>
+                                ID #{member.id} • {member.primary_country || member.country || 'Bangladesh'}
+                              </Text>
+                              <Text style={styles.memberMetaText}>
+                                • Joined {joinedDate}
+                              </Text>
+                            </View>
+                          </View>
+                        </View>
+
+                        {/* 2. Professional Details & Contact */}
+                        <View style={styles.memberDetailsBox}>
+                          {(Boolean(member.designation) || Boolean(member.company_name || member.organization)) && (
+                            <View style={styles.memberDetailRow}>
+                              <Ionicons name="briefcase-outline" size={14} color={Colors.muted} style={{ marginTop: 2 }} />
+                              <Text style={styles.memberDetailText}>
+                                {member.designation || 'Member'}
+                                {Boolean(member.company_name || member.organization) ? ` at ${member.company_name || member.organization}` : ''}
+                              </Text>
+                            </View>
+                          )}
+
+                          {Boolean(member.phone) && (
+                            <View style={styles.memberDetailRow}>
+                              <Ionicons name="call-outline" size={14} color={Colors.muted} style={{ marginTop: 1 }} />
+                              <Text style={styles.memberDetailText}>{member.phone}</Text>
+                            </View>
+                          )}
+
+                          {/* Email Verified Row */}
+                          <View style={styles.emailVerifiedRow}>
+                            <View style={styles.emailVerifiedStatus}>
+                              {member.is_email_verified ? (
+                                <View style={styles.verifiedTag}>
+                                  <Ionicons name="checkmark-circle" size={14} color="#059669" />
+                                  <Text style={styles.verifiedTagText}>Email Verified</Text>
+                                </View>
+                              ) : (
+                                <View style={styles.unverifiedTag}>
+                                  <Ionicons name="alert-circle-outline" size={14} color="#D97706" />
+                                  <Text style={styles.unverifiedTagText}>Email Unverified</Text>
+                                </View>
+                              )}
+                            </View>
+
+                            {!member.is_email_verified && (
+                              <TouchableOpacity
+                                style={styles.inlineVerifyBtn}
+                                onPress={() => handleVerifyEmail(member.id, member.name)}
+                                disabled={isVerifying}
+                              >
+                                {isVerifying ? (
+                                  <ActivityIndicator size="small" color="#0A5554" />
+                                ) : (
+                                  <Text style={styles.inlineVerifyBtnText}>Verify Email</Text>
+                                )}
+                              </TouchableOpacity>
                             )}
                           </View>
                         </View>
 
-                        <View style={styles.memberCardFooter}>
-                          <View style={styles.badgesRow}>
-                            <View
+                        {/* 3. Status Tier & Mode Interactive Selectors */}
+                        <View style={styles.statusAndModeRow}>
+                          {/* Status (Account Tier) Selector */}
+                          <View style={styles.selectorColumn}>
+                            <Text style={styles.selectorLabel}>STATUS TIER</Text>
+                            <TouchableOpacity
                               style={[
-                                styles.statusBadge,
-                                isApproved ? styles.statusCompleted : styles.statusWarning,
+                                styles.interactivePill,
+                                { backgroundColor: tierConfig.bg, borderColor: tierConfig.border },
                               ]}
+                              onPress={() => handleOpenTierModal(member)}
+                              disabled={isUpdatingTier}
+                              activeOpacity={0.7}
                             >
-                              <Text
-                                style={[
-                                  styles.statusBadgeText,
-                                  isApproved ? styles.statusCompletedText : styles.statusWarningText,
-                                ]}
-                              >
-                                {isApproved ? 'Approved' : 'Pending'}
+                              <View style={[styles.statusDot, { backgroundColor: tierConfig.dot }]} />
+                              <Text style={[styles.interactivePillText, { color: tierConfig.text }]}>
+                                {tierConfig.label}
                               </Text>
-                            </View>
-
-                            <View style={styles.tierBadge}>
-                              <Text style={styles.tierBadgeText}>
-                                {String(member.account_status || 'free').toUpperCase()}
-                              </Text>
-                            </View>
-
-                            <Text style={styles.memberJoined}>Joined {joinedDate}</Text>
+                              {isUpdatingTier ? (
+                                <ActivityIndicator size="small" color={tierConfig.text} style={{ marginLeft: 4 }} />
+                              ) : (
+                                <Ionicons name="chevron-down" size={13} color={tierConfig.text} style={{ opacity: 0.7 }} />
+                              )}
+                            </TouchableOpacity>
                           </View>
 
+                          {/* Mode (Active / Inactive) Selector */}
+                          <View style={styles.selectorColumn}>
+                            <Text style={styles.selectorLabel}>MODE</Text>
+                            <TouchableOpacity
+                              style={[
+                                styles.interactivePill,
+                                { backgroundColor: modeConfig.bg, borderColor: modeConfig.border },
+                              ]}
+                              onPress={() => handleOpenModeModal(member)}
+                              disabled={isUpdatingMode}
+                              activeOpacity={0.7}
+                            >
+                              <View style={[styles.statusDot, { backgroundColor: modeConfig.dot }]} />
+                              <Text style={[styles.interactivePillText, { color: modeConfig.text }]}>
+                                {modeConfig.label}
+                              </Text>
+                              {isUpdatingMode ? (
+                                <ActivityIndicator size="small" color={modeConfig.text} style={{ marginLeft: 4 }} />
+                              ) : (
+                                <Ionicons name="chevron-down" size={13} color={modeConfig.text} style={{ opacity: 0.7 }} />
+                              )}
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+
+                        {/* 4. Action Buttons: Approve, Edit, Delete */}
+                        <View style={styles.memberActionButtonsRow}>
                           {!isApproved && (
                             <TouchableOpacity
-                              style={styles.approveButton}
+                              style={styles.actionBtnApprove}
                               onPress={() => handleApproveMember(member.id, member.name)}
                               disabled={isApproving}
                               activeOpacity={0.8}
@@ -1060,16 +1518,119 @@ export default function AdminScreen() {
                                 <ActivityIndicator size="small" color="#FFFFFF" />
                               ) : (
                                 <>
-                                  <Ionicons name="checkmark-circle-outline" size={15} color="#FFFFFF" />
-                                  <Text style={styles.approveButtonText}>Approve</Text>
+                                  <Ionicons name="checkmark-circle" size={15} color="#FFFFFF" />
+                                  <Text style={styles.actionBtnApproveText}>Approve</Text>
                                 </>
                               )}
+                            </TouchableOpacity>
+                          )}
+
+                          <TouchableOpacity
+                            style={styles.actionBtnEdit}
+                            onPress={() => handleOpenEditModal(member)}
+                            activeOpacity={0.8}
+                          >
+                            <Ionicons name="pencil" size={14} color="#0A5554" />
+                            <Text style={styles.actionBtnEditText}>Edit</Text>
+                          </TouchableOpacity>
+
+                          {!isCurrentUser && (
+                            <TouchableOpacity
+                              style={styles.actionBtnDelete}
+                              onPress={() => handleOpenDeleteModal(member)}
+                              activeOpacity={0.8}
+                            >
+                              <Ionicons name="trash-outline" size={14} color="#DC2626" />
+                              <Text style={styles.actionBtnDeleteText}>Delete</Text>
                             </TouchableOpacity>
                           )}
                         </View>
                       </View>
                     );
                   })}
+
+                  {/* 5. Pagination Bar matching Web Table Footer */}
+                  {memberPagination.lastPage > 1 && (
+                    <View style={styles.paginationContainer}>
+                      <TouchableOpacity
+                        style={[
+                          styles.paginationBtn,
+                          memberPagination.currentPage <= 1 && styles.paginationBtnDisabled,
+                        ]}
+                        onPress={() => {
+                          if (memberPagination.currentPage > 1) {
+                            loadMembers(
+                              authToken,
+                              memberSearch,
+                              memberStatusFilter,
+                              memberPagination.currentPage - 1
+                            );
+                          }
+                        }}
+                        disabled={memberPagination.currentPage <= 1 || membersLoading}
+                      >
+                        <Ionicons
+                          name="chevron-back"
+                          size={16}
+                          color={memberPagination.currentPage <= 1 ? '#9CA3AF' : '#0A5554'}
+                        />
+                        <Text
+                          style={[
+                            styles.paginationBtnText,
+                            memberPagination.currentPage <= 1 && styles.paginationBtnTextDisabled,
+                          ]}
+                        >
+                          Previous
+                        </Text>
+                      </TouchableOpacity>
+
+                      <View style={styles.paginationInfoBox}>
+                        <Text style={styles.paginationInfoText}>
+                          Page {memberPagination.currentPage} of {memberPagination.lastPage}
+                        </Text>
+                      </View>
+
+                      <TouchableOpacity
+                        style={[
+                          styles.paginationBtn,
+                          memberPagination.currentPage >= memberPagination.lastPage &&
+                            styles.paginationBtnDisabled,
+                        ]}
+                        onPress={() => {
+                          if (memberPagination.currentPage < memberPagination.lastPage) {
+                            loadMembers(
+                              authToken,
+                              memberSearch,
+                              memberStatusFilter,
+                              memberPagination.currentPage + 1
+                            );
+                          }
+                        }}
+                        disabled={
+                          memberPagination.currentPage >= memberPagination.lastPage || membersLoading
+                        }
+                      >
+                        <Text
+                          style={[
+                            styles.paginationBtnText,
+                            memberPagination.currentPage >= memberPagination.lastPage &&
+                              styles.paginationBtnTextDisabled,
+                          ]}
+                        >
+                          Next
+                        </Text>
+                        <Ionicons
+                          name="chevron-forward"
+                          size={16}
+                          color={
+                            memberPagination.currentPage >= memberPagination.lastPage
+                              ? '#9CA3AF'
+                              : '#0A5554'
+                          }
+                        />
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </View>
               )}
             </View>
@@ -2061,6 +2622,746 @@ export default function AdminScreen() {
           )}
         </ScrollView>
       )}
+      {/* 1. STATUS TIER SELECTION MODAL */}
+      <Modal
+        visible={tierModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setTierModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setTierModalVisible(false)}
+        >
+          <View style={styles.modalCardCenter} onStartShouldSetResponder={() => true}>
+            <View style={styles.modalTopBarTeal} />
+            <View style={styles.modalHeaderRow}>
+              <View>
+                <Text style={styles.modalHeaderTitle}>Change Account Tier</Text>
+                <Text style={styles.modalHeaderSubtitle}>
+                  {selectedMemberForTier?.name} • ID #{selectedMemberForTier?.id}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setTierModalVisible(false)}
+                style={styles.modalCloseBtn}
+              >
+                <Ionicons name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.tierOptionsList}>
+              {[
+                {
+                  key: 'free',
+                  label: 'Free Tier',
+                  desc: 'Public directory access, exploratory account',
+                  color: '#4B5563',
+                  bg: '#F3F4F6',
+                  dot: '#9CA3AF',
+                },
+                {
+                  key: 'core',
+                  label: 'Core Tier',
+                  desc: 'Full angel syndicate access and deal pipeline',
+                  color: '#065F46',
+                  bg: '#ECFDF5',
+                  dot: '#10B981',
+                },
+                {
+                  key: 'advanced',
+                  label: 'Advanced Tier',
+                  desc: 'Data rooms, priority allocation & direct dealflow',
+                  color: '#0F766E',
+                  bg: '#F0FDFA',
+                  dot: '#14B8A6',
+                },
+                {
+                  key: 'institutional',
+                  label: 'Institutional Tier',
+                  desc: 'Multi-seat access, bespoke syndicates & family offices',
+                  color: '#6B21A8',
+                  bg: '#FAF5FF',
+                  dot: '#A855F7',
+                },
+              ].map((tier) => {
+                const isSelected =
+                  String(selectedMemberForTier?.account_status || 'free').toLowerCase() === tier.key;
+                return (
+                  <TouchableOpacity
+                    key={`tier-opt-${tier.key}`}
+                    style={[
+                      styles.tierOptionItem,
+                      isSelected && styles.tierOptionItemSelected,
+                    ]}
+                    onPress={() => handleChangeTier(tier.key)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.tierOptionLeft}>
+                      <View style={[styles.tierDotLarge, { backgroundColor: tier.dot }]} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.tierOptionTitle, { color: tier.color }]}>
+                          {tier.label}
+                        </Text>
+                        <Text style={styles.tierOptionDesc}>{tier.desc}</Text>
+                      </View>
+                    </View>
+                    {isSelected ? (
+                      <Ionicons name="checkmark-circle" size={22} color="#0A5554" />
+                    ) : (
+                      <View style={styles.tierRadioUnchecked} />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <TouchableOpacity
+              style={styles.modalCancelBtn}
+              onPress={() => setTierModalVisible(false)}
+            >
+              <Text style={styles.modalCancelBtnText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* 2. MODE CONFIRMATION MODAL */}
+      <Modal
+        visible={modeModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !isModeUpdating && setModeModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => !isModeUpdating && setModeModalVisible(false)}
+        >
+          <View style={styles.modalCardCenter} onStartShouldSetResponder={() => true}>
+            <View
+              style={[
+                styles.modalTopBarTeal,
+                targetMode === 'inactive'
+                  ? { backgroundColor: '#F59E0B' }
+                  : { backgroundColor: '#10B981' },
+              ]}
+            />
+            <View style={styles.modalHeaderRow}>
+              <View>
+                <Text style={styles.modalHeaderTitle}>
+                  Change Mode to {targetMode === 'active' ? 'Active' : 'Inactive'}
+                </Text>
+                <Text style={styles.modalHeaderSubtitle}>
+                  Update member access permissions
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => !isModeUpdating && setModeModalVisible(false)}
+                style={styles.modalCloseBtn}
+                disabled={isModeUpdating}
+              >
+                <Ionicons name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Member Preview Card */}
+            <View style={styles.memberPreviewCard}>
+              {selectedMemberForMode?.profile_photo_url ? (
+                <Image
+                  source={{ uri: selectedMemberForMode.profile_photo_url }}
+                  style={styles.previewAvatarPhoto}
+                  resizeMode="cover"
+                />
+              ) : (
+                <View style={styles.previewAvatarCircle}>
+                  <Text style={styles.previewAvatarText}>
+                    {(selectedMemberForMode?.name || 'U').charAt(0).toUpperCase()}
+                  </Text>
+                </View>
+              )}
+              <View style={{ flex: 1 }}>
+                <Text style={styles.previewMemberName} numberOfLines={1}>
+                  {selectedMemberForMode?.name}
+                </Text>
+                <Text style={styles.previewMemberEmail} numberOfLines={1}>
+                  {selectedMemberForMode?.email}
+                </Text>
+                <Text style={styles.previewMemberMeta}>
+                  ID #{selectedMemberForMode?.id} • Currently{' '}
+                  {selectedMemberForMode?.status === 'inactive' ? 'Inactive' : 'Active'}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.modalWarningBox}>
+              <Ionicons
+                name={targetMode === 'inactive' ? 'warning-outline' : 'shield-checkmark-outline'}
+                size={18}
+                color={targetMode === 'inactive' ? '#B45309' : '#047857'}
+              />
+              <Text
+                style={[
+                  styles.modalWarningText,
+                  targetMode === 'inactive' ? { color: '#92400E' } : { color: '#065F46' },
+                ]}
+              >
+                {targetMode === 'inactive'
+                  ? 'Switching this member to Inactive will temporarily suspend their ability to log in and commit to syndicate deals.'
+                  : 'Switching this member to Active will restore full platform login and deal participation privileges.'}
+              </Text>
+            </View>
+
+            <View style={styles.modalFooterActionsRow}>
+              <TouchableOpacity
+                style={styles.modalSecondaryBtn}
+                onPress={() => setModeModalVisible(false)}
+                disabled={isModeUpdating}
+              >
+                <Text style={styles.modalSecondaryBtnText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.modalPrimaryBtn,
+                  targetMode === 'inactive'
+                    ? { backgroundColor: '#D97706' }
+                    : { backgroundColor: '#0A5554' },
+                ]}
+                onPress={handleConfirmModeChange}
+                disabled={isModeUpdating}
+              >
+                {isModeUpdating ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.modalPrimaryBtnText}>
+                    Yes, Change to {targetMode === 'active' ? 'Active' : 'Inactive'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* 3. DELETE MEMBER CONFIRMATION MODAL */}
+      <Modal
+        visible={deleteModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !isDeletingMember && setDeleteModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => !isDeletingMember && setDeleteModalVisible(false)}
+        >
+          <View style={styles.modalCardCenter} onStartShouldSetResponder={() => true}>
+            <View style={styles.modalTopBarRed} />
+            <View style={styles.modalHeaderRow}>
+              <View style={styles.modalDangerHeaderWrap}>
+                <View style={styles.modalDangerIconBadge}>
+                  <Ionicons name="trash-outline" size={20} color="#DC2626" />
+                </View>
+                <View>
+                  <Text style={styles.modalHeaderTitleDanger}>Delete Member Account</Text>
+                  <Text style={styles.modalHeaderSubtitle}>Permanent removal of member</Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => !isDeletingMember && setDeleteModalVisible(false)}
+                style={styles.modalCloseBtn}
+                disabled={isDeletingMember}
+              >
+                <Ionicons name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Member Preview Card */}
+            <View style={styles.memberPreviewCard}>
+              {selectedMemberForDelete?.profile_photo_url ? (
+                <Image
+                  source={{ uri: selectedMemberForDelete.profile_photo_url }}
+                  style={styles.previewAvatarPhoto}
+                  resizeMode="cover"
+                />
+              ) : (
+                <View style={styles.previewAvatarCircle}>
+                  <Text style={styles.previewAvatarText}>
+                    {(selectedMemberForDelete?.name || 'U').charAt(0).toUpperCase()}
+                  </Text>
+                </View>
+              )}
+              <View style={{ flex: 1 }}>
+                <Text style={styles.previewMemberName} numberOfLines={1}>
+                  {selectedMemberForDelete?.name}
+                </Text>
+                <Text style={styles.previewMemberEmail} numberOfLines={1}>
+                  {selectedMemberForDelete?.email}
+                </Text>
+                <Text style={styles.previewMemberMeta}>
+                  ID #{selectedMemberForDelete?.id}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.modalDangerNoticeBox}>
+              <Text style={styles.modalDangerNoticeTitle}>Warning: This action cannot be undone</Text>
+              <Text style={styles.modalDangerNoticeDesc}>
+                All profile records, investments history links, and uploaded files for this member will be permanently removed from the system.
+              </Text>
+            </View>
+
+            <View style={styles.modalFooterActionsRow}>
+              <TouchableOpacity
+                style={styles.modalSecondaryBtn}
+                onPress={() => setDeleteModalVisible(false)}
+                disabled={isDeletingMember}
+              >
+                <Text style={styles.modalSecondaryBtnText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.modalDangerBtn}
+                onPress={handleConfirmDelete}
+                disabled={isDeletingMember}
+              >
+                {isDeletingMember ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.modalDangerBtnText}>Yes, Delete Member</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* 4. EDIT MEMBER PROFILE MODAL */}
+      <Modal
+        visible={editModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => !editSaving && setEditModalVisible(false)}
+      >
+        <SafeAreaView style={styles.editModalSafeArea}>
+          <View style={styles.editModalContainer}>
+            {/* Header */}
+            <View style={styles.editModalHeader}>
+              <View style={styles.editModalHeaderLeft}>
+                <View style={styles.editModalIconWrap}>
+                  <Ionicons name="person" size={18} color="#0A5554" />
+                </View>
+                <View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text style={styles.editModalTitle}>Edit Member Profile</Text>
+                    {editingMember && (
+                      <View style={styles.editModalIdBadge}>
+                        <Text style={styles.editModalIdBadgeText}>ID #{editingMember.id}</Text>
+                      </View>
+                    )}
+                  </View>
+                  <Text style={styles.editModalSubtitle}>
+                    Update member credentials, tier, mode & details
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => !editSaving && setEditModalVisible(false)}
+                style={styles.modalCloseBtn}
+                disabled={editSaving}
+              >
+                <Ionicons name="close" size={22} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Scrollable Form Body */}
+            <ScrollView
+              style={styles.editModalScrollView}
+              contentContainerStyle={styles.editModalFormContent}
+              keyboardShouldPersistTaps="handled"
+            >
+              {/* Member Avatar Section */}
+              <View style={styles.editAvatarSection}>
+                {editingMember?.profile_photo_url ? (
+                  <Image
+                    source={{ uri: editingMember.profile_photo_url }}
+                    style={styles.editAvatarImage}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <View style={styles.editAvatarPlaceholder}>
+                    <Text style={styles.editAvatarPlaceholderText}>
+                      {(editFormData.name || 'U').charAt(0).toUpperCase()}
+                    </Text>
+                  </View>
+                )}
+                <View style={{ marginLeft: 14, flex: 1 }}>
+                  <Text style={styles.editAvatarName} numberOfLines={1}>
+                    {editFormData.name || 'Member'}
+                  </Text>
+                  <Text style={styles.editAvatarEmail} numberOfLines={1}>
+                    {editFormData.email || 'Email'}
+                  </Text>
+                  <View style={{ flexDirection: 'row', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+                    <View style={styles.editMetaBadge}>
+                      <Text style={styles.editMetaBadgeText}>
+                        {editFormData.account_status.toUpperCase()} TIER
+                      </Text>
+                    </View>
+                    <View
+                      style={[
+                        styles.editMetaBadge,
+                        editFormData.status === 'active'
+                          ? { backgroundColor: '#ECFDF5' }
+                          : { backgroundColor: '#F3F4F6' },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.editMetaBadgeText,
+                          editFormData.status === 'active'
+                            ? { color: '#065F46' }
+                            : { color: '#6B7280' },
+                        ]}
+                      >
+                        {editFormData.status.toUpperCase()}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+              </View>
+
+              {/* Section 1: Personal Details */}
+              <Text style={styles.formSectionHeader}>PERSONAL & CONTACT DETAILS</Text>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>
+                  Full Name <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={editFormData.name}
+                  onChangeText={(val) => setEditFormData((prev) => ({ ...prev, name: val }))}
+                  placeholder="e.g. John Doe"
+                  placeholderTextColor="#94A3B8"
+                />
+              </View>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>
+                  Email Address <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={editFormData.email}
+                  onChangeText={(val) => setEditFormData((prev) => ({ ...prev, email: val }))}
+                  placeholder="e.g. john@example.com"
+                  placeholderTextColor="#94A3B8"
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                />
+              </View>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>
+                  Phone / WhatsApp <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={editFormData.phone}
+                  onChangeText={(val) => setEditFormData((prev) => ({ ...prev, phone: val }))}
+                  placeholder="e.g. +8801712345678"
+                  placeholderTextColor="#94A3B8"
+                  keyboardType="phone-pad"
+                />
+              </View>
+
+              {/* Gender Chips */}
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>
+                  Gender <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                <View style={styles.chipButtonGroup}>
+                  {['male', 'female', 'other'].map((g) => (
+                    <TouchableOpacity
+                      key={`gender-${g}`}
+                      style={[
+                        styles.chipBtn,
+                        editFormData.gender === g && styles.chipBtnActive,
+                      ]}
+                      onPress={() => setEditFormData((prev) => ({ ...prev, gender: g }))}
+                    >
+                      <Text
+                        style={[
+                          styles.chipBtnText,
+                          editFormData.gender === g && styles.chipBtnTextActive,
+                        ]}
+                      >
+                        {g.charAt(0).toUpperCase() + g.slice(1)}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
+              {/* Country Selection Chips */}
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>Primary Country</Text>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={{ gap: 6, paddingVertical: 2 }}
+                >
+                  {COUNTRIES_LIST.map((c) => (
+                    <TouchableOpacity
+                      key={`country-${c}`}
+                      style={[
+                        styles.chipBtnSmall,
+                        editFormData.primary_country === c && styles.chipBtnSmallActive,
+                      ]}
+                      onPress={() =>
+                        setEditFormData((prev) => ({ ...prev, primary_country: c }))
+                      }
+                    >
+                      <Text
+                        style={[
+                          styles.chipBtnSmallText,
+                          editFormData.primary_country === c && styles.chipBtnSmallTextActive,
+                        ]}
+                      >
+                        {c}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+
+              {/* Section 2: Professional Details */}
+              <Text style={styles.formSectionHeader}>PROFESSIONAL BACKGROUND</Text>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>Organization / Company</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={editFormData.organization}
+                  onChangeText={(val) =>
+                    setEditFormData((prev) => ({ ...prev, organization: val }))
+                  }
+                  placeholder="e.g. Pathao, Grameenphone"
+                  placeholderTextColor="#94A3B8"
+                />
+              </View>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>Designation / Title</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={editFormData.designation}
+                  onChangeText={(val) =>
+                    setEditFormData((prev) => ({ ...prev, designation: val }))
+                  }
+                  placeholder="e.g. Managing Director, Founder"
+                  placeholderTextColor="#94A3B8"
+                />
+              </View>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>Preference Sector</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={editFormData.preference_sector}
+                  onChangeText={(val) =>
+                    setEditFormData((prev) => ({ ...prev, preference_sector: val }))
+                  }
+                  placeholder="e.g. Fintech, Edtech, Healthtech"
+                  placeholderTextColor="#94A3B8"
+                />
+              </View>
+
+              {/* Section 3: Tier, Role & Mode */}
+              <Text style={styles.formSectionHeader}>ACCOUNT TIER, ROLE & MODE</Text>
+
+              {/* Account Tier */}
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>
+                  Account Tier <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                <View style={styles.chipButtonGroup}>
+                  {[
+                    { key: 'free', label: 'Free' },
+                    { key: 'core', label: 'Core' },
+                    { key: 'advanced', label: 'Advanced' },
+                    { key: 'institutional', label: 'Institutional' },
+                  ].map((t) => (
+                    <TouchableOpacity
+                      key={`edit-tier-${t.key}`}
+                      style={[
+                        styles.chipBtn,
+                        editFormData.account_status === t.key && styles.chipBtnActive,
+                      ]}
+                      onPress={() =>
+                        setEditFormData((prev) => ({ ...prev, account_status: t.key }))
+                      }
+                    >
+                      <Text
+                        style={[
+                          styles.chipBtnText,
+                          editFormData.account_status === t.key && styles.chipBtnTextActive,
+                        ]}
+                      >
+                        {t.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
+              {/* Account Mode */}
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>
+                  Account Mode <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                <View style={styles.chipButtonGroup}>
+                  {[
+                    { key: 'active', label: 'Active Mode' },
+                    { key: 'inactive', label: 'Inactive Mode' },
+                  ].map((m) => (
+                    <TouchableOpacity
+                      key={`edit-mode-${m.key}`}
+                      style={[
+                        styles.chipBtn,
+                        editFormData.status === m.key && styles.chipBtnActive,
+                      ]}
+                      onPress={() =>
+                        setEditFormData((prev) => ({ ...prev, status: m.key }))
+                      }
+                    >
+                      <Text
+                        style={[
+                          styles.chipBtnText,
+                          editFormData.status === m.key && styles.chipBtnTextActive,
+                        ]}
+                      >
+                        {m.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
+              {/* Role */}
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>Role</Text>
+                <View style={styles.chipButtonGroup}>
+                  {[
+                    { key: 'investor', label: 'Investor' },
+                    { key: 'admin', label: 'Admin' },
+                    { key: 'disabled', label: 'Disabled' },
+                  ].map((r) => (
+                    <TouchableOpacity
+                      key={`edit-role-${r.key}`}
+                      style={[
+                        styles.chipBtn,
+                        editFormData.role === r.key && styles.chipBtnActive,
+                      ]}
+                      onPress={() =>
+                        setEditFormData((prev) => ({ ...prev, role: r.key }))
+                      }
+                    >
+                      <Text
+                        style={[
+                          styles.chipBtnText,
+                          editFormData.role === r.key && styles.chipBtnTextActive,
+                        ]}
+                      >
+                        {r.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
+              {/* Password */}
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>New Password (leave blank to keep current)</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={editFormData.password}
+                  onChangeText={(val) => setEditFormData((prev) => ({ ...prev, password: val }))}
+                  placeholder="Min 8 characters"
+                  placeholderTextColor="#94A3B8"
+                  secureTextEntry
+                />
+              </View>
+
+              {/* Email Verification Status Banner */}
+              <View style={styles.editVerificationBanner}>
+                {editingMember?.is_email_verified ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Ionicons name="checkmark-circle" size={18} color="#059669" />
+                    <View>
+                      <Text style={styles.editVerificationTitle}>Email Address Verified</Text>
+                      <Text style={styles.editVerificationSubtitle}>
+                        This member holds a verified email badge.
+                      </Text>
+                    </View>
+                  </View>
+                ) : (
+                  <View
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      width: '100%',
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                      <Ionicons name="alert-circle-outline" size={18} color="#D97706" />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.editVerificationTitleWarning}>Email Unverified</Text>
+                        <Text style={styles.editVerificationSubtitle}>
+                          Member has not completed email verification link.
+                        </Text>
+                      </View>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.editManualVerifyBtn}
+                      onPress={() => handleVerifyEmail(editingMember?.id, editingMember?.name)}
+                    >
+                      <Text style={styles.editManualVerifyBtnText}>Verify Now</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+            </ScrollView>
+
+            {/* Footer Buttons */}
+            <View style={styles.editModalFooter}>
+              <TouchableOpacity
+                style={styles.editModalCancelBtn}
+                onPress={() => setEditModalVisible(false)}
+                disabled={editSaving}
+              >
+                <Text style={styles.editModalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.editModalSaveBtn}
+                onPress={handleSaveEdit}
+                disabled={editSaving}
+              >
+                {editSaving ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.editModalSaveBtnText}>Save Changes</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -3178,5 +4479,849 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: Colors.muted,
     alignSelf: 'center',
+  },
+
+  // Member Filter Tabs (matching web)
+  memberFilterScroll: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingVertical: 4,
+  },
+  memberFilterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: Radii.pill,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  memberFilterChipActive: {
+    backgroundColor: '#E6F4F1',
+    borderColor: '#0A5554',
+  },
+  memberFilterChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  memberFilterChipTextActive: {
+    color: '#0A5554',
+  },
+  memberFilterBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: Radii.pill,
+  },
+  memberFilterBadgeInactive: {
+    backgroundColor: '#F1F5F9',
+  },
+  memberFilterBadgeActive: {
+    backgroundColor: '#0A5554',
+  },
+  memberFilterBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#64748B',
+  },
+  memberFilterBadgeTextActive: {
+    color: '#FFFFFF',
+  },
+
+  // Enhanced Member Card
+  memberCardEnhanced: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: Radii.md,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    ...Shadows.card,
+    gap: 12,
+  },
+  avatarPhoto: {
+    width: 44,
+    height: 44,
+    borderRadius: Radii.pill,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+  },
+  youBadge: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: Radii.pill,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  youBadgeText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  memberMetaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+    marginTop: 2,
+  },
+  memberMetaText: {
+    fontSize: 11,
+    color: '#94A3B8',
+  },
+
+  // Professional details box
+  memberDetailsBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: Radii.sm,
+    padding: 10,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+  },
+  memberDetailRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+  },
+  memberDetailText: {
+    fontSize: 12,
+    color: '#334155',
+    flex: 1,
+    lineHeight: 16,
+  },
+  emailVerifiedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 4,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+  },
+  emailVerifiedStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  verifiedTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  verifiedTagText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  unverifiedTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  unverifiedTagText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#D97706',
+  },
+  inlineVerifyBtn: {
+    backgroundColor: '#E6F4F1',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#99F6E4',
+  },
+  inlineVerifyBtnText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#0A5554',
+  },
+
+  // Interactive Status & Mode Selectors
+  statusAndModeRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  selectorColumn: {
+    flex: 1,
+  },
+  selectorLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#94A3B8',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  interactivePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  statusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    marginRight: 6,
+  },
+  interactivePillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    flex: 1,
+  },
+
+  // Member Action Buttons Row
+  memberActionButtonsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  actionBtnApprove: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#0A5554',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  actionBtnApproveText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  actionBtnEdit: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#F0FDFA',
+    borderWidth: 1,
+    borderColor: '#99F6E4',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  actionBtnEditText: {
+    color: '#0A5554',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  actionBtnDelete: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  actionBtnDeleteText: {
+    color: '#DC2626',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+
+  // Pagination navigation bar
+  paginationContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderRadius: Radii.md,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginTop: 4,
+  },
+  paginationBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  paginationBtnDisabled: {
+    opacity: 0.4,
+    backgroundColor: '#F8FAFC',
+    borderColor: '#F1F5F9',
+  },
+  paginationBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0A5554',
+  },
+  paginationBtnTextDisabled: {
+    color: '#94A3B8',
+  },
+  paginationInfoBox: {
+    alignItems: 'center',
+  },
+  paginationInfoText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#475569',
+  },
+
+  // Modal common styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  modalCardCenter: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    overflow: 'hidden',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  modalTopBarTeal: {
+    height: 5,
+    backgroundColor: '#0A5554',
+  },
+  modalTopBarRed: {
+    height: 5,
+    backgroundColor: '#DC2626',
+  },
+  modalHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    paddingHorizontal: 18,
+    paddingTop: 16,
+    paddingBottom: 12,
+  },
+  modalHeaderTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  modalHeaderTitleDanger: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#DC2626',
+  },
+  modalHeaderSubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  modalCloseBtn: {
+    padding: 4,
+    borderRadius: 16,
+    backgroundColor: '#F1F5F9',
+  },
+  modalDangerHeaderWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  modalDangerIconBadge: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FEE2E2',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // Tier Selector modal options
+  tierOptionsList: {
+    paddingHorizontal: 16,
+    gap: 8,
+    paddingBottom: 12,
+  },
+  tierOptionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+  },
+  tierOptionItemSelected: {
+    backgroundColor: '#F0FDFA',
+    borderColor: '#0A5554',
+  },
+  tierOptionLeft: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    flex: 1,
+  },
+  tierDotLarge: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginTop: 4,
+  },
+  tierOptionTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  tierOptionDesc: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  tierRadioUnchecked: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+  },
+  modalCancelBtn: {
+    marginHorizontal: 16,
+    marginBottom: 16,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 10,
+    backgroundColor: '#F1F5F9',
+  },
+  modalCancelBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#475569',
+  },
+
+  // Preview card inside modal
+  memberPreviewCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginHorizontal: 16,
+    marginBottom: 12,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  previewAvatarPhoto: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  previewAvatarCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#E6F4F1',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  previewAvatarText: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0A5554',
+  },
+  previewMemberName: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  previewMemberEmail: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  previewMemberMeta: {
+    fontSize: 10,
+    color: '#94A3B8',
+    marginTop: 2,
+  },
+
+  // Warning & notice boxes inside modal
+  modalWarningBox: {
+    flexDirection: 'row',
+    gap: 8,
+    marginHorizontal: 16,
+    marginBottom: 14,
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  modalWarningText: {
+    fontSize: 11,
+    lineHeight: 16,
+    flex: 1,
+  },
+  modalDangerNoticeBox: {
+    marginHorizontal: 16,
+    marginBottom: 14,
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  modalDangerNoticeTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#991B1B',
+    marginBottom: 2,
+  },
+  modalDangerNoticeDesc: {
+    fontSize: 11,
+    color: '#B91C1C',
+    lineHeight: 16,
+  },
+
+  // Modal footer actions
+  modalFooterActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#F8FAFC',
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+  },
+  modalSecondaryBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  modalSecondaryBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  modalPrimaryBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 8,
+    backgroundColor: '#0A5554',
+  },
+  modalPrimaryBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  modalDangerBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 8,
+    backgroundColor: '#DC2626',
+  },
+  modalDangerBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+
+  // Edit Member Modal
+  editModalSafeArea: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.7)',
+  },
+  editModalContainer: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    marginTop: 20,
+    overflow: 'hidden',
+  },
+  editModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+  },
+  editModalHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  editModalIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#E6F4F1',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editModalTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  editModalSubtitle: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  editModalIdBadge: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: Radii.pill,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  editModalIdBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  editModalScrollView: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+  },
+  editModalFormContent: {
+    padding: 16,
+    gap: 14,
+  },
+  editAvatarSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  editAvatarImage: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    borderWidth: 2,
+    borderColor: '#0A5554',
+  },
+  editAvatarPlaceholder: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#E6F4F1',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#0A5554',
+  },
+  editAvatarPlaceholderText: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#0A5554',
+  },
+  editAvatarName: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  editAvatarEmail: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  editMetaBadge: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  editMetaBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#475569',
+  },
+  formSectionHeader: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.8,
+    marginTop: 6,
+    marginBottom: -4,
+  },
+  formField: {
+    backgroundColor: '#FFFFFF',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    gap: 6,
+  },
+  fieldLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  requiredStar: {
+    color: '#DC2626',
+  },
+  fieldInput: {
+    height: 38,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 10,
+    fontSize: 12,
+    color: '#0F172A',
+  },
+  chipButtonGroup: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  chipBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  chipBtnActive: {
+    backgroundColor: '#E6F4F1',
+    borderColor: '#0A5554',
+  },
+  chipBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  chipBtnTextActive: {
+    color: '#0A5554',
+  },
+  chipBtnSmall: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  chipBtnSmallActive: {
+    backgroundColor: '#E6F4F1',
+    borderColor: '#0A5554',
+  },
+  chipBtnSmallText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  chipBtnSmallTextActive: {
+    color: '#0A5554',
+  },
+  editVerificationBanner: {
+    backgroundColor: '#FFFFFF',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  editVerificationTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#059669',
+  },
+  editVerificationTitleWarning: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#D97706',
+  },
+  editVerificationSubtitle: {
+    fontSize: 10,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  editManualVerifyBtn: {
+    backgroundColor: '#E6F4F1',
+    borderWidth: 1,
+    borderColor: '#99F6E4',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+  },
+  editManualVerifyBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0A5554',
+  },
+  editModalFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+  },
+  editModalCancelBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+  },
+  editModalCancelBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  editModalSaveBtn: {
+    paddingHorizontal: 18,
+    paddingVertical: 9,
+    borderRadius: 8,
+    backgroundColor: '#0A5554',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  editModalSaveBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
 });
