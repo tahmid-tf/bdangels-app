@@ -346,9 +346,18 @@ export default function AdminScreen() {
 
   // Fetch Members with Pagination, Search & Filters
   const loadMembers = useCallback(
-    async (token = authToken, search = memberSearch, status = memberStatusFilter, page = 1) => {
+    async (
+      token = authToken,
+      search = memberSearch,
+      status = memberStatusFilter,
+      page = 1,
+      options = {}
+    ) => {
       if (!token) return;
-      setMembersLoading(true);
+      const { silent = false } = options;
+      if (!silent) {
+        setMembersLoading(true);
+      }
       try {
         const filterStatus = status === 'all' ? '' : status;
         const res = await fetchAdminMembers(token, {
@@ -389,7 +398,9 @@ export default function AdminScreen() {
       } catch (err) {
         console.log('Error loading members:', err);
       } finally {
-        setMembersLoading(false);
+        if (!silent) {
+          setMembersLoading(false);
+        }
       }
     },
     [authToken, memberSearch, memberStatusFilter]
@@ -519,13 +530,23 @@ export default function AdminScreen() {
             try {
               const res = await approveAdminMember(authToken, userId);
               if (res.ok) {
-                Alert.alert('Success', res.message || `${memberName} has been approved.`);
-                // Update local state immediately
+                // Instantly update member in-place with zero flicker
                 setMembers((prev) =>
                   prev.map((m) => (m.id === userId ? { ...m, is_approved: true } : m))
                 );
-                loadMembers(authToken, memberSearch, memberStatusFilter, memberPagination.currentPage);
-                // Also update dashboard data if loaded
+                setMemberCounts((prev) => ({
+                  ...prev,
+                  pending: Math.max(0, (prev.pending || 1) - 1),
+                  active: (prev.active || 0) + 1,
+                }));
+                // Silent background sync
+                loadMembers(
+                  authToken,
+                  memberSearch,
+                  memberStatusFilter,
+                  memberPagination.currentPage,
+                  { silent: true }
+                );
                 loadDashboard(authToken);
               } else {
                 Alert.alert('Approval Failed', res.message || 'Could not approve member.');
@@ -557,11 +578,25 @@ export default function AdminScreen() {
             try {
               const res = await verifyAdminMemberEmail(authToken, userId);
               if (res.ok) {
-                Alert.alert('Success', res.message || 'Member email marked as verified.');
+                // Instantly update member in-place with zero flicker
                 setMembers((prev) =>
-                  prev.map((m) => (m.id === userId ? { ...m, is_email_verified: true } : m))
+                  prev.map((m) =>
+                    m.id === userId
+                      ? { ...m, is_email_verified: true, email_verified_at: new Date().toISOString() }
+                      : m
+                  )
                 );
-                loadMembers(authToken, memberSearch, memberStatusFilter, memberPagination.currentPage);
+                if (editingMember && editingMember.id === userId) {
+                  setEditingMember((prev) => ({ ...prev, is_email_verified: true }));
+                }
+                // Silent background sync
+                loadMembers(
+                  authToken,
+                  memberSearch,
+                  memberStatusFilter,
+                  memberPagination.currentPage,
+                  { silent: true }
+                );
               } else {
                 Alert.alert('Verification Failed', res.message || 'Could not verify email.');
               }
@@ -586,24 +621,35 @@ export default function AdminScreen() {
   const handleChangeTier = async (newTier) => {
     if (!selectedMemberForTier || !authToken) return;
     const memberId = selectedMemberForTier.id;
-    setUpdatingTierUserId(memberId);
+    // Instantly close modal and update in-place with zero flicker
     setTierModalVisible(false);
+    setSelectedMemberForTier(null);
+    setMembers((prev) =>
+      prev.map((m) =>
+        m.id === memberId
+          ? { ...m, account_status: newTier, tier_name: newTier }
+          : m
+      )
+    );
+    setUpdatingTierUserId(memberId);
     try {
       const res = await updateAdminMemberStatus(authToken, memberId, { account_status: newTier });
-      if (res.ok) {
-        setMembers((prev) =>
-          prev.map((m) => (m.id === memberId ? { ...m, account_status: newTier, tier_name: newTier } : m))
-        );
-        loadMembers(authToken, memberSearch, memberStatusFilter, memberPagination.currentPage);
-      } else {
+      if (!res.ok) {
         Alert.alert('Update Failed', res.message || 'Could not update status tier.');
       }
+      // Silent background sync
+      loadMembers(
+        authToken,
+        memberSearch,
+        memberStatusFilter,
+        memberPagination.currentPage,
+        { silent: true }
+      );
     } catch (err) {
       console.log('Error updating tier:', err);
       Alert.alert('Error', 'An unexpected error occurred while updating status tier.');
     } finally {
       setUpdatingTierUserId(null);
-      setSelectedMemberForTier(null);
     }
   };
 
@@ -623,11 +669,29 @@ export default function AdminScreen() {
     try {
       const res = await updateAdminMemberMode(authToken, memberId, targetMode);
       if (res.ok) {
+        // Instantly update member in-place with zero flicker
         setMembers((prev) =>
-          prev.map((m) => (m.id === memberId ? { ...m, status: targetMode, is_active: targetMode === 'active' } : m))
+          prev.map((m) =>
+            m.id === memberId
+              ? { ...m, status: targetMode, is_active: targetMode === 'active' }
+              : m
+          )
         );
+        setMemberCounts((prev) => ({
+          ...prev,
+          active: targetMode === 'active' ? (prev.active || 0) + 1 : Math.max(0, (prev.active || 1) - 1),
+          inactive: targetMode === 'inactive' ? (prev.inactive || 0) + 1 : Math.max(0, (prev.inactive || 1) - 1),
+        }));
         setModeModalVisible(false);
-        loadMembers(authToken, memberSearch, memberStatusFilter, memberPagination.currentPage);
+        setSelectedMemberForMode(null);
+        // Silent background sync
+        loadMembers(
+          authToken,
+          memberSearch,
+          memberStatusFilter,
+          memberPagination.currentPage,
+          { silent: true }
+        );
       } else {
         Alert.alert('Update Failed', res.message || 'Could not update member mode.');
       }
@@ -654,14 +718,30 @@ export default function AdminScreen() {
     try {
       const res = await deleteAdminMember(authToken, memberId);
       if (res.ok) {
+        // Instantly remove member in-place with zero flicker
         setMembers((prev) => prev.filter((m) => m.id !== memberId));
         setMemberPagination((prev) => ({
           ...prev,
           total: Math.max(0, prev.total - 1),
+          to: Math.max(0, prev.to - 1),
+        }));
+        setMemberCounts((prev) => ({
+          ...prev,
+          all: Math.max(0, (prev.all || 1) - 1),
+          ...(prev[memberStatusFilter] !== undefined
+            ? { [memberStatusFilter]: Math.max(0, prev[memberStatusFilter] - 1) }
+            : {}),
         }));
         setDeleteModalVisible(false);
-        Alert.alert('Member Removed', 'The member has been deleted successfully.');
-        loadMembers(authToken, memberSearch, memberStatusFilter, memberPagination.currentPage);
+        setSelectedMemberForDelete(null);
+        // Silent background sync
+        loadMembers(
+          authToken,
+          memberSearch,
+          memberStatusFilter,
+          memberPagination.currentPage,
+          { silent: true }
+        );
       } else {
         Alert.alert('Delete Failed', res.message || 'Could not remove member.');
       }
@@ -726,10 +806,23 @@ export default function AdminScreen() {
 
       const res = await updateAdminMember(authToken, editingMember.id, payload);
       if (res.ok) {
-        Alert.alert('Success', 'Member details updated successfully.');
+        // Instantly update member in-place with zero flicker
+        const updatedData = res.data || { ...editingMember, ...payload };
+        setMembers((prev) =>
+          prev.map((m) =>
+            m.id === editingMember.id ? { ...m, ...updatedData } : m
+          )
+        );
         setEditModalVisible(false);
         setEditingMember(null);
-        loadMembers(authToken, memberSearch, memberStatusFilter, memberPagination.currentPage);
+        // Silent background sync
+        loadMembers(
+          authToken,
+          memberSearch,
+          memberStatusFilter,
+          memberPagination.currentPage,
+          { silent: true }
+        );
       } else {
         const errorText = res.errors
           ? Object.values(res.errors).flat().join('\n')
@@ -1300,7 +1393,7 @@ export default function AdminScreen() {
               </ScrollView>
 
               {/* Members List */}
-              {membersLoading ? (
+              {membersLoading && members.length === 0 ? (
                 <View style={styles.listLoadingBox}>
                   <ActivityIndicator size="small" color={Colors.forest} />
                   <Text style={styles.loadingText}>Fetching members...</Text>
@@ -1315,6 +1408,12 @@ export default function AdminScreen() {
                 </View>
               ) : (
                 <View style={styles.cardsList}>
+                  {membersLoading && (
+                    <View style={styles.memberListUpdatingBar}>
+                      <ActivityIndicator size="small" color={Colors.forest} />
+                      <Text style={styles.memberListUpdatingText}>Syncing latest data...</Text>
+                    </View>
+                  )}
                   {members.map((member) => {
                     const isApproved = Boolean(member.is_approved);
                     const isApproving = approvingUserId === member.id;
@@ -3907,6 +4006,24 @@ const styles = StyleSheet.create({
     padding: 32,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  memberListUpdatingBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: '#F0FDF4',
+    borderRadius: Radii.sm,
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    marginBottom: 4,
+  },
+  memberListUpdatingText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#166534',
   },
   memberCard: {
     backgroundColor: '#FFFFFF',
