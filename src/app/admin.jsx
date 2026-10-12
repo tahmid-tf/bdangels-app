@@ -2185,14 +2185,35 @@ export default function AdminScreen() {
   };
 
   const handleOpenEditProgram = (prog) => {
+    if (!prog) return;
     setEditingProgram(prog);
-    const existingDropdown = prog.dropdown_items || {};
-    const existingItems = Array.isArray(existingDropdown.items)
-      ? existingDropdown.items.map((it) => ({
-          title: it.title || '',
-          link: it.link || '',
-        }))
-      : [];
+
+    let existingDropdown = prog.dropdown_items;
+    if (typeof existingDropdown === 'string') {
+      try {
+        existingDropdown = JSON.parse(existingDropdown);
+      } catch {
+        existingDropdown = {};
+      }
+    }
+
+    let rawItems = [];
+    let dropdownLabel = '';
+    if (Array.isArray(existingDropdown)) {
+      rawItems = existingDropdown;
+    } else if (existingDropdown && typeof existingDropdown === 'object') {
+      if (Array.isArray(existingDropdown.items)) {
+        rawItems = existingDropdown.items;
+      }
+      if (existingDropdown.label) {
+        dropdownLabel = String(existingDropdown.label);
+      }
+    }
+
+    const existingItems = rawItems.map((it) => ({
+      title: it && it.title ? String(it.title) : '',
+      link: it && it.link ? String(it.link) : '',
+    }));
 
     while (existingItems.length < 2) {
       existingItems.push({ title: '', link: '' });
@@ -2208,7 +2229,7 @@ export default function AdminScreen() {
       secondary_link: prog.secondary_link || '',
       theme: prog.theme || 'white',
       sort_order: String(prog.sort_order ?? ''),
-      dropdown_label: existingDropdown.label || '',
+      dropdown_label: dropdownLabel,
       dropdown_items: existingItems,
     });
     setEditProgramModalVisible(true);
@@ -8043,26 +8064,31 @@ export default function AdminScreen() {
       {/* CREATE PROGRAM MODAL */}
       <Modal
         visible={createProgramModalVisible}
+        transparent
         animationType="slide"
-        presentationStyle="pageSheet"
         onRequestClose={() => !programSaving && setCreateProgramModalVisible(false)}
       >
-        <SafeAreaView style={styles.modalSafeArea}>
+        <SafeAreaView style={styles.editModalSafeArea}>
           <View style={styles.editModalContainer}>
             {/* Modal Header */}
             <View style={styles.editModalHeader}>
-              <View>
-                <Text style={styles.editModalTitle}>Add Homepage Program</Text>
-                <Text style={styles.editModalSubtitle}>
-                  Configure a new card for the landing page programs grid
-                </Text>
+              <View style={styles.editModalHeaderLeft}>
+                <View style={styles.editModalIconWrap}>
+                  <Ionicons name="layers" size={18} color="#0A5554" />
+                </View>
+                <View style={{ flex: 1, marginRight: 8 }}>
+                  <Text style={styles.editModalTitle}>Add Homepage Program</Text>
+                  <Text style={styles.editModalSubtitle} numberOfLines={1}>
+                    Configure a new card for the landing page programs grid
+                  </Text>
+                </View>
               </View>
               <TouchableOpacity
-                style={styles.editModalCloseBtn}
-                onPress={() => setCreateProgramModalVisible(false)}
+                style={styles.modalCloseBtn}
+                onPress={() => !programSaving && setCreateProgramModalVisible(false)}
                 disabled={programSaving}
               >
-                <Ionicons name="close" size={22} color={Colors.ink} />
+                <Ionicons name="close" size={22} color="#64748B" />
               </TouchableOpacity>
             </View>
 
@@ -8339,7 +8365,7 @@ export default function AdminScreen() {
             </ScrollView>
 
             {/* Modal Bottom Actions */}
-            <View style={styles.editModalActionRow}>
+            <View style={styles.editModalFooter}>
               <TouchableOpacity
                 style={styles.editModalCancelBtn}
                 onPress={() => setCreateProgramModalVisible(false)}
@@ -8366,26 +8392,38 @@ export default function AdminScreen() {
       {/* EDIT PROGRAM MODAL */}
       <Modal
         visible={editProgramModalVisible}
+        transparent
         animationType="slide"
-        presentationStyle="pageSheet"
         onRequestClose={() => !programSaving && setEditProgramModalVisible(false)}
       >
-        <SafeAreaView style={styles.modalSafeArea}>
+        <SafeAreaView style={styles.editModalSafeArea}>
           <View style={styles.editModalContainer}>
             {/* Modal Header */}
             <View style={styles.editModalHeader}>
-              <View>
-                <Text style={styles.editModalTitle}>Edit Program Card</Text>
-                <Text style={styles.editModalSubtitle}>
-                  Modify &ldquo;{editingProgram?.title}&rdquo; details and links
-                </Text>
+              <View style={styles.editModalHeaderLeft}>
+                <View style={styles.editModalIconWrap}>
+                  <Ionicons name="pencil" size={18} color="#0A5554" />
+                </View>
+                <View style={{ flex: 1, marginRight: 8 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text style={styles.editModalTitle}>Edit Program Card</Text>
+                    {editingProgram?.id && (
+                      <View style={styles.editModalIdBadge}>
+                        <Text style={styles.editModalIdBadgeText}>ID #{editingProgram.id}</Text>
+                      </View>
+                    )}
+                  </View>
+                  <Text style={styles.editModalSubtitle} numberOfLines={1}>
+                    Modify &ldquo;{editingProgram?.title || 'Program'}&rdquo; details and links
+                  </Text>
+                </View>
               </View>
               <TouchableOpacity
-                style={styles.editModalCloseBtn}
-                onPress={() => setEditProgramModalVisible(false)}
+                style={styles.modalCloseBtn}
+                onPress={() => !programSaving && setEditProgramModalVisible(false)}
                 disabled={programSaving}
               >
-                <Ionicons name="close" size={22} color={Colors.ink} />
+                <Ionicons name="close" size={22} color="#64748B" />
               </TouchableOpacity>
             </View>
 
@@ -8659,7 +8697,7 @@ export default function AdminScreen() {
             </ScrollView>
 
             {/* Modal Bottom Actions */}
-            <View style={styles.editModalActionRow}>
+            <View style={styles.editModalFooter}>
               <TouchableOpacity
                 style={styles.editModalCancelBtn}
                 onPress={() => setEditProgramModalVisible(false)}
@@ -11458,6 +11496,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     fontSize: 12,
     color: '#0F172A',
+  },
+  fieldTextArea: {
+    height: 'auto',
+    minHeight: 88,
+    paddingTop: 10,
+    paddingBottom: 10,
+    textAlignVertical: 'top',
+  },
+  fieldHelperText: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+    lineHeight: 15,
   },
   chipButtonGroup: {
     flexDirection: 'row',
