@@ -37,7 +37,10 @@ export default function RootLayout() {
         <Stack.Screen name="publications" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="faq" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="plans" options={{ headerShown: false, animation: 'slide_from_right' }} />
+        <Stack.Screen name="checkout" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="about-us" options={{ headerShown: false, animation: 'slide_from_right' }} />
+        <Stack.Screen name="login" options={{ headerShown: false, animation: 'slide_from_right' }} />
+        <Stack.Screen name="admin" options={{ headerShown: false, animation: 'slide_from_right' }} />
       </Stack>
     </>
   );

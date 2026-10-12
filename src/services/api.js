@@ -52,6 +52,248 @@ export const openCheckoutPage = async (planSlug = '') => {
   }
 };
 
+/**
+ * Submit Membership Checkout via POST /api/checkout
+ */
+export async function submitCheckout(payload) {
+  try {
+    const res = await fetch(`${API_BASE_URL}/checkout`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const json = await res.json();
+    return {
+      ok: res.ok,
+      status: res.status,
+      data: json.data || json,
+      message: json.message || '',
+      errors: json.errors || null,
+    };
+  } catch (err) {
+    console.log('Checkout submission network error:', err);
+    return {
+      ok: false,
+      status: 0,
+      message: 'Network error connecting to payment server. Please check your connection.',
+      errors: null,
+    };
+  }
+}
+
+/**
+ * Check transaction status for a membership order reference
+ */
+export async function checkCheckoutStatus(reference) {
+  try {
+    const res = await fetch(`${API_BASE_URL}/checkout/status/${encodeURIComponent(reference)}`, {
+      headers: {
+        Accept: 'application/json',
+      },
+    });
+    if (res.ok) {
+      const json = await res.json();
+      return json.data || json;
+    }
+  } catch (err) {
+    console.log('Checkout status check error:', err);
+  }
+  return null;
+}
+
+/**
+ * =========================================================================
+ * ADMIN API ENDPOINTS
+ * =========================================================================
+ */
+
+/**
+ * Internal helper to fetch admin resources with fallback support
+ */
+async function fetchAdminWithFallback(endpointPath, token, fetchOptions = {}) {
+  const endpoints = [API_BASE_URL];
+  if (API_BASE_URL.includes('bdangels.co')) {
+    endpoints.push('http://bdangels.test/api');
+  } else if (API_BASE_URL.includes('bdangels.test')) {
+    endpoints.push('https://bdangels.co/api');
+  }
+
+  const cleanPath = endpointPath.startsWith('/') ? endpointPath : `/${endpointPath}`;
+  const headers = {
+    Accept: 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(fetchOptions.headers || {}),
+  };
+
+  for (const base of endpoints) {
+    try {
+      const res = await fetch(`${base}${cleanPath}`, {
+        ...fetchOptions,
+        headers,
+      });
+      if (res.ok) {
+        return res;
+      }
+    } catch (err) {
+      console.log(`Admin request at ${base}${cleanPath} failed:`, err.message);
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Fetch Admin Dashboard metrics & charts from GET /api/admin/dashboard
+ */
+export async function fetchAdminDashboard(token) {
+  try {
+    const res = await fetchAdminWithFallback('/admin/dashboard', token);
+    if (res && res.ok) {
+      const json = await res.json();
+      return json.data || json;
+    }
+  } catch (err) {
+    console.log('Admin dashboard fetch error:', err);
+  }
+  return null;
+}
+
+/**
+ * Fetch Admin Members list from GET /api/admin/members
+ */
+export async function fetchAdminMembers(token, { search = '', status = '', per_page = 20 } = {}) {
+  try {
+    const params = new URLSearchParams();
+    if (search) params.append('search', search);
+    if (status) params.append('status', status);
+    params.append('per_page', String(per_page));
+
+    const res = await fetchAdminWithFallback(`/admin/members?${params.toString()}`, token);
+    if (res && res.ok) {
+      const json = await res.json();
+      return json.data || json;
+    }
+  } catch (err) {
+    console.log('Admin members fetch error:', err);
+  }
+  return null;
+}
+
+/**
+ * Approve a member via POST /api/admin/members/{userId}/approve
+ */
+export async function approveAdminMember(token, userId) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/members/${userId}/approve`, token, {
+      method: 'POST',
+    });
+    if (res) {
+      const json = await res.json();
+      return { ok: res.ok, message: json.message || '' };
+    }
+  } catch (err) {
+    console.log('Admin approve member error:', err);
+  }
+  return { ok: false, message: 'Could not approve member.' };
+}
+
+/**
+ * Fetch Admin Deals list from GET /api/admin/deals
+ */
+export async function fetchAdminDeals(token, { type = '', status = '', search = '' } = {}) {
+  try {
+    const params = new URLSearchParams();
+    if (type) params.append('type', type);
+    if (status) params.append('status', status);
+    if (search) params.append('search', search);
+
+    const res = await fetchAdminWithFallback(`/admin/deals?${params.toString()}`, token);
+    if (res && res.ok) {
+      const json = await res.json();
+      return json.data || json;
+    }
+  } catch (err) {
+    console.log('Admin deals fetch error:', err);
+  }
+  return null;
+}
+
+/**
+ * Fetch Founder Pitch Submissions from GET /api/admin/founder-pitches
+ */
+export async function fetchAdminFounderPitches(token) {
+  try {
+    const res = await fetchAdminWithFallback('/admin/founder-pitches', token);
+    if (res && res.ok) {
+      const json = await res.json();
+      return json.data || json;
+    }
+  } catch (err) {
+    console.log('Admin founder pitches fetch error:', err);
+  }
+  return null;
+}
+
+/**
+ * Fetch Angel Academy Applications from GET /api/admin/angel-academy-applications
+ */
+export async function fetchAdminAngelAcademy(token) {
+  try {
+    const res = await fetchAdminWithFallback('/admin/angel-academy-applications', token);
+    if (res && res.ok) {
+      const json = await res.json();
+      return json.data || json;
+    }
+  } catch (err) {
+    console.log('Admin angel academy fetch error:', err);
+  }
+  return null;
+}
+
+/**
+ * Fetch Admin Notifications from GET /api/admin/notifications
+ */
+export async function fetchAdminNotifications(token) {
+  try {
+    const res = await fetch(`${API_BASE_URL}/admin/notifications`, {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    if (res.ok) {
+      const json = await res.json();
+      return json.data || json;
+    }
+  } catch (err) {
+    console.log('Admin notifications fetch error:', err);
+  }
+  return null;
+}
+
+/**
+ * Mark all notifications as viewed via POST /api/admin/notifications/mark-all-viewed
+ */
+export async function markAdminNotificationsViewed(token) {
+  try {
+    const res = await fetch(`${API_BASE_URL}/admin/notifications/mark-all-viewed`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    return res.ok;
+  } catch (err) {
+    console.log('Mark notifications viewed error:', err);
+    return false;
+  }
+}
+
 // Embedded fallback data directly from live Laravel backend for 100% resilient rendering
 export const FALLBACK_HOME_DATA = {
   landing_stats: [

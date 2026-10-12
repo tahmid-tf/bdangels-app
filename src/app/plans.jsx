@@ -12,10 +12,11 @@ import {
   Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import SubpageHeader from '../components/SubpageHeader';
 import MobileMenuModal from '../components/MobileMenuModal';
 import FooterSection from '../components/home/FooterSection';
-import { fetchPlansPageData, openCheckoutPage } from '../services/api';
+import { fetchPlansPageData } from '../services/api';
 import { Colors, Radii, Shadows } from '../constants/theme';
 
 export default function PlansScreen() {
@@ -66,8 +67,8 @@ export default function PlansScreen() {
     }
   };
 
-  const handleSelectTier = async (tier) => {
-    await openCheckoutPage(tier?.slug || 'core');
+  const handleSelectTier = (tier) => {
+    router.push({ pathname: '/checkout', params: { plan: tier?.slug || 'core' } });
   };
 
   return (

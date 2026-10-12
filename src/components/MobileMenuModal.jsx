@@ -12,6 +12,7 @@ import {
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Radii, Spacing } from '../constants/theme';
+import { authState, logoutUser } from '../services/auth';
 
 export default function MobileMenuModal({ visible, onClose, onNavigate }) {
   const handleNavigate = (path, sectionKey) => {
@@ -119,6 +120,36 @@ export default function MobileMenuModal({ visible, onClose, onNavigate }) {
               <Ionicons name="document-text-outline" size={20} color={Colors.green} />
               <Text style={styles.navLabel}>Publications & Reports</Text>
             </TouchableOpacity>
+          </View>
+
+          {/* Account & Admin */}
+          <View style={styles.group}>
+            <Text style={styles.groupLabel}>ACCOUNT & ADMIN</Text>
+            {authState.isAdmin() ? (
+              <>
+                <TouchableOpacity style={styles.navItem} onPress={() => handleNavigate('/admin')}>
+                  <Ionicons name="shield-checkmark-outline" size={20} color={Colors.forest} />
+                  <Text style={[styles.navLabel, { fontWeight: '700', color: Colors.forest }]}>
+                    Admin Dashboard
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.navItem}
+                  onPress={async () => {
+                    await logoutUser();
+                    onClose();
+                  }}
+                >
+                  <Ionicons name="log-out-outline" size={20} color={Colors.error} />
+                  <Text style={[styles.navLabel, { color: Colors.error }]}>Log Out</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <TouchableOpacity style={styles.navItem} onPress={() => handleNavigate('/login')}>
+                <Ionicons name="log-in-outline" size={20} color={Colors.green} />
+                <Text style={styles.navLabel}>Sign In / Admin Portal</Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           {/* For Founders */}

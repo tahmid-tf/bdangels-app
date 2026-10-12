@@ -1,8 +1,8 @@
 import React from 'react';
 import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native';
+import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Radii, Shadows, Spacing } from '../../constants/theme';
-import { openCheckoutPage } from '../../services/api';
 
 export default function MembershipPlansSection({ tiers, onSelectTier }) {
   const displayTiers = tiers && tiers.length > 0 ? tiers : [
@@ -79,7 +79,7 @@ export default function MembershipPlansSection({ tiers, onSelectTier }) {
     if (onSelectTier) {
       onSelectTier(tier);
     } else {
-      openCheckoutPage(tier?.slug || 'core');
+      router.push({ pathname: '/checkout', params: { plan: tier?.slug || 'core' } });
     }
   };
 

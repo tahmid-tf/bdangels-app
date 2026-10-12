@@ -7,7 +7,9 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import { Colors, Radii } from '../constants/theme';
+import { authState } from '../services/auth';
 
 export default function Header({ onOpenMenu, onScrollToSection }) {
   const { width } = useWindowDimensions();
@@ -66,6 +68,26 @@ export default function Header({ onOpenMenu, onScrollToSection }) {
               <Text style={styles.registerText}>JOIN BAN</Text>
             </TouchableOpacity>
           )}
+
+          {/* Admin / Login trigger */}
+          <TouchableOpacity
+            style={styles.authButton}
+            activeOpacity={0.8}
+            onPress={() => {
+              if (authState.isAdmin()) {
+                router.push('/admin');
+              } else {
+                router.push('/login');
+              }
+            }}
+            accessibilityLabel="Sign in or Admin Portal"
+          >
+            <Ionicons
+              name={authState.isAdmin() ? 'shield-checkmark' : 'person-outline'}
+              size={17}
+              color={authState.isAdmin() ? Colors.forest : Colors.ink}
+            />
+          </TouchableOpacity>
 
           <TouchableOpacity
             style={styles.menuToggle}
@@ -165,6 +187,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: Radii.sm,
+  },
+  authButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   menuToggle: {
     width: 36,

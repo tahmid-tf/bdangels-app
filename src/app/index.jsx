@@ -26,7 +26,8 @@ import DealDetailModal from '../components/modals/DealDetailModal';
 import EventDetailModal from '../components/modals/EventDetailModal';
 import ProgramDetailModal from '../components/modals/ProgramDetailModal';
 
-import { fetchHomePageData, FALLBACK_HOME_DATA, openCheckoutPage } from '../services/api';
+import { fetchHomePageData, FALLBACK_HOME_DATA } from '../services/api';
+import { initAuth } from '../services/auth';
 import { Colors } from '../constants/theme';
 
 export default function HomeScreen() {
@@ -72,6 +73,7 @@ export default function HomeScreen() {
 
   useEffect(() => {
     let isMounted = true;
+    initAuth().catch((err) => console.log('Auth init notice:', err));
     fetchHomePageData()
       .then((data) => {
         if (isMounted && data) {
@@ -161,7 +163,7 @@ export default function HomeScreen() {
         <View onLayout={(e) => handleLayoutSection('plans', e)}>
           <MembershipPlansSection
             tiers={homeData.membershipTiers}
-            onSelectTier={(tier) => openCheckoutPage(tier?.slug || 'core')}
+            onSelectTier={(tier) => router.push({ pathname: '/checkout', params: { plan: tier?.slug || 'core' } })}
           />
         </View>
 
