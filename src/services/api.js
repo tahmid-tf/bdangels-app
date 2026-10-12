@@ -1236,6 +1236,137 @@ export async function updateAdminTeamAboutSection(token, payload) {
   return { ok: false, message: 'Could not connect to server.' };
 }
 
+/**
+ * Fetch Admin Events with filters & pagination from GET /api/admin/events
+ */
+export async function fetchAdminEvents(
+  token,
+  { search = '', type = '', landing = '', page = 1, per_page = 20 } = {}
+) {
+  try {
+    const params = new URLSearchParams();
+    if (search) params.append('search', search);
+    if (type && type !== 'all') params.append('type', type);
+    if (landing && landing !== 'all') params.append('landing', landing);
+    if (page) params.append('page', String(page));
+    if (per_page) params.append('per_page', String(per_page));
+
+    const res = await fetchAdminWithFallback(`/admin/events?${params.toString()}`, token);
+    if (res && res.ok) {
+      const json = await res.json();
+      return json; // Contains json.data (paginator) and json.counts
+    }
+  } catch (err) {
+    console.log('Admin events fetch error:', err);
+  }
+  return null;
+}
+
+/**
+ * Fetch single event details via GET /api/admin/events/{id}
+ */
+export async function fetchAdminEvent(token, id) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/events/${id}`, token);
+    if (res && res.ok) {
+      const json = await res.json();
+      return json.data || json || null;
+    }
+  } catch (err) {
+    console.log('Admin single event fetch error:', err);
+  }
+  return null;
+}
+
+/**
+ * Create a new event via POST /api/admin/events
+ * Supports JSON or FormData (when banner_image is provided)
+ */
+export async function createAdminEvent(token, payload) {
+  try {
+    const isFormData = payload instanceof FormData;
+    const options = {
+      method: 'POST',
+    };
+
+    if (isFormData) {
+      options.body = payload;
+    } else {
+      options.headers = { 'Content-Type': 'application/json' };
+      options.body = JSON.stringify(payload);
+    }
+
+    const res = await fetchAdminWithFallback('/admin/events', token, options);
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        data: json.data || null,
+        message: json.message || (res.ok ? 'Event created successfully.' : 'Failed to create event.'),
+        errors: json.errors || null,
+      };
+    }
+  } catch (err) {
+    console.log('Admin create event error:', err);
+  }
+  return { ok: false, message: 'Could not connect to server.' };
+}
+
+/**
+ * Update an existing event via POST /api/admin/events/{id}
+ * Supports JSON or FormData (when replacing banner_image)
+ */
+export async function updateAdminEvent(token, id, payload) {
+  try {
+    const isFormData = payload instanceof FormData;
+    const options = {
+      method: 'POST',
+    };
+
+    if (isFormData) {
+      options.body = payload;
+    } else {
+      options.headers = { 'Content-Type': 'application/json' };
+      options.body = JSON.stringify(payload);
+    }
+
+    const res = await fetchAdminWithFallback(`/admin/events/${id}`, token, options);
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        data: json.data || null,
+        message: json.message || (res.ok ? 'Event updated successfully.' : 'Failed to update event.'),
+        errors: json.errors || null,
+      };
+    }
+  } catch (err) {
+    console.log('Admin update event error:', err);
+  }
+  return { ok: false, message: 'Could not connect to server.' };
+}
+
+/**
+ * Delete an event via DELETE /api/admin/events/{id}
+ */
+export async function deleteAdminEvent(token, id) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/events/${id}`, token, {
+      method: 'DELETE',
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        message: json.message || 'Event deleted successfully.',
+      };
+    }
+  } catch (err) {
+    console.log('Admin delete event error:', err);
+  }
+  return { ok: false, message: 'Could not delete event.' };
+}
+
 
 // Embedded fallback data directly from live Laravel backend for 100% resilient rendering
 export const FALLBACK_HOME_DATA = {

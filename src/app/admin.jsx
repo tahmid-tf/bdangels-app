@@ -67,6 +67,10 @@ import {
   syncAdminHomepagePortfolios,
   fetchAdminTeamAboutSection,
   updateAdminTeamAboutSection,
+  fetchAdminEvents,
+  createAdminEvent,
+  updateAdminEvent,
+  deleteAdminEvent,
 } from '../services/api';
 
 export function getViewDisplayName(key) {
@@ -436,6 +440,49 @@ export default function AdminScreen() {
     image_badge: '',
     image_file: null,
     remove_image: false,
+  });
+
+  // Community Events State
+  const [eventsList, setEventsList] = useState([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
+  const [eventsSaving, setEventsSaving] = useState(false);
+  const [eventsSearch, setEventsSearch] = useState('');
+  const [eventsTypeFilter, setEventsTypeFilter] = useState('all'); // 'all', 'event', 'webinar'
+  const [eventsLandingFilter, setEventsLandingFilter] = useState('all'); // 'all', '1'
+  const [eventsCounts, setEventsCounts] = useState({ all: 0, events: 0, webinars: 0, landing: 0 });
+  const [eventsPagination, setEventsPagination] = useState({
+    currentPage: 1,
+    lastPage: 1,
+    total: 0,
+    perPage: 20,
+  });
+  const [selectedEventForView, setSelectedEventForView] = useState(null);
+  const [viewEventModalVisible, setViewEventModalVisible] = useState(false);
+  const [createEventModalVisible, setCreateEventModalVisible] = useState(false);
+  const [editEventModalVisible, setEditEventModalVisible] = useState(false);
+  const [editingEvent, setEditingEvent] = useState(null);
+  const [deleteEventModalVisible, setDeleteEventModalVisible] = useState(false);
+  const [selectedEventForDelete, setSelectedEventForDelete] = useState(null);
+  const [isDeletingEvent, setIsDeletingEvent] = useState(false);
+
+  const [eventFormData, setEventFormData] = useState({
+    title: '',
+    type: 'event',
+    location: '',
+    date: '',
+    start_time: '',
+    end_time: '',
+    registration_fee: '',
+    description: '',
+    registration_details: '',
+    cta_link: '',
+    show_on_landing: false,
+    benefits: [''],
+    event_highlights: [''],
+    target_audience: [''],
+    speakers: [{ name: '', designation: '' }],
+    banner_file: null,
+    remove_banner: false,
   });
 
   // Fetch Dashboard summary data
@@ -894,6 +941,58 @@ export default function AdminScreen() {
     [authToken]
   );
 
+  // Fetch Community Events
+  const loadEvents = useCallback(
+    async (
+      token = authToken,
+      search = eventsSearch,
+      type = eventsTypeFilter,
+      landing = eventsLandingFilter,
+      page = 1,
+      options = {}
+    ) => {
+      if (!token) return;
+      const { silent = false } = options;
+      if (!silent) setEventsLoading(true);
+      try {
+        const res = await fetchAdminEvents(token, {
+          search,
+          type: type === 'all' ? '' : type,
+          landing: landing === 'all' ? '' : landing,
+          page,
+          per_page: 20,
+        });
+        if (res) {
+          const list = res.data?.data || (Array.isArray(res.data) ? res.data : (Array.isArray(res) ? res : []));
+          setEventsList(list);
+          if (res.data?.total !== undefined) {
+            setEventsPagination({
+              currentPage: res.data.current_page || 1,
+              lastPage: res.data.last_page || 1,
+              total: res.data.total || list.length,
+              perPage: res.data.per_page || 20,
+            });
+          } else {
+            setEventsPagination({
+              currentPage: 1,
+              lastPage: 1,
+              total: list.length,
+              perPage: 20,
+            });
+          }
+          if (res.counts) {
+            setEventsCounts(res.counts);
+          }
+        }
+      } catch (err) {
+        console.log('Error loading events:', err);
+      } finally {
+        if (!silent) setEventsLoading(false);
+      }
+    },
+    [authToken, eventsSearch, eventsTypeFilter, eventsLandingFilter]
+  );
+
   // Handle Tab / Sidebar View Selection
   const handleTabChange = (tab) => {
     setActiveTab(tab);
@@ -913,6 +1012,8 @@ export default function AdminScreen() {
       if (homepagePortfolios.length === 0) loadHomepagePortfolios(authToken);
     } else if (tab === 'team-about') {
       loadTeamAboutSection(authToken);
+    } else if (tab === 'events') {
+      loadEvents(authToken, eventsSearch, eventsTypeFilter, eventsLandingFilter);
     } else if (tab === 'deals') {
       if (deals.length === 0) loadDeals(authToken);
     } else if (tab === 'founder-pitches') {
@@ -931,7 +1032,6 @@ export default function AdminScreen() {
       if (banWealthOrders.length === 0) loadBanWealthOrders(authToken);
     } else if (
       [
-        'events',
         'startup-services',
         'team-members',
       ].includes(tab)
@@ -952,6 +1052,7 @@ export default function AdminScreen() {
     if (activeTab === 'landing-programs') await loadLandingPrograms(authToken);
     if (activeTab === 'homepage-portfolios') await loadHomepagePortfolios(authToken);
     if (activeTab === 'team-about') await loadTeamAboutSection(authToken);
+    if (activeTab === 'events') await loadEvents(authToken, eventsSearch, eventsTypeFilter, eventsLandingFilter);
     if (activeTab === 'deals') await loadDeals(authToken);
     if (activeTab === 'submissions' || activeTab === 'founder-pitches' || activeTab === 'angel-academy') {
       await loadSubmissions(authToken);
@@ -963,7 +1064,6 @@ export default function AdminScreen() {
     if (activeTab === 'ban-wealth-orders') await loadBanWealthOrders(authToken);
     if (
       [
-        'events',
         'startup-services',
         'team-members',
       ].includes(activeTab)
@@ -2815,6 +2915,363 @@ export default function AdminScreen() {
       Alert.alert('Error', 'An unexpected error occurred while saving.');
     } finally {
       setTeamAboutSaving(false);
+    }
+  };
+
+  // ==========================================
+  // COMMUNITY EVENTS HANDLERS
+  // ==========================================
+  const handleOpenCreateEvent = () => {
+    setEventFormData({
+      title: '',
+      type: 'event',
+      location: '',
+      date: '',
+      start_time: '',
+      end_time: '',
+      registration_fee: '',
+      description: '',
+      registration_details: '',
+      cta_link: '',
+      show_on_landing: false,
+      benefits: [''],
+      event_highlights: [''],
+      target_audience: [''],
+      speakers: [{ name: '', designation: '' }],
+      banner_file: null,
+      remove_banner: false,
+    });
+    setCreateEventModalVisible(true);
+  };
+
+  const handleOpenEditEvent = (event) => {
+    setEditingEvent(event);
+    const dateStr = event.date ? (typeof event.date === 'string' ? event.date.slice(0, 10) : '') : '';
+    const startTimeStr = event.start_time ? (typeof event.start_time === 'string' ? event.start_time.slice(0, 5) : '') : '';
+    const endTimeStr = event.end_time ? (typeof event.end_time === 'string' ? event.end_time.slice(0, 5) : '') : '';
+
+    const rawBenefits = Array.isArray(event.benefits) && event.benefits.length > 0 ? event.benefits : [''];
+    const rawHighlights = Array.isArray(event.event_highlights) && event.event_highlights.length > 0 ? event.event_highlights : [''];
+    const rawAudience = Array.isArray(event.target_audience) && event.target_audience.length > 0 ? event.target_audience : [''];
+    const rawSpeakers = Array.isArray(event.speakers) && event.speakers.length > 0 ? event.speakers : [{ name: '', designation: '' }];
+
+    setEventFormData({
+      title: event.title || '',
+      type: event.type || 'event',
+      location: event.location || '',
+      date: dateStr,
+      start_time: startTimeStr,
+      end_time: endTimeStr,
+      registration_fee: event.registration_fee !== null && event.registration_fee !== undefined ? String(event.registration_fee) : '',
+      description: event.description || '',
+      registration_details: event.registration_details || '',
+      cta_link: event.cta_link || '',
+      show_on_landing: Boolean(event.show_on_landing),
+      benefits: rawBenefits,
+      event_highlights: rawHighlights,
+      target_audience: rawAudience,
+      speakers: rawSpeakers.map((s) => ({ name: s.name || '', designation: s.designation || '' })),
+      banner_file: null,
+      remove_banner: false,
+    });
+    setEditEventModalVisible(true);
+  };
+
+  const handleOpenViewEvent = (event) => {
+    setSelectedEventForView(event);
+    setViewEventModalVisible(true);
+  };
+
+  const handlePickEventBanner = async () => {
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        type: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+        copyToCacheDirectory: true,
+      });
+
+      if (!res.canceled && res.assets && res.assets.length > 0) {
+        const file = res.assets[0];
+        if (file.size && file.size > 8 * 1024 * 1024) {
+          Alert.alert('File Limit Exceeded', 'The selected banner is larger than 8 MB.');
+          return;
+        }
+        setEventFormData((prev) => ({
+          ...prev,
+          banner_file: file,
+          remove_banner: false,
+        }));
+      }
+    } catch (err) {
+      console.log('Error picking event banner:', err);
+      Alert.alert('Notice', 'Could not open image picker.');
+    }
+  };
+
+  const handleRemoveEventBanner = () => {
+    setEventFormData((prev) => ({
+      ...prev,
+      banner_file: null,
+      remove_banner: true,
+    }));
+  };
+
+  const handleCancelEventBannerChange = () => {
+    setEventFormData((prev) => ({
+      ...prev,
+      banner_file: null,
+      remove_banner: false,
+    }));
+  };
+
+  const handleAddEventBenefit = () => {
+    setEventFormData((prev) => ({ ...prev, benefits: [...prev.benefits, ''] }));
+  };
+
+  const handleRemoveEventBenefit = (idx) => {
+    setEventFormData((prev) => ({
+      ...prev,
+      benefits: prev.benefits.filter((_, i) => i !== idx),
+    }));
+  };
+
+  const handleUpdateEventBenefit = (idx, text) => {
+    setEventFormData((prev) => {
+      const arr = [...prev.benefits];
+      arr[idx] = text;
+      return { ...prev, benefits: arr };
+    });
+  };
+
+  const handleAddEventHighlight = () => {
+    setEventFormData((prev) => ({ ...prev, event_highlights: [...prev.event_highlights, ''] }));
+  };
+
+  const handleRemoveEventHighlight = (idx) => {
+    setEventFormData((prev) => ({
+      ...prev,
+      event_highlights: prev.event_highlights.filter((_, i) => i !== idx),
+    }));
+  };
+
+  const handleUpdateEventHighlight = (idx, text) => {
+    setEventFormData((prev) => {
+      const arr = [...prev.event_highlights];
+      arr[idx] = text;
+      return { ...prev, event_highlights: arr };
+    });
+  };
+
+  const handleAddEventAudience = () => {
+    setEventFormData((prev) => ({ ...prev, target_audience: [...prev.target_audience, ''] }));
+  };
+
+  const handleRemoveEventAudience = (idx) => {
+    setEventFormData((prev) => ({
+      ...prev,
+      target_audience: prev.target_audience.filter((_, i) => i !== idx),
+    }));
+  };
+
+  const handleUpdateEventAudience = (idx, text) => {
+    setEventFormData((prev) => {
+      const arr = [...prev.target_audience];
+      arr[idx] = text;
+      return { ...prev, target_audience: arr };
+    });
+  };
+
+  const handleAddEventSpeaker = () => {
+    setEventFormData((prev) => ({
+      ...prev,
+      speakers: [...prev.speakers, { name: '', designation: '' }],
+    }));
+  };
+
+  const handleRemoveEventSpeaker = (idx) => {
+    setEventFormData((prev) => ({
+      ...prev,
+      speakers: prev.speakers.filter((_, i) => i !== idx),
+    }));
+  };
+
+  const handleUpdateEventSpeaker = (idx, key, text) => {
+    setEventFormData((prev) => {
+      const arr = [...prev.speakers];
+      arr[idx] = { ...arr[idx], [key]: text };
+      return { ...prev, speakers: arr };
+    });
+  };
+
+  const buildEventPayload = () => {
+    if (!eventFormData.title.trim()) {
+      Alert.alert('Validation Error', 'Event title is required.');
+      return null;
+    }
+    if (!eventFormData.description.trim()) {
+      Alert.alert('Validation Error', 'Event description is required.');
+      return null;
+    }
+
+    const cleanBenefits = (eventFormData.benefits || []).map((b) => b.trim()).filter(Boolean);
+    const cleanHighlights = (eventFormData.event_highlights || []).map((h) => h.trim()).filter(Boolean);
+    const cleanAudience = (eventFormData.target_audience || []).map((a) => a.trim()).filter(Boolean);
+    const cleanSpeakers = (eventFormData.speakers || []).filter(
+      (s) => s.name?.trim() || s.designation?.trim()
+    );
+
+    const hasBannerFile = Boolean(eventFormData.banner_file);
+
+    if (hasBannerFile) {
+      const fd = new FormData();
+      fd.append('title', eventFormData.title.trim());
+      fd.append('type', eventFormData.type || 'event');
+      if (eventFormData.location.trim()) fd.append('location', eventFormData.location.trim());
+      if (eventFormData.date.trim()) fd.append('date', eventFormData.date.trim());
+      if (eventFormData.start_time.trim()) fd.append('start_time', eventFormData.start_time.trim());
+      if (eventFormData.end_time.trim()) fd.append('end_time', eventFormData.end_time.trim());
+      if (eventFormData.registration_fee.trim()) fd.append('registration_fee', eventFormData.registration_fee.trim());
+      fd.append('description', eventFormData.description.trim());
+      if (eventFormData.registration_details.trim()) fd.append('registration_details', eventFormData.registration_details.trim());
+      if (eventFormData.cta_link.trim()) fd.append('cta_link', eventFormData.cta_link.trim());
+      fd.append('show_on_landing', eventFormData.show_on_landing ? '1' : '0');
+      fd.append('remove_banner', eventFormData.remove_banner ? '1' : '0');
+
+      cleanBenefits.forEach((b, i) => fd.append(`benefits[${i}]`, b));
+      cleanHighlights.forEach((h, i) => fd.append(`event_highlights[${i}]`, h));
+      cleanAudience.forEach((a, i) => fd.append(`target_audience[${i}]`, a));
+      cleanSpeakers.forEach((s, i) => {
+        fd.append(`speakers[${i}][name]`, s.name.trim());
+        fd.append(`speakers[${i}][designation]`, s.designation.trim());
+      });
+
+      const file = eventFormData.banner_file;
+      const uri = file.uri;
+      const filename = file.name || uri.split('/').pop() || 'banner.jpg';
+      const match = /\.(\w+)$/.exec(filename);
+      const mime = file.mimeType || (match ? `image/${match[1]}` : 'image/jpeg');
+
+      fd.append('banner_image', {
+        uri,
+        name: filename,
+        type: mime,
+      });
+
+      return fd;
+    }
+
+    return {
+      title: eventFormData.title.trim(),
+      type: eventFormData.type || 'event',
+      location: eventFormData.location.trim() || null,
+      date: eventFormData.date.trim() || null,
+      start_time: eventFormData.start_time.trim() || null,
+      end_time: eventFormData.end_time.trim() || null,
+      registration_fee: eventFormData.registration_fee.trim() ? Number(eventFormData.registration_fee) : null,
+      description: eventFormData.description.trim(),
+      registration_details: eventFormData.registration_details.trim() || null,
+      cta_link: eventFormData.cta_link.trim() || null,
+      show_on_landing: Boolean(eventFormData.show_on_landing),
+      benefits: cleanBenefits,
+      event_highlights: cleanHighlights,
+      target_audience: cleanAudience,
+      speakers: cleanSpeakers,
+      remove_banner: Boolean(eventFormData.remove_banner),
+    };
+  };
+
+  const handleSaveCreateEvent = async () => {
+    if (!authToken) return;
+    const payload = buildEventPayload();
+    if (!payload) return;
+
+    setEventsSaving(true);
+    try {
+      const res = await createAdminEvent(authToken, payload);
+      if (res.ok) {
+        setCreateEventModalVisible(false);
+        Alert.alert('Success', 'Event created successfully!');
+        loadEvents(authToken, eventsSearch, eventsTypeFilter, eventsLandingFilter, 1);
+      } else {
+        const errorMsg = res.errors
+          ? Object.values(res.errors).flat().join('\n')
+          : res.message || 'Could not create event.';
+        Alert.alert('Creation Failed', errorMsg);
+      }
+    } catch (err) {
+      console.log('Error creating event:', err);
+      Alert.alert('Error', 'An unexpected error occurred while creating event.');
+    } finally {
+      setEventsSaving(false);
+    }
+  };
+
+  const handleSaveEditEvent = async () => {
+    if (!authToken || !editingEvent) return;
+    const payload = buildEventPayload();
+    if (!payload) return;
+
+    setEventsSaving(true);
+    try {
+      const res = await updateAdminEvent(authToken, editingEvent.id, payload);
+      if (res.ok) {
+        const updated = res.data || { ...editingEvent, ...payload };
+        setEventsList((prev) => prev.map((e) => (e.id === editingEvent.id ? updated : e)));
+        if (selectedEventForView?.id === editingEvent.id) {
+          setSelectedEventForView(updated);
+        }
+        setEditEventModalVisible(false);
+        setEditingEvent(null);
+        Alert.alert('Success', 'Event updated successfully!');
+        loadEvents(authToken, eventsSearch, eventsTypeFilter, eventsLandingFilter, eventsPagination.currentPage, { silent: true });
+      } else {
+        const errorMsg = res.errors
+          ? Object.values(res.errors).flat().join('\n')
+          : res.message || 'Could not update event.';
+        Alert.alert('Update Failed', errorMsg);
+      }
+    } catch (err) {
+      console.log('Error updating event:', err);
+      Alert.alert('Error', 'An unexpected error occurred while updating event.');
+    } finally {
+      setEventsSaving(false);
+    }
+  };
+
+  const handleOpenDeleteEvent = (event) => {
+    setSelectedEventForDelete(event);
+    setDeleteEventModalVisible(true);
+  };
+
+  const handleConfirmDeleteEvent = async () => {
+    if (!authToken || !selectedEventForDelete) return;
+    setIsDeletingEvent(true);
+    try {
+      const res = await deleteAdminEvent(authToken, selectedEventForDelete.id);
+      if (res.ok) {
+        setEventsList((prev) => prev.filter((e) => e.id !== selectedEventForDelete.id));
+        setEventsCounts((prev) => ({
+          ...prev,
+          all: Math.max(0, (prev.all || 1) - 1),
+          events: selectedEventForDelete.type === 'event' ? Math.max(0, (prev.events || 1) - 1) : prev.events,
+          webinars: selectedEventForDelete.type === 'webinar' ? Math.max(0, (prev.webinars || 1) - 1) : prev.webinars,
+          landing: selectedEventForDelete.show_on_landing ? Math.max(0, (prev.landing || 1) - 1) : prev.landing,
+        }));
+        setDeleteEventModalVisible(false);
+        if (selectedEventForView?.id === selectedEventForDelete.id) {
+          setViewEventModalVisible(false);
+          setSelectedEventForView(null);
+        }
+        setSelectedEventForDelete(null);
+        Alert.alert('Deleted', 'Event deleted successfully.');
+      } else {
+        Alert.alert('Delete Failed', res.message || 'Could not delete event.');
+      }
+    } catch (err) {
+      console.log('Error deleting event:', err);
+      Alert.alert('Error', 'An unexpected error occurred while deleting event.');
+    } finally {
+      setIsDeletingEvent(false);
+      setSelectedEventForDelete(null);
     }
   };
 
@@ -6298,25 +6755,432 @@ export default function AdminScreen() {
           {/* TAB: EVENTS */}
           {activeTab === 'events' && (
             <View style={styles.tabContent}>
+              {/* Header Row */}
               <View style={styles.sectionHeaderRow}>
-                <View>
+                <View style={{ flex: 1, marginRight: 8 }}>
                   <Text style={styles.sectionHeading}>Community Events</Text>
-                  <Text style={styles.sectionSubheading}>Upcoming and featured investor showcases</Text>
+                  <Text style={styles.sectionSubheading}>
+                    Upcoming showcases, webinars & public registrations
+                  </Text>
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <TouchableOpacity
+                    style={styles.refreshIconBtn}
+                    onPress={() => loadEvents(authToken, eventsSearch, eventsTypeFilter, eventsLandingFilter)}
+                    disabled={eventsLoading}
+                    accessibilityLabel="Refresh events"
+                  >
+                    {eventsLoading ? (
+                      <ActivityIndicator size="small" color={Colors.forest} />
+                    ) : (
+                      <Ionicons name="refresh" size={18} color={Colors.forest} />
+                    )}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.teamAboutEditBtn}
+                    onPress={handleOpenCreateEvent}
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="add" size={16} color="#FFFFFF" />
+                    <Text style={styles.teamAboutEditBtnText}>Add Event</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
 
-              <View style={styles.cmsCard}>
-                <View style={styles.cmsCardHeader}>
-                  <View style={styles.metaPill}>
-                    <Text style={styles.metaPillText}>Showcase</Text>
+              {/* Type Filter Pills Row (All, Events, Webinars, Homepage Featured) */}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.memberFilterScroll}
+              >
+                <TouchableOpacity
+                  style={[
+                    styles.memberFilterChip,
+                    eventsTypeFilter === 'all' && eventsLandingFilter === 'all' && styles.memberFilterChipActive,
+                  ]}
+                  onPress={() => {
+                    setEventsTypeFilter('all');
+                    setEventsLandingFilter('all');
+                    loadEvents(authToken, eventsSearch, 'all', 'all', 1);
+                  }}
+                >
+                  <Text
+                    style={[
+                      styles.memberFilterChipText,
+                      eventsTypeFilter === 'all' && eventsLandingFilter === 'all' && styles.memberFilterChipTextActive,
+                    ]}
+                  >
+                    All Items
+                  </Text>
+                  <View
+                    style={[
+                      styles.memberFilterBadge,
+                      eventsTypeFilter === 'all' && eventsLandingFilter === 'all'
+                        ? styles.memberFilterBadgeActive
+                        : styles.memberFilterBadgeInactive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.memberFilterBadgeText,
+                        eventsTypeFilter === 'all' && eventsLandingFilter === 'all' && styles.memberFilterBadgeTextActive,
+                      ]}
+                    >
+                      {eventsCounts.all}
+                    </Text>
                   </View>
-                  <Ionicons name="calendar-outline" size={18} color={Colors.forest} />
-                </View>
-                <Text style={styles.cmsCardTitle}>BAN Virtual Showcase</Text>
-                <Text style={styles.cmsCardDesc}>
-                  Monthly virtual showcase bringing curated high-potential startups to pitch directly to active angels.
-                </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.memberFilterChip,
+                    eventsTypeFilter === 'event' && eventsLandingFilter === 'all' && styles.memberFilterChipActive,
+                  ]}
+                  onPress={() => {
+                    setEventsTypeFilter('event');
+                    setEventsLandingFilter('all');
+                    loadEvents(authToken, eventsSearch, 'event', 'all', 1);
+                  }}
+                >
+                  <Ionicons
+                    name="calendar-outline"
+                    size={13}
+                    color={eventsTypeFilter === 'event' && eventsLandingFilter === 'all' ? '#0A5554' : '#64748B'}
+                  />
+                  <Text
+                    style={[
+                      styles.memberFilterChipText,
+                      eventsTypeFilter === 'event' && eventsLandingFilter === 'all' && styles.memberFilterChipTextActive,
+                    ]}
+                  >
+                    Events
+                  </Text>
+                  <View
+                    style={[
+                      styles.memberFilterBadge,
+                      eventsTypeFilter === 'event' && eventsLandingFilter === 'all'
+                        ? styles.memberFilterBadgeActive
+                        : styles.memberFilterBadgeInactive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.memberFilterBadgeText,
+                        eventsTypeFilter === 'event' && eventsLandingFilter === 'all' && styles.memberFilterBadgeTextActive,
+                      ]}
+                    >
+                      {eventsCounts.events}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.memberFilterChip,
+                    eventsTypeFilter === 'webinar' && eventsLandingFilter === 'all' && styles.memberFilterChipActive,
+                  ]}
+                  onPress={() => {
+                    setEventsTypeFilter('webinar');
+                    setEventsLandingFilter('all');
+                    loadEvents(authToken, eventsSearch, 'webinar', 'all', 1);
+                  }}
+                >
+                  <Ionicons
+                    name="videocam-outline"
+                    size={13}
+                    color={eventsTypeFilter === 'webinar' && eventsLandingFilter === 'all' ? '#0A5554' : '#64748B'}
+                  />
+                  <Text
+                    style={[
+                      styles.memberFilterChipText,
+                      eventsTypeFilter === 'webinar' && eventsLandingFilter === 'all' && styles.memberFilterChipTextActive,
+                    ]}
+                  >
+                    Webinars
+                  </Text>
+                  <View
+                    style={[
+                      styles.memberFilterBadge,
+                      eventsTypeFilter === 'webinar' && eventsLandingFilter === 'all'
+                        ? styles.memberFilterBadgeActive
+                        : styles.memberFilterBadgeInactive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.memberFilterBadgeText,
+                        eventsTypeFilter === 'webinar' && eventsLandingFilter === 'all' && styles.memberFilterBadgeTextActive,
+                      ]}
+                    >
+                      {eventsCounts.webinars}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.memberFilterChip,
+                    eventsLandingFilter === '1' && styles.memberFilterChipActive,
+                  ]}
+                  onPress={() => {
+                    setEventsLandingFilter('1');
+                    setEventsTypeFilter('all');
+                    loadEvents(authToken, eventsSearch, 'all', '1', 1);
+                  }}
+                >
+                  <Ionicons
+                    name="star-outline"
+                    size={13}
+                    color={eventsLandingFilter === '1' ? '#0A5554' : '#64748B'}
+                  />
+                  <Text
+                    style={[
+                      styles.memberFilterChipText,
+                      eventsLandingFilter === '1' && styles.memberFilterChipTextActive,
+                    ]}
+                  >
+                    Homepage Featured
+                  </Text>
+                  <View
+                    style={[
+                      styles.memberFilterBadge,
+                      eventsLandingFilter === '1'
+                        ? styles.memberFilterBadgeActive
+                        : styles.memberFilterBadgeInactive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.memberFilterBadgeText,
+                        eventsLandingFilter === '1' && styles.memberFilterBadgeTextActive,
+                      ]}
+                    >
+                      {eventsCounts.landing}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              </ScrollView>
+
+              {/* Search Bar */}
+              <View style={styles.searchBar}>
+                <Ionicons name="search" size={18} color={Colors.muted} style={styles.searchIcon} />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Search events by title, description, location..."
+                  placeholderTextColor={Colors.mutedLight}
+                  value={eventsSearch}
+                  onChangeText={(text) => {
+                    setEventsSearch(text);
+                    loadEvents(authToken, text, eventsTypeFilter, eventsLandingFilter, 1);
+                  }}
+                  returnKeyType="search"
+                />
+                {eventsSearch.length > 0 && (
+                  <TouchableOpacity
+                    onPress={() => {
+                      setEventsSearch('');
+                      loadEvents(authToken, '', eventsTypeFilter, eventsLandingFilter, 1);
+                    }}
+                    style={styles.searchClearBtn}
+                  >
+                    <Ionicons name="close-circle" size={18} color={Colors.muted} />
+                  </TouchableOpacity>
+                )}
               </View>
+
+              {/* Events List */}
+              {eventsLoading && eventsList.length === 0 ? (
+                <View style={styles.centerBox}>
+                  <ActivityIndicator size="large" color="#0A5554" />
+                  <Text style={styles.loadingText}>Loading community events...</Text>
+                </View>
+              ) : eventsList.length === 0 ? (
+                <View style={styles.portfolioEmptyBox}>
+                  <Ionicons name="calendar-outline" size={32} color="#94A3B8" />
+                  <Text style={styles.portfolioEmptyTitle}>No Events Found</Text>
+                  <Text style={styles.portfolioEmptyDesc}>
+                    {eventsSearch.trim() || eventsTypeFilter !== 'all' || eventsLandingFilter !== 'all'
+                      ? 'No events match your current search or filter criteria.'
+                      : 'No community events or webinars have been created yet.'}
+                  </Text>
+                  <TouchableOpacity
+                    style={[styles.programsAddBtn, { alignSelf: 'center', marginTop: 8 }]}
+                    onPress={handleOpenCreateEvent}
+                  >
+                    <Ionicons name="add" size={16} color="#FFFFFF" />
+                    <Text style={styles.programsAddBtnText}>Add Your First Event</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View style={{ gap: 14 }}>
+                  {eventsList.map((item) => {
+                    const isWebinar = item.type === 'webinar';
+                    const bannerSrc = item.banner_url || (item.media && item.media[0] ? item.media[0].original_url : null);
+                    const formattedDateTime = item.formatted_date_time || (item.date ? String(item.date).slice(0, 10) : 'TBD');
+
+                    return (
+                      <View key={`event-${item.id}`} style={styles.eventCard}>
+                        {/* Banner Image with overlay badges */}
+                        <View style={styles.eventBannerWrap}>
+                          <Image
+                            source={{
+                              uri: bannerSrc || 'https://bdangels.co/what-we-do-placeholder.svg',
+                            }}
+                            style={styles.eventBannerImg}
+                            resizeMode="cover"
+                          />
+                          <View style={styles.eventTypePillWrap}>
+                            <View
+                              style={[
+                                styles.eventTypePill,
+                                isWebinar ? styles.eventTypePillWebinar : styles.eventTypePillEvent,
+                              ]}
+                            >
+                              <Ionicons
+                                name={isWebinar ? 'videocam' : 'calendar'}
+                                size={11}
+                                color={isWebinar ? '#4338CA' : '#0A5554'}
+                              />
+                              <Text
+                                style={[
+                                  styles.eventTypePillText,
+                                  isWebinar ? styles.eventTypePillTextWebinar : styles.eventTypePillTextEvent,
+                                ]}
+                              >
+                                {isWebinar ? 'Webinar' : 'Event'}
+                              </Text>
+                            </View>
+
+                            {item.show_on_landing ? (
+                              <View style={styles.eventLandingBadge}>
+                                <Ionicons name="star" size={10} color="#065F46" />
+                                <Text style={styles.eventLandingBadgeText}>Homepage</Text>
+                              </View>
+                            ) : null}
+                          </View>
+
+                          {item.registration_fee !== null && item.registration_fee !== undefined && item.registration_fee !== '' ? (
+                            <View style={styles.eventFeePill}>
+                              <Text style={styles.eventFeePillText}>
+                                {Number(item.registration_fee) > 0 ? `৳${item.registration_fee}` : 'Free'}
+                              </Text>
+                            </View>
+                          ) : (
+                            <View style={styles.eventFeePill}>
+                              <Text style={styles.eventFeePillText}>Free</Text>
+                            </View>
+                          )}
+                        </View>
+
+                        {/* Event Content Body */}
+                        <View style={styles.eventBody}>
+                          <Text style={styles.eventTitle}>{item.title}</Text>
+
+                          {/* Date, Time, Location Chips */}
+                          <View style={styles.eventMetaRow}>
+                            {formattedDateTime ? (
+                              <View style={styles.eventMetaChip}>
+                                <Ionicons name="calendar-outline" size={12} color="#0A5554" />
+                                <Text style={styles.eventMetaChipText} numberOfLines={1}>
+                                  {formattedDateTime}
+                                </Text>
+                              </View>
+                            ) : null}
+
+                            {item.location ? (
+                              <View style={styles.eventMetaChip}>
+                                <Ionicons name="location-outline" size={12} color="#64748B" />
+                                <Text style={styles.eventMetaChipText} numberOfLines={1}>
+                                  {item.location}
+                                </Text>
+                              </View>
+                            ) : null}
+                          </View>
+
+                          {/* Description Excerpt */}
+                          {item.description ? (
+                            <Text style={styles.eventDesc} numberOfLines={2}>
+                              {item.description}
+                            </Text>
+                          ) : null}
+
+                          {/* CTA or RSVP Info */}
+                          {item.cta_link ? (
+                            <View style={styles.eventCtaBar}>
+                              <Ionicons name="link-outline" size={13} color="#0A5554" />
+                              <Text style={styles.eventCtaBarText} numberOfLines={1}>
+                                RSVP Link: {item.cta_link}
+                              </Text>
+                            </View>
+                          ) : null}
+
+                          {/* Speakers Info */}
+                          {Array.isArray(item.speakers) && item.speakers.length > 0 ? (
+                            <View style={styles.eventSpeakersRow}>
+                              <View style={styles.eventSpeakersPill}>
+                                <Ionicons name="people-outline" size={12} color="#64748B" />
+                                <Text style={styles.eventSpeakersPillText}>
+                                  {item.speakers.length} {item.speakers.length === 1 ? 'Speaker' : 'Speakers'}
+                                </Text>
+                              </View>
+                            </View>
+                          ) : null}
+
+                          {/* Action Toolbar */}
+                          <View style={styles.eventActionsRow}>
+                            <TouchableOpacity
+                              style={styles.eventActionBtn}
+                              onPress={() => handleOpenViewEvent(item)}
+                              activeOpacity={0.8}
+                            >
+                              <Ionicons name="eye-outline" size={14} color="#0A5554" />
+                              <Text style={styles.eventActionBtnText}>View Details</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                              style={[styles.eventActionBtn, styles.eventActionBtnEdit]}
+                              onPress={() => handleOpenEditEvent(item)}
+                              activeOpacity={0.8}
+                            >
+                              <Ionicons name="create-outline" size={14} color="#0284C7" />
+                              <Text style={[styles.eventActionBtnText, { color: '#0284C7' }]}>Edit</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                              style={[styles.eventActionBtn, styles.eventActionBtnDelete]}
+                              onPress={() => handleOpenDeleteEvent(item)}
+                              activeOpacity={0.8}
+                            >
+                              <Ionicons name="trash-outline" size={14} color="#DC2626" />
+                              <Text style={[styles.eventActionBtnText, { color: '#DC2626' }]}>Delete</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+
+              {/* View on website link card */}
+              <TouchableOpacity
+                style={styles.statsExternalLinkCard}
+                onPress={() => {
+                  Linking.openURL('https://bdangels.co/events').catch(() => {
+                    Alert.alert('Notice', 'Could not open https://bdangels.co/events');
+                  });
+                }}
+                activeOpacity={0.8}
+              >
+                <View style={styles.statsExternalLinkLeft}>
+                  <Ionicons name="globe-outline" size={20} color="#0A5554" />
+                  <View>
+                    <Text style={styles.statsExternalLinkTitle}>View events on live site</Text>
+                    <Text style={styles.statsExternalLinkDesc}>bdangels.co/events public directory</Text>
+                  </View>
+                </View>
+                <Ionicons name="open-outline" size={18} color="#0A5554" />
+              </TouchableOpacity>
             </View>
           )}
 
@@ -10255,6 +11119,810 @@ export default function AdminScreen() {
             </View>
           </View>
         </SafeAreaView>
+      </Modal>
+
+      {/* VIEW EVENT DETAILS MODAL */}
+      <Modal
+        visible={viewEventModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setViewEventModalVisible(false)}
+      >
+        <SafeAreaView style={styles.editModalSafeArea}>
+          <View style={styles.editModalContainer}>
+            {/* Header */}
+            <View style={styles.editModalHeader}>
+              <View style={styles.editModalHeaderLeft}>
+                <View style={styles.editModalIconWrap}>
+                  <Ionicons name="calendar" size={20} color="#0A5554" />
+                </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.editModalTitle} numberOfLines={1}>
+                    {selectedEventForView?.title || 'Event Details'}
+                  </Text>
+                  <Text style={styles.editModalSubtitle}>
+                    {selectedEventForView?.type === 'webinar' ? 'Online Webinar' : 'Community Event'}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                style={styles.modalCloseBtn}
+                onPress={() => setViewEventModalVisible(false)}
+                accessibilityLabel="Close details modal"
+              >
+                <Ionicons name="close" size={22} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Scrollable details */}
+            <ScrollView
+              style={styles.editModalScrollView}
+              contentContainerStyle={styles.editModalFormContent}
+            >
+              {/* Banner Photo */}
+              <View style={styles.eventBannerWrap}>
+                <Image
+                  source={{
+                    uri:
+                      selectedEventForView?.banner_url ||
+                      (selectedEventForView?.media && selectedEventForView.media[0]
+                        ? selectedEventForView.media[0].original_url
+                        : 'https://bdangels.co/what-we-do-placeholder.svg'),
+                  }}
+                  style={styles.eventBannerImg}
+                  resizeMode="cover"
+                />
+                <View style={styles.eventTypePillWrap}>
+                  <View
+                    style={[
+                      styles.eventTypePill,
+                      selectedEventForView?.type === 'webinar'
+                        ? styles.eventTypePillWebinar
+                        : styles.eventTypePillEvent,
+                    ]}
+                  >
+                    <Ionicons
+                      name={selectedEventForView?.type === 'webinar' ? 'videocam' : 'calendar'}
+                      size={11}
+                      color={selectedEventForView?.type === 'webinar' ? '#4338CA' : '#0A5554'}
+                    />
+                    <Text
+                      style={[
+                        styles.eventTypePillText,
+                        selectedEventForView?.type === 'webinar'
+                          ? styles.eventTypePillTextWebinar
+                          : styles.eventTypePillTextEvent,
+                      ]}
+                    >
+                      {selectedEventForView?.type === 'webinar' ? 'Webinar' : 'Event'}
+                    </Text>
+                  </View>
+
+                  {selectedEventForView?.show_on_landing ? (
+                    <View style={styles.eventLandingBadge}>
+                      <Ionicons name="star" size={10} color="#065F46" />
+                      <Text style={styles.eventLandingBadgeText}>Homepage</Text>
+                    </View>
+                  ) : null}
+                </View>
+              </View>
+
+              {/* Event Title */}
+              <Text style={styles.blogReaderTitle}>{selectedEventForView?.title}</Text>
+
+              {/* Quick Meta Grid */}
+              <View style={styles.memberDetailsBox}>
+                <View style={styles.memberDetailRow}>
+                  <Ionicons name="calendar-outline" size={16} color="#0A5554" />
+                  <Text style={styles.memberDetailText}>
+                    Date: {selectedEventForView?.formatted_date_time || (selectedEventForView?.date ? String(selectedEventForView.date).slice(0, 10) : 'TBD')}
+                  </Text>
+                </View>
+
+                {selectedEventForView?.formatted_time_range ? (
+                  <View style={styles.memberDetailRow}>
+                    <Ionicons name="time-outline" size={16} color="#0A5554" />
+                    <Text style={styles.memberDetailText}>
+                      Time: {selectedEventForView.formatted_time_range}
+                    </Text>
+                  </View>
+                ) : null}
+
+                <View style={styles.memberDetailRow}>
+                  <Ionicons name="location-outline" size={16} color="#0A5554" />
+                  <Text style={styles.memberDetailText}>
+                    Location: {selectedEventForView?.location || 'Online'}
+                  </Text>
+                </View>
+
+                <View style={styles.memberDetailRow}>
+                  <Ionicons name="cash-outline" size={16} color="#0A5554" />
+                  <Text style={styles.memberDetailText}>
+                    Registration Fee: {selectedEventForView?.registration_fee ? `৳${selectedEventForView.registration_fee}` : 'Free'}
+                  </Text>
+                </View>
+
+                {selectedEventForView?.cta_link ? (
+                  <TouchableOpacity
+                    style={[styles.memberDetailRow, { marginTop: 4 }]}
+                    onPress={() => {
+                      Linking.openURL(selectedEventForView.cta_link).catch(() => {
+                        Alert.alert('Notice', `Could not open ${selectedEventForView.cta_link}`);
+                      });
+                    }}
+                  >
+                    <Ionicons name="open-outline" size={16} color="#0284C7" />
+                    <Text style={[styles.memberDetailText, { color: '#0284C7', fontWeight: '700' }]} numberOfLines={1}>
+                      RSVP Link: {selectedEventForView.cta_link}
+                    </Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+
+              {/* Description */}
+              <View style={styles.pubSummarySection}>
+                <Text style={styles.pubSummarySectionTitle}>EVENT OVERVIEW</Text>
+                <Text style={styles.pubSummaryText}>
+                  {selectedEventForView?.description}
+                </Text>
+              </View>
+
+              {/* Registration Details (if any) */}
+              {selectedEventForView?.registration_details ? (
+                <View style={styles.pubSummarySection}>
+                  <Text style={styles.pubSummarySectionTitle}>REGISTRATION DETAILS</Text>
+                  <Text style={styles.pubSummaryText}>
+                    {selectedEventForView.registration_details}
+                  </Text>
+                </View>
+              ) : null}
+
+              {/* Benefits */}
+              {Array.isArray(selectedEventForView?.benefits) && selectedEventForView.benefits.length > 0 ? (
+                <View style={styles.pubSummarySection}>
+                  <Text style={styles.pubSummarySectionTitle}>KEY BENEFITS</Text>
+                  <View style={{ gap: 8 }}>
+                    {selectedEventForView.benefits.map((b, bIdx) => (
+                      <View key={bIdx} style={styles.eventChecklistItem}>
+                        <Ionicons name="checkmark-circle" size={16} color="#0A5554" />
+                        <Text style={styles.eventChecklistText}>{b}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              ) : null}
+
+              {/* Highlights */}
+              {Array.isArray(selectedEventForView?.event_highlights) && selectedEventForView.event_highlights.length > 0 ? (
+                <View style={styles.pubSummarySection}>
+                  <Text style={styles.pubSummarySectionTitle}>EVENT HIGHLIGHTS</Text>
+                  <View style={{ gap: 8 }}>
+                    {selectedEventForView.event_highlights.map((h, hIdx) => (
+                      <View key={hIdx} style={styles.eventChecklistItem}>
+                        <Ionicons name="sparkles" size={15} color="#D97706" />
+                        <Text style={styles.eventChecklistText}>{h}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              ) : null}
+
+              {/* Target Audience */}
+              {Array.isArray(selectedEventForView?.target_audience) && selectedEventForView.target_audience.length > 0 ? (
+                <View style={styles.pubSummarySection}>
+                  <Text style={styles.pubSummarySectionTitle}>TARGET AUDIENCE</Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                    {selectedEventForView.target_audience.map((a, aIdx) => (
+                      <View key={aIdx} style={styles.metaPill}>
+                        <Text style={styles.metaPillText}>{a}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              ) : null}
+
+              {/* Speakers */}
+              {Array.isArray(selectedEventForView?.speakers) && selectedEventForView.speakers.length > 0 ? (
+                <View style={styles.pubSummarySection}>
+                  <Text style={styles.pubSummarySectionTitle}>SPEAKERS & PANELISTS</Text>
+                  <View style={{ gap: 10 }}>
+                    {selectedEventForView.speakers.map((spk, spkIdx) => (
+                      <View key={spkIdx} style={styles.eventSpeakerCard}>
+                        <View style={styles.eventSpeakerAvatar}>
+                          <Ionicons name="person" size={16} color="#0A5554" />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.eventSpeakerName}>{spk.name || 'Unnamed Speaker'}</Text>
+                          {spk.designation ? (
+                            <Text style={styles.eventSpeakerRole}>{spk.designation}</Text>
+                          ) : null}
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              ) : null}
+            </ScrollView>
+
+            {/* Footer Actions */}
+            <View style={styles.blogReaderFooter}>
+              <TouchableOpacity
+                style={styles.blogReaderBtnOutline}
+                onPress={() => {
+                  const ev = selectedEventForView;
+                  setViewEventModalVisible(false);
+                  handleOpenEditEvent(ev);
+                }}
+              >
+                <Ionicons name="create-outline" size={15} color="#0A5554" />
+                <Text style={styles.blogReaderBtnOutlineText}>Edit Event</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.blogReaderBtnClose}
+                onPress={() => setViewEventModalVisible(false)}
+              >
+                <Text style={styles.blogReaderBtnCloseText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      {/* CREATE / EDIT EVENT MODAL */}
+      <Modal
+        visible={createEventModalVisible || editEventModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => {
+          if (!eventsSaving) {
+            setCreateEventModalVisible(false);
+            setEditEventModalVisible(false);
+            setEditingEvent(null);
+          }
+        }}
+      >
+        <SafeAreaView style={styles.editModalSafeArea}>
+          <View style={styles.editModalContainer}>
+            {/* Modal Header */}
+            <View style={styles.editModalHeader}>
+              <View style={styles.editModalHeaderLeft}>
+                <View style={styles.editModalIconWrap}>
+                  <Ionicons name="calendar" size={20} color="#0A5554" />
+                </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.editModalTitle}>
+                    {editingEvent ? 'Edit Event' : 'Create New Event'}
+                  </Text>
+                  <Text style={styles.editModalSubtitle}>
+                    {editingEvent ? 'Update details, agenda, and speakers' : 'Publish an upcoming event or webinar'}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                style={styles.modalCloseBtn}
+                onPress={() => {
+                  if (!eventsSaving) {
+                    setCreateEventModalVisible(false);
+                    setEditEventModalVisible(false);
+                    setEditingEvent(null);
+                  }
+                }}
+                disabled={eventsSaving}
+                accessibilityLabel="Close editor"
+              >
+                <Ionicons name="close" size={22} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Modal Form ScrollView */}
+            <ScrollView
+              style={styles.editModalScrollView}
+              contentContainerStyle={styles.editModalFormContent}
+              keyboardShouldPersistTaps="handled"
+            >
+              {/* Field 1: Title */}
+              <View style={styles.formField}>
+                <Text style={styles.formLabel}>Event Title *</Text>
+                <TextInput
+                  style={styles.formInput}
+                  value={eventFormData.title}
+                  onChangeText={(text) => setEventFormData((prev) => ({ ...prev, title: text }))}
+                  placeholder="e.g. BAN Virtual Showcase October"
+                  placeholderTextColor="#94A3B8"
+                  maxLength={255}
+                />
+              </View>
+
+              {/* Field 2: Type (Segmented control) */}
+              <View style={styles.formField}>
+                <Text style={styles.formLabel}>Event Format *</Text>
+                <View style={styles.editorModeSwitchGroup}>
+                  <TouchableOpacity
+                    style={[
+                      styles.editorModeSwitchBtn,
+                      eventFormData.type === 'event' && styles.editorModeSwitchBtnActive,
+                      { flex: 1, justifyContent: 'center' },
+                    ]}
+                    onPress={() => setEventFormData((prev) => ({ ...prev, type: 'event' }))}
+                  >
+                    <Ionicons
+                      name="calendar"
+                      size={14}
+                      color={eventFormData.type === 'event' ? '#FFFFFF' : '#64748B'}
+                    />
+                    <Text
+                      style={[
+                        styles.editorModeSwitchText,
+                        eventFormData.type === 'event' && styles.editorModeSwitchTextActive,
+                      ]}
+                    >
+                      In-Person / Virtual Event
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.editorModeSwitchBtn,
+                      eventFormData.type === 'webinar' && styles.editorModeSwitchBtnActive,
+                      { flex: 1, justifyContent: 'center' },
+                    ]}
+                    onPress={() => setEventFormData((prev) => ({ ...prev, type: 'webinar' }))}
+                  >
+                    <Ionicons
+                      name="videocam"
+                      size={14}
+                      color={eventFormData.type === 'webinar' ? '#FFFFFF' : '#64748B'}
+                    />
+                    <Text
+                      style={[
+                        styles.editorModeSwitchText,
+                        eventFormData.type === 'webinar' && styles.editorModeSwitchTextActive,
+                      ]}
+                    >
+                      Webinar
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Field 3: Banner Photo */}
+              <View style={styles.formField}>
+                <Text style={styles.formLabel}>Banner Image</Text>
+                <View style={styles.teamAboutPhotoPickerBox}>
+                  {eventFormData.banner_file ? (
+                    <View style={styles.pubPickedFileCard}>
+                      <View style={[styles.pubPickedFileIconWrap, { backgroundColor: '#E6F4F1' }]}>
+                        <Ionicons name="image" size={20} color="#0A5554" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.pubPickedFileName} numberOfLines={1}>
+                          {eventFormData.banner_file.name || 'Selected banner'}
+                        </Text>
+                        <Text style={styles.pubPickedFileSize}>
+                          {eventFormData.banner_file.size
+                            ? `${(eventFormData.banner_file.size / (1024 * 1024)).toFixed(2)} MB • Ready to upload`
+                            : 'New image chosen'}
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        style={styles.pubChangeFileBtn}
+                        onPress={handleCancelEventBannerChange}
+                      >
+                        <Ionicons name="close" size={14} color="#0A5554" />
+                        <Text style={styles.pubChangeFileText}>Clear</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : eventFormData.remove_banner ? (
+                    <View style={styles.teamAboutPhotoRemovedNotice}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+                        <Ionicons name="alert-circle" size={16} color="#D97706" />
+                        <Text style={styles.teamAboutPhotoRemovedText}>
+                          Banner will be removed and reset to default placeholder.
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        style={styles.teamAboutPhotoUndoBtn}
+                        onPress={handleCancelEventBannerChange}
+                      >
+                        <Text style={styles.teamAboutPhotoUndoBtnText}>Undo</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <View style={styles.teamAboutPhotoPickerRow}>
+                      <Image
+                        source={{
+                          uri:
+                            editingEvent?.banner_url ||
+                            (editingEvent?.media && editingEvent.media[0] ? editingEvent.media[0].original_url : null) ||
+                            'https://bdangels.co/what-we-do-placeholder.svg',
+                        }}
+                        style={styles.teamAboutPhotoThumb}
+                        resizeMode="cover"
+                      />
+                      <View style={styles.teamAboutPhotoActionsCol}>
+                        <TouchableOpacity
+                          style={styles.teamAboutPhotoChooseBtn}
+                          onPress={handlePickEventBanner}
+                        >
+                          <Ionicons name="cloud-upload-outline" size={15} color="#0A5554" />
+                          <Text style={styles.teamAboutPhotoChooseBtnText}>
+                            {editingEvent?.banner_url ? 'Replace Banner' : 'Upload Banner'}
+                          </Text>
+                        </TouchableOpacity>
+                        {editingEvent?.banner_url ? (
+                          <TouchableOpacity
+                            style={styles.teamAboutPhotoRemoveBtn}
+                            onPress={handleRemoveEventBanner}
+                          >
+                            <Ionicons name="trash-outline" size={14} color="#DC2626" />
+                            <Text style={styles.teamAboutPhotoRemoveBtnText}>Remove Banner</Text>
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+                    </View>
+                  )}
+                </View>
+                <Text style={styles.editorHelperText}>
+                  Max size: 5 MB (JPEG, PNG, WebP).
+                </Text>
+              </View>
+
+              {/* Field 4: Date & Times Row */}
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <View style={[styles.formField, { flex: 1 }]}>
+                  <Text style={styles.formLabel}>Date</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    value={eventFormData.date}
+                    onChangeText={(text) => setEventFormData((prev) => ({ ...prev, date: text }))}
+                    placeholder="YYYY-MM-DD"
+                    placeholderTextColor="#94A3B8"
+                    maxLength={10}
+                  />
+                </View>
+
+                <View style={[styles.formField, { flex: 1 }]}>
+                  <Text style={styles.formLabel}>Start Time</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    value={eventFormData.start_time}
+                    onChangeText={(text) => setEventFormData((prev) => ({ ...prev, start_time: text }))}
+                    placeholder="e.g. 20:00"
+                    placeholderTextColor="#94A3B8"
+                    maxLength={5}
+                  />
+                </View>
+
+                <View style={[styles.formField, { flex: 1 }]}>
+                  <Text style={styles.formLabel}>End Time</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    value={eventFormData.end_time}
+                    onChangeText={(text) => setEventFormData((prev) => ({ ...prev, end_time: text }))}
+                    placeholder="e.g. 22:00"
+                    placeholderTextColor="#94A3B8"
+                    maxLength={5}
+                  />
+                </View>
+              </View>
+
+              {/* Field 5: Location & Fee */}
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <View style={[styles.formField, { flex: 2 }]}>
+                  <Text style={styles.formLabel}>Location</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    value={eventFormData.location}
+                    onChangeText={(text) => setEventFormData((prev) => ({ ...prev, location: text }))}
+                    placeholder="e.g. Online (Zoom) or Venue"
+                    placeholderTextColor="#94A3B8"
+                    maxLength={255}
+                  />
+                </View>
+
+                <View style={[styles.formField, { flex: 1 }]}>
+                  <Text style={styles.formLabel}>Fee (BDT)</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    value={eventFormData.registration_fee}
+                    onChangeText={(text) => setEventFormData((prev) => ({ ...prev, registration_fee: text }))}
+                    placeholder="0 for Free"
+                    placeholderTextColor="#94A3B8"
+                    keyboardType="numeric"
+                  />
+                </View>
+              </View>
+
+              {/* Field 6: CTA Link */}
+              <View style={styles.formField}>
+                <Text style={styles.formLabel}>RSVP / CTA Link</Text>
+                <TextInput
+                  style={styles.formInput}
+                  value={eventFormData.cta_link}
+                  onChangeText={(text) => setEventFormData((prev) => ({ ...prev, cta_link: text }))}
+                  placeholder="https://luma.com/… or https://forms.gle/…"
+                  placeholderTextColor="#94A3B8"
+                  autoCapitalize="none"
+                  keyboardType="url"
+                />
+                <Text style={styles.editorHelperText}>
+                  When set, a Register / RSVP button appears on the event card.
+                </Text>
+              </View>
+
+              {/* Field 7: Featured on Homepage Toggle */}
+              <View style={styles.formField}>
+                <TouchableOpacity
+                  style={[
+                    styles.batchDealItemCard,
+                    eventFormData.show_on_landing && styles.batchDealItemCardActive,
+                    { padding: 12 },
+                  ]}
+                  onPress={() => setEventFormData((prev) => ({ ...prev, show_on_landing: !prev.show_on_landing }))}
+                  activeOpacity={0.8}
+                >
+                  <View
+                    style={[
+                      styles.batchCheckbox,
+                      eventFormData.show_on_landing && styles.batchCheckboxActive,
+                    ]}
+                  >
+                    {eventFormData.show_on_landing && (
+                      <Ionicons name="checkmark" size={14} color="#FFFFFF" />
+                    )}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.formLabel, { marginBottom: 2 }]}>Feature on Homepage</Text>
+                    <Text style={styles.editorHelperText}>
+                      When checked, this event will be featured in the homepage BAN Events carousel section.
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              </View>
+
+              {/* Field 8: Description */}
+              <View style={styles.formField}>
+                <Text style={styles.formLabel}>Description *</Text>
+                <TextInput
+                  style={[styles.formInput, { minHeight: 120, textAlignVertical: 'top', paddingTop: 10 }]}
+                  value={eventFormData.description}
+                  onChangeText={(text) => setEventFormData((prev) => ({ ...prev, description: text }))}
+                  placeholder="Provide detailed description of the event..."
+                  placeholderTextColor="#94A3B8"
+                  multiline
+                  numberOfLines={5}
+                />
+              </View>
+
+              {/* Field 9: Registration Details */}
+              <View style={styles.formField}>
+                <Text style={styles.formLabel}>Registration Details (Optional)</Text>
+                <TextInput
+                  style={[styles.formInput, { minHeight: 70, textAlignVertical: 'top', paddingTop: 8 }]}
+                  value={eventFormData.registration_details}
+                  onChangeText={(text) => setEventFormData((prev) => ({ ...prev, registration_details: text }))}
+                  placeholder="Instructions for attendees on registration, joining links, etc."
+                  placeholderTextColor="#94A3B8"
+                  multiline
+                  numberOfLines={3}
+                />
+              </View>
+
+              {/* Field 10: Benefits Checklist */}
+              <View style={styles.pubSummarySection}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <Text style={styles.pubSummarySectionTitle}>BENEFITS</Text>
+                  <TouchableOpacity
+                    style={styles.dynamicListAddBtn}
+                    onPress={handleAddEventBenefit}
+                  >
+                    <Ionicons name="add" size={14} color="#0A5554" />
+                    <Text style={styles.dynamicListAddBtnText}>Add Benefit</Text>
+                  </TouchableOpacity>
+                </View>
+                {eventFormData.benefits.map((b, idx) => (
+                  <View key={`benefit-${idx}`} style={styles.dynamicListRow}>
+                    <TextInput
+                      style={[styles.formInput, { flex: 1 }]}
+                      value={b}
+                      onChangeText={(val) => handleUpdateEventBenefit(idx, val)}
+                      placeholder="e.g. Exclusive networking opportunities"
+                      placeholderTextColor="#94A3B8"
+                    />
+                    {eventFormData.benefits.length > 1 && (
+                      <TouchableOpacity
+                        style={styles.dynamicListRemoveBtn}
+                        onPress={() => handleRemoveEventBenefit(idx)}
+                      >
+                        <Ionicons name="trash-outline" size={16} color="#DC2626" />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                ))}
+              </View>
+
+              {/* Field 11: Highlights */}
+              <View style={styles.pubSummarySection}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <Text style={styles.pubSummarySectionTitle}>EVENT HIGHLIGHTS</Text>
+                  <TouchableOpacity
+                    style={styles.dynamicListAddBtn}
+                    onPress={handleAddEventHighlight}
+                  >
+                    <Ionicons name="add" size={14} color="#0A5554" />
+                    <Text style={styles.dynamicListAddBtnText}>Add Highlight</Text>
+                  </TouchableOpacity>
+                </View>
+                {eventFormData.event_highlights.map((h, idx) => (
+                  <View key={`highlight-${idx}`} style={styles.dynamicListRow}>
+                    <TextInput
+                      style={[styles.formInput, { flex: 1 }]}
+                      value={h}
+                      onChangeText={(val) => handleUpdateEventHighlight(idx, val)}
+                      placeholder="e.g. Fireside chat with top angels"
+                      placeholderTextColor="#94A3B8"
+                    />
+                    {eventFormData.event_highlights.length > 1 && (
+                      <TouchableOpacity
+                        style={styles.dynamicListRemoveBtn}
+                        onPress={() => handleRemoveEventHighlight(idx)}
+                      >
+                        <Ionicons name="trash-outline" size={16} color="#DC2626" />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                ))}
+              </View>
+
+              {/* Field 12: Target Audience */}
+              <View style={styles.pubSummarySection}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <Text style={styles.pubSummarySectionTitle}>TARGET AUDIENCE</Text>
+                  <TouchableOpacity
+                    style={styles.dynamicListAddBtn}
+                    onPress={handleAddEventAudience}
+                  >
+                    <Ionicons name="add" size={14} color="#0A5554" />
+                    <Text style={styles.dynamicListAddBtnText}>Add Audience</Text>
+                  </TouchableOpacity>
+                </View>
+                {eventFormData.target_audience.map((a, idx) => (
+                  <View key={`audience-${idx}`} style={styles.dynamicListRow}>
+                    <TextInput
+                      style={[styles.formInput, { flex: 1 }]}
+                      value={a}
+                      onChangeText={(val) => handleUpdateEventAudience(idx, val)}
+                      placeholder="e.g. Angel Investors, Founders"
+                      placeholderTextColor="#94A3B8"
+                    />
+                    {eventFormData.target_audience.length > 1 && (
+                      <TouchableOpacity
+                        style={styles.dynamicListRemoveBtn}
+                        onPress={() => handleRemoveEventAudience(idx)}
+                      >
+                        <Ionicons name="trash-outline" size={16} color="#DC2626" />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                ))}
+              </View>
+
+              {/* Field 13: Speakers */}
+              <View style={styles.pubSummarySection}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <Text style={styles.pubSummarySectionTitle}>SPEAKERS</Text>
+                  <TouchableOpacity
+                    style={styles.dynamicListAddBtn}
+                    onPress={handleAddEventSpeaker}
+                  >
+                    <Ionicons name="add" size={14} color="#0A5554" />
+                    <Text style={styles.dynamicListAddBtnText}>Add Speaker</Text>
+                  </TouchableOpacity>
+                </View>
+                {eventFormData.speakers.map((spk, idx) => (
+                  <View key={`speaker-${idx}`} style={styles.dynamicSpeakerBox}>
+                    <View style={styles.dynamicSpeakerHeader}>
+                      <Text style={styles.dynamicSpeakerTitle}>Speaker #{idx + 1}</Text>
+                      {eventFormData.speakers.length > 1 && (
+                        <TouchableOpacity
+                          style={styles.dynamicListRemoveBtn}
+                          onPress={() => handleRemoveEventSpeaker(idx)}
+                        >
+                          <Ionicons name="trash-outline" size={15} color="#DC2626" />
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                    <TextInput
+                      style={[styles.formInput, { marginBottom: 6 }]}
+                      value={spk.name}
+                      onChangeText={(val) => handleUpdateEventSpeaker(idx, 'name', val)}
+                      placeholder="Speaker Full Name"
+                      placeholderTextColor="#94A3B8"
+                    />
+                    <TextInput
+                      style={styles.formInput}
+                      value={spk.designation}
+                      onChangeText={(val) => handleUpdateEventSpeaker(idx, 'designation', val)}
+                      placeholder="Designation / Role / Company"
+                      placeholderTextColor="#94A3B8"
+                    />
+                  </View>
+                ))}
+              </View>
+            </ScrollView>
+
+            {/* Modal Footer */}
+            <View style={styles.editModalFooter}>
+              <TouchableOpacity
+                style={styles.editModalCancelBtn}
+                onPress={() => {
+                  if (!eventsSaving) {
+                    setCreateEventModalVisible(false);
+                    setEditEventModalVisible(false);
+                    setEditingEvent(null);
+                  }
+                }}
+                disabled={eventsSaving}
+              >
+                <Text style={styles.editModalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.editModalSaveBtn}
+                onPress={editingEvent ? handleSaveEditEvent : handleSaveCreateEvent}
+                disabled={eventsSaving}
+                activeOpacity={0.85}
+              >
+                {eventsSaving ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.editModalSaveBtnText}>
+                    {editingEvent ? 'Update Event' : 'Create Event'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      {/* DELETE EVENT CONFIRMATION MODAL */}
+      <Modal
+        visible={deleteEventModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !isDeletingEvent && setDeleteEventModalVisible(false)}
+      >
+        <View style={styles.deleteModalOverlay}>
+          <View style={styles.deleteModalBox}>
+            <View style={[styles.deleteModalIconWrap, { backgroundColor: '#FEE2E2' }]}>
+              <Ionicons name="trash-outline" size={26} color="#DC2626" />
+            </View>
+            <Text style={styles.deleteModalTitle}>Delete Event?</Text>
+            <Text style={styles.deleteModalMessage}>
+              Are you sure you want to permanently delete &ldquo;{selectedEventForDelete?.title}&rdquo;? This action cannot be undone.
+            </Text>
+            <View style={styles.deleteModalBtnRow}>
+              <TouchableOpacity
+                style={styles.deleteModalCancelBtn}
+                onPress={() => setDeleteEventModalVisible(false)}
+                disabled={isDeletingEvent}
+              >
+                <Text style={styles.deleteModalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.deleteModalConfirmBtn}
+                onPress={handleConfirmDeleteEvent}
+                disabled={isDeletingEvent}
+              >
+                {isDeletingEvent ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.deleteModalConfirmBtnText}>Delete Event</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
       </Modal>
     </SafeAreaView>
   );
@@ -14544,4 +16212,404 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#64748B',
   },
+  // Form common styles
+  formLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 6,
+  },
+  formInput: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 13,
+    color: '#0F172A',
+  },
+  formSectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  // Event card & list styles
+  eventCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 16,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  eventBannerWrap: {
+    width: '100%',
+    height: 160,
+    backgroundColor: '#E2E8F0',
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  eventBannerImg: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
+  },
+  eventTypePillWrap: {
+    position: 'absolute',
+    top: 10,
+    left: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    zIndex: 2,
+  },
+  eventTypePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  eventTypePillEvent: {
+    backgroundColor: '#E6F4F1',
+    borderColor: '#B4E6DA',
+  },
+  eventTypePillWebinar: {
+    backgroundColor: '#EEF2FF',
+    borderColor: '#C7D2FE',
+  },
+  eventTypePillText: {
+    fontSize: 10,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  eventTypePillTextEvent: {
+    color: '#0A5554',
+  },
+  eventTypePillTextWebinar: {
+    color: '#4338CA',
+  },
+  eventLandingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  eventLandingBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#065F46',
+  },
+  eventFeePill: {
+    position: 'absolute',
+    bottom: 10,
+    right: 10,
+    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    zIndex: 2,
+  },
+  eventFeePillText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  eventBody: {
+    padding: 14,
+    gap: 8,
+  },
+  eventTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+    lineHeight: 22,
+  },
+  eventMetaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  eventMetaChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    maxWidth: '100%',
+  },
+  eventMetaChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  eventDesc: {
+    fontSize: 12,
+    color: '#64748B',
+    lineHeight: 18,
+  },
+  eventCtaBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#F0FDFA',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#CCFBF1',
+  },
+  eventCtaBarText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#0D9488',
+    flex: 1,
+  },
+  eventSpeakersRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  eventSpeakersPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  eventSpeakersPillText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  eventActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  eventActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 8,
+    backgroundColor: '#E6F4F1',
+  },
+  eventActionBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0A5554',
+  },
+  eventActionBtnEdit: {
+    backgroundColor: '#E0F2FE',
+  },
+  eventActionBtnDelete: {
+    backgroundColor: '#FEE2E2',
+  },
+  // Event details view modal
+  eventChecklistItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginBottom: 6,
+  },
+  eventChecklistText: {
+    fontSize: 13,
+    color: '#334155',
+    lineHeight: 20,
+    flex: 1,
+  },
+  eventSpeakerCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 10,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 8,
+  },
+  eventSpeakerAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#E6F4F1',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  eventSpeakerName: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  eventSpeakerRole: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  // Dynamic list builders (benefits, highlights, audience, speakers)
+  dynamicListAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    backgroundColor: '#E6F4F1',
+  },
+  dynamicListAddBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0A5554',
+  },
+  dynamicListRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  dynamicListRemoveBtn: {
+    padding: 6,
+    borderRadius: 6,
+    backgroundColor: '#FEF2F2',
+  },
+  dynamicSpeakerBox: {
+    padding: 10,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 8,
+    gap: 6,
+  },
+  dynamicSpeakerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  dynamicSpeakerTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#0A5554',
+  },
+  // Additional utility and tab styles
+  blogActionBtnTextArchive: {
+    color: '#D97706',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  blogActionBtnTextPublish: {
+    color: '#059669',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+    paddingHorizontal: 20,
+  },
+  emptyActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#0A5554',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    marginTop: 14,
+  },
+  emptyActionBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  memberFilterTabsScroll: {
+    marginBottom: 12,
+  },
+  memberFilterTabsContent: {
+    gap: 8,
+  },
+  paginationBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+  },
+  paginationInfo: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '500',
+  },
+  programCategoryBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: '#F1F5F9',
+  },
+  programCategoryBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  searchClearBtn: {
+    padding: 4,
+  },
+  statsEmptyIconWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  statsLoadingBox: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 30,
+    gap: 10,
+  },
+  statsLoadingText: {
+    fontSize: 13,
+    color: '#64748B',
+    fontWeight: '500',
+  },
+  statsRefreshBtn: {
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+  },
+  statusBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
 });
+
