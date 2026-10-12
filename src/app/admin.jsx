@@ -5160,40 +5160,56 @@ export default function AdminScreen() {
     }
     setTierSaving(true);
     try {
+      const sortOrderNum = isNaN(parseInt(tierFormData.sort_order, 10))
+        ? 1
+        : Math.max(0, parseInt(tierFormData.sort_order, 10));
+
+      const editedTierObj = {
+        id: selectedTierForEdit.id,
+        name: tierFormData.name.trim(),
+        price_yearly: priceNum,
+        sort_order: sortOrderNum,
+        is_active: Boolean(tierFormData.is_active),
+        is_highlighted: Boolean(tierFormData.is_highlighted),
+        features_included: tierFormData.features_included || '',
+        features_excluded: tierFormData.features_excluded || '',
+      };
+
       const currentTiers = subscriptionsData?.tiers || [];
-      const updatedTiersPayload = currentTiers.map((t) => {
-        if (t.id === selectedTierForEdit.id) {
+      let updatedTiersPayload = [editedTierObj];
+
+      if (Array.isArray(currentTiers) && currentTiers.length > 0) {
+        updatedTiersPayload = currentTiers.map((t) => {
+          if (t.id === selectedTierForEdit.id) {
+            return editedTierObj;
+          }
           return {
             id: t.id,
-            name: tierFormData.name.trim(),
-            price_yearly: priceNum,
-            sort_order: parseInt(tierFormData.sort_order, 10) || 1,
-            is_active: tierFormData.is_active,
-            is_highlighted: tierFormData.is_highlighted,
-            features_included: tierFormData.features_included,
-            features_excluded: tierFormData.features_excluded,
+            name: t.name,
+            price_yearly: parseFloat(t.price_yearly) || 0,
+            sort_order: isNaN(parseInt(t.sort_order, 10)) ? 1 : parseInt(t.sort_order, 10),
+            is_active: Boolean(t.is_active),
+            is_highlighted: tierFormData.is_highlighted ? false : Boolean(t.is_highlighted),
+            features_included: t.features_included || '',
+            features_excluded: t.features_excluded || '',
           };
-        }
-        return {
-          id: t.id,
-          name: t.name,
-          price_yearly: parseFloat(t.price_yearly) || 0,
-          sort_order: t.sort_order,
-          is_active: Boolean(t.is_active),
-          is_highlighted: tierFormData.is_highlighted ? false : Boolean(t.is_highlighted),
-          features_included: t.features_included || '',
-          features_excluded: t.features_excluded || '',
-        };
-      });
+        });
+      }
 
       const res = await updateAdminSubscriptionTiers(authToken, updatedTiersPayload);
       if (res.ok) {
         Alert.alert('Success', 'Membership tier and pricing updated successfully.');
         setEditTierModalVisible(false);
         setSelectedTierForEdit(null);
+        if (Array.isArray(res.data)) {
+          setSubscriptionsData((prev) => (prev ? { ...prev, tiers: res.data } : prev));
+        }
         loadSubscriptions(authToken, { silent: true });
       } else {
-        Alert.alert('Update Failed', res.message || 'Could not update tier.');
+        const errorMsg = res.errors
+          ? Object.values(res.errors).flat().join('\n')
+          : res.message || 'Could not update tier.';
+        Alert.alert('Update Failed', errorMsg);
       }
     } catch (err) {
       console.log('Error saving tier:', err);
@@ -18638,29 +18654,46 @@ export default function AdminScreen() {
         transparent={true}
         onRequestClose={() => setSubscriptionDetailModalVisible(false)}
       >
-        <SafeAreaView style={styles.subModalSafe}>
-          <View style={styles.subModalCard}>
+        <View style={styles.editModalSafeArea}>
+          <View style={[styles.editModalContainer, { marginTop: 40 }]}>
             {/* Header */}
-            <View style={styles.subModalHeader}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.subModalTitle}>Subscription Record</Text>
-                <Text style={styles.subModalSub}>
-                  {selectedSubscriptionDetail?.user?.name || 'Member Details'}
-                </Text>
+            <View style={styles.editModalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                <View
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 18,
+                    backgroundColor: '#E6F4F1',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Ionicons name="card" size={18} color="#0A5554" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.editModalTitle} numberOfLines={1}>
+                    Subscription Record
+                  </Text>
+                  <Text style={styles.editModalSubtitle} numberOfLines={1}>
+                    {selectedSubscriptionDetail?.user?.name || 'Member Details'}
+                  </Text>
+                </View>
               </View>
               <TouchableOpacity
-                style={styles.subModalCloseBtn}
                 onPress={() => setSubscriptionDetailModalVisible(false)}
+                style={styles.modalCloseBtn}
                 accessibilityLabel="Close Subscription Details Modal"
               >
-                <Ionicons name="close" size={22} color="#475569" />
+                <Ionicons name="close" size={22} color="#64748B" />
               </TouchableOpacity>
             </View>
 
             <ScrollView
               style={{ flex: 1 }}
-              contentContainerStyle={{ padding: 16, gap: 16 }}
+              contentContainerStyle={{ padding: 16, paddingBottom: 40, gap: 16 }}
               showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
             >
               {/* Member Card Box */}
               <View style={styles.subDetailBox}>
@@ -18825,7 +18858,7 @@ export default function AdminScreen() {
               </TouchableOpacity>
             </ScrollView>
           </View>
-        </SafeAreaView>
+        </View>
       </Modal>
 
       {/* MODAL: EDIT MEMBERSHIP TIER & PRICING */}
@@ -18835,30 +18868,47 @@ export default function AdminScreen() {
         transparent={true}
         onRequestClose={() => setEditTierModalVisible(false)}
       >
-        <SafeAreaView style={styles.subModalSafe}>
-          <View style={styles.subModalCard}>
+        <View style={styles.editModalSafeArea}>
+          <View style={[styles.editModalContainer, { marginTop: 40 }]}>
             {/* Header */}
-            <View style={styles.subModalHeader}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.subModalTitle}>Edit Tier & Pricing</Text>
-                <Text style={styles.subModalSub}>
-                  {tierFormData.name || selectedTierForEdit?.name || 'Tier Details'}
-                </Text>
+            <View style={styles.editModalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                <View
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 18,
+                    backgroundColor: '#E6F4F1',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Ionicons name="pricetag" size={18} color="#0A5554" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.editModalTitle} numberOfLines={1}>
+                    Edit Tier & Pricing
+                  </Text>
+                  <Text style={styles.editModalSubtitle} numberOfLines={1}>
+                    {tierFormData.name || selectedTierForEdit?.name || 'Tier Details'}
+                  </Text>
+                </View>
               </View>
               <TouchableOpacity
-                style={styles.subModalCloseBtn}
-                onPress={() => setEditTierModalVisible(false)}
+                onPress={() => !tierSaving && setEditTierModalVisible(false)}
+                style={styles.modalCloseBtn}
                 disabled={tierSaving}
                 accessibilityLabel="Close Edit Tier Modal"
               >
-                <Ionicons name="close" size={22} color="#475569" />
+                <Ionicons name="close" size={22} color="#64748B" />
               </TouchableOpacity>
             </View>
 
             <ScrollView
               style={{ flex: 1 }}
-              contentContainerStyle={{ padding: 16, gap: 14 }}
+              contentContainerStyle={{ padding: 16, paddingBottom: 40, gap: 14 }}
               showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
             >
               {/* Name */}
               <View style={styles.formGroup}>
@@ -18988,7 +19038,7 @@ export default function AdminScreen() {
               </View>
             </ScrollView>
           </View>
-        </SafeAreaView>
+        </View>
       </Modal>
     </SafeAreaView>
   );

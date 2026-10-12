@@ -126,6 +126,7 @@ async function fetchAdminWithFallback(endpointPath, token, fetchOptions = {}) {
   const headers = {
     Accept: 'application/json',
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(typeof fetchOptions.body === 'string' ? { 'Content-Type': 'application/json' } : {}),
     ...(fetchOptions.headers || {}),
   };
 
@@ -730,11 +731,18 @@ export async function fetchAdminSubscriptions(token) {
 /**
  * Update Subscription Tiers via POST /api/admin/subscriptions/tiers
  */
-export async function updateAdminSubscriptionTiers(token, tiers) {
+export async function updateAdminSubscriptionTiers(token, tiersPayload) {
   try {
+    const tiersArray = Array.isArray(tiersPayload)
+      ? tiersPayload
+      : [tiersPayload];
+
     const res = await fetchAdminWithFallback('/admin/subscriptions/tiers', token, {
       method: 'POST',
-      body: JSON.stringify({ tiers }),
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ tiers: tiersArray }),
     });
     if (res && res.ok) {
       const json = await res.json();
