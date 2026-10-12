@@ -170,18 +170,6 @@ export default function PortfolioScreen() {
             Meet the companies our network has backed—ambitious teams building practical solutions
             with the conviction and potential to scale.
           </Text>
-
-          {/* Responsive 2-column Stat Cards: No edge-hugging or clipping */}
-          <View style={styles.statGrid}>
-            <View style={styles.statCard}>
-              <Text style={styles.statCardBold}>54+</Text>
-              <Text style={styles.statCardLabel}>Portfolio Companies</Text>
-            </View>
-            <View style={styles.statCard}>
-              <Text style={styles.statCardBold}>$12M+</Text>
-              <Text style={styles.statCardLabel}>Capital Facilitated</Text>
-            </View>
-          </View>
         </View>
 
         {/* Filter Controls: Search and Sector Pills */}
@@ -355,36 +343,7 @@ const styles = StyleSheet.create({
     fontSize: 14.5,
     color: Colors.muted,
     lineHeight: 22,
-    marginBottom: 20,
-  },
-  statGrid: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  statCard: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.03,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  statCardBold: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: Colors.green,
-    marginBottom: 2,
-  },
-  statCardLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: Colors.ink,
+    marginBottom: 0,
   },
   filtersSection: {
     paddingHorizontal: 22,

@@ -58,6 +58,11 @@ export default function MobileMenuModal({ visible, onClose, onNavigate }) {
               <Text style={styles.navLabel}>Home</Text>
             </TouchableOpacity>
 
+            <TouchableOpacity style={styles.navItem} onPress={() => handleNavigate('/events', 'events')}>
+              <Ionicons name="calendar-outline" size={20} color={Colors.green} />
+              <Text style={styles.navLabel}>Events</Text>
+            </TouchableOpacity>
+
             <TouchableOpacity style={styles.navItem} onPress={() => handleNavigate('/portfolio', 'portfolio')}>
               <Ionicons name="briefcase-outline" size={20} color={Colors.green} />
               <Text style={styles.navLabel}>Portfolio Showcase</Text>
@@ -138,6 +143,13 @@ export default function MobileMenuModal({ visible, onClose, onNavigate }) {
                     </Text>
                   </View>
                 </View>
+
+                <TouchableOpacity style={styles.navItem} onPress={() => handleNavigate('/investor')}>
+                  <Ionicons name="pie-chart-outline" size={20} color={Colors.forest} />
+                  <Text style={[styles.navLabel, { fontWeight: '700', color: Colors.forest }]}>
+                    Investor Workspace
+                  </Text>
+                </TouchableOpacity>
 
                 {authState.isAdmin() && (
                   <TouchableOpacity style={styles.navItem} onPress={() => handleNavigate('/admin')}>

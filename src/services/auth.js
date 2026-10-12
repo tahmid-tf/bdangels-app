@@ -12,6 +12,7 @@ export const authState = {
   getUser: () => inMemoryUser,
   isLoggedIn: () => Boolean(inMemoryToken),
   isAdmin: () => Boolean(inMemoryUser && (inMemoryUser.is_admin || inMemoryUser.role === 'admin' || inMemoryUser.role === 'superadmin')),
+  isInvestor: () => Boolean(inMemoryToken && inMemoryUser && (inMemoryUser.is_investor || inMemoryUser.role === 'investor' || !inMemoryUser.is_admin)),
   canViewDeals: () => {
     if (!inMemoryToken || !inMemoryUser) return false;
     if (inMemoryUser.is_admin || inMemoryUser.role === 'admin' || inMemoryUser.role === 'superadmin') return true;
@@ -256,6 +257,106 @@ export async function registerUser({
   return {
     ok: false,
     message: lastErrorMessage || 'Unable to connect to registration service.',
+    errors: lastErrors,
+  };
+}
+
+/**
+ * Submit Investor Membership Application via POST /member/apply (matching /investor/signup on web)
+ */
+export async function submitInvestorSignup({
+  first_name,
+  last_name,
+  email,
+  address,
+  phone,
+  country_code = '+880',
+  primary_country = 'Bangladesh',
+  gender = 'male',
+  password,
+  password_confirmation,
+  selected_plan = 'free',
+  selected_plan_price = 0,
+  organization = '',
+  designation = '',
+  investment_expertise = 'beginner',
+  linkedin = '',
+}) {
+  const endpoints = getAuthEndpoints();
+  let lastErrorMessage = '';
+  let lastErrors = null;
+
+  for (const baseUrl of endpoints) {
+    try {
+      const res = await fetch(`${baseUrl}/member/apply`, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          first_name: first_name.trim(),
+          last_name: last_name.trim(),
+          email: email.trim(),
+          address: address.trim(),
+          phone: phone.trim().replace(/^\+/, ''),
+          country_code: country_code.trim(),
+          primary_country: primary_country.trim(),
+          gender,
+          password,
+          password_confirmation: password_confirmation || password,
+          selected_plan: selected_plan.trim(),
+          selected_plan_price: Number(selected_plan_price) || 0,
+          organization: organization.trim() || undefined,
+          designation: designation.trim() || undefined,
+          investment_expertise,
+          linkedin: linkedin.trim() || undefined,
+          device_name: 'mobile-app',
+        }),
+      });
+
+      const json = await res.json().catch(() => null);
+
+      if (res.ok && (json?.data?.token || json?.token)) {
+        const user = json?.data?.user || json?.user;
+        const token = json?.data?.token || json?.token;
+        if (user && token) {
+          await saveAuthSession(user, token);
+        }
+        return {
+          ok: true,
+          user,
+          token,
+          requires_payment: Boolean(json?.data?.requires_payment),
+          selected_plan: json?.data?.selected_plan || null,
+          message: json?.message || 'Membership application submitted successfully.',
+        };
+      }
+
+      if (res.status === 422) {
+        return {
+          ok: false,
+          message: json?.message || 'Please check the application details provided.',
+          errors: json?.errors || null,
+        };
+      }
+
+      if (res.status >= 500) {
+        lastErrorMessage = 'Authentication server error. Retrying backup connection...';
+        continue;
+      }
+
+      lastErrorMessage = json?.message || `Application error (${res.status})`;
+      lastErrors = json?.errors || null;
+    } catch (err) {
+      console.log(`Investor signup attempt at ${baseUrl} failed:`, err);
+      lastErrorMessage = 'Network error connecting to application service. Please check your connection.';
+    }
+  }
+
+  return {
+    ok: false,
+    message: lastErrorMessage || 'Unable to connect to application service.',
     errors: lastErrors,
   };
 }

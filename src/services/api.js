@@ -2695,38 +2695,35 @@ export const FALLBACK_GOVERNING_BOARD = [
   },
 ];
 
+let inMemoryHomeBundle = null;
+
 /**
- * Fetch combined homepage bundle from /api/home and /api/team with robust fallback
+ * Get synchronous in-memory cached home data for instant app launch
+ */
+export function getCachedHomeData() {
+  return inMemoryHomeBundle;
+}
+
+/**
+ * Fetch combined homepage bundle from /api/home with in-memory caching and fast fallback
  */
 export async function fetchHomePageData() {
   try {
-    const [homeRes, teamRes] = await Promise.allSettled([
-      fetchWithTimeout(`${API_BASE_URL}/home`, { headers: { Accept: 'application/json' } }, 7000),
-      fetchWithTimeout(`${API_BASE_URL}/team`, { headers: { Accept: 'application/json' } }, 7000),
-    ]);
+    const homeRes = await fetchWithTimeout(`${API_BASE_URL}/home`, { headers: { Accept: 'application/json' } }, 3500);
 
     let homeData = null;
-    if (homeRes.status === 'fulfilled' && homeRes.value.ok) {
-      const json = await homeRes.value.json();
+    if (homeRes.ok) {
+      const json = await homeRes.json();
       homeData = json.data || json;
     }
 
-    let teamData = null;
-    if (teamRes.status === 'fulfilled' && teamRes.value.ok) {
-      const json = await teamRes.value.json();
-      teamData = json.data || json;
-    }
-
-    // Resolve team members: prefer dedicated /team endpoint management array, then /home, then fallback
-    let resolvedTeam = FALLBACK_HOME_DATA.team_members;
-    if (teamData?.management && Array.isArray(teamData.management) && teamData.management.length > 0) {
-      resolvedTeam = sanitizeTeam(teamData.management);
-    } else if (homeData?.team_members && Array.isArray(homeData.team_members) && homeData.team_members.length > 0) {
-      resolvedTeam = sanitizeTeam(homeData.team_members);
-    }
-
     if (homeData) {
-      return {
+      let resolvedTeam = FALLBACK_HOME_DATA.team_members;
+      if (homeData.team_members && Array.isArray(homeData.team_members) && homeData.team_members.length > 0) {
+        resolvedTeam = sanitizeTeam(homeData.team_members);
+      }
+
+      const bundle = {
         stats: normalizeStats(homeData.landing_stats),
         programs: (homeData.landing_programs && homeData.landing_programs.length > 0)
           ? homeData.landing_programs
@@ -2745,23 +2742,15 @@ export async function fetchHomePageData() {
           ? homeData.faqs
           : FALLBACK_HOME_DATA.faqs,
       };
-    }
 
-    // Even if /home timed out, if /team succeeded, return team members immediately!
-    return {
-      stats: FALLBACK_HOME_DATA.landing_stats,
-      programs: FALLBACK_HOME_DATA.landing_programs,
-      membershipTiers: FALLBACK_HOME_DATA.membership_tiers,
-      portfolioDeals: FALLBACK_HOME_DATA.portfolio_deals,
-      teamMembers: resolvedTeam,
-      events: FALLBACK_HOME_DATA.landing_events,
-      faqs: FALLBACK_HOME_DATA.faqs,
-    };
+      inMemoryHomeBundle = bundle;
+      return bundle;
+    }
   } catch (err) {
     console.log('[API] /home network note:', err.message);
   }
 
-  return {
+  return inMemoryHomeBundle || {
     stats: FALLBACK_HOME_DATA.landing_stats,
     programs: FALLBACK_HOME_DATA.landing_programs,
     membershipTiers: FALLBACK_HOME_DATA.membership_tiers,
@@ -2981,6 +2970,34 @@ export async function fetchPlansPageData() {
     console.log('Plans fetch fallback notice:', err);
   }
   return FALLBACK_HOME_DATA.membership_tiers;
+}
+
+/**
+ * Fetch events and webinars from GET /api/events (or fallback to home events)
+ */
+export async function fetchEventsPageData() {
+  try {
+    const res = await fetchWithTimeout(`${API_BASE_URL}/events`, {
+      headers: { Accept: 'application/json' },
+    }, 5000);
+    if (res.ok) {
+      const json = await res.json();
+      const events = json.data || json;
+      if (Array.isArray(events) && events.length > 0) {
+        return sanitizeEvents(events);
+      }
+    }
+  } catch (err) {
+    console.log('Events fetch notice:', err);
+  }
+
+  // Fallback to cached home data or home bundle
+  const homeCached = getCachedHomeData();
+  if (homeCached?.events && Array.isArray(homeCached.events) && homeCached.events.length > 0) {
+    return homeCached.events;
+  }
+
+  return sanitizeEvents(FALLBACK_HOME_DATA.landing_events);
 }
 
 /**
@@ -3246,4 +3263,79 @@ export async function submitDealInvestmentInterest(token, dealId, type = 'intere
     console.log('Deal investment interest notice:', err);
   }
   return { ok: false, message: 'Network error submitting investment interest.' };
+}
+
+/**
+ * =========================================================================
+ * INVESTOR DASHBOARD & PORTFOLIO ENDPOINTS
+ * =========================================================================
+ */
+
+/**
+ * Fetch Investor Dashboard overview from GET /api/investor/dashboard
+ */
+export async function fetchInvestorDashboard(token) {
+  try {
+    const res = await fetchAdminWithFallback('/investor/dashboard', token);
+    if (res && res.ok) {
+      const json = await res.json().catch(() => null);
+      if (json?.data || json?.summary) {
+        return {
+          ok: true,
+          data: json.data || json,
+        };
+      }
+    }
+  } catch (err) {
+    console.log('Investor dashboard fetch notice:', err);
+  }
+  return { ok: false, data: null };
+}
+
+/**
+ * Fetch personal completed investments list from GET /api/investor/investments
+ */
+export async function fetchInvestorInvestments(token, page = 1) {
+  try {
+    const res = await fetchAdminWithFallback(`/investor/investments?page=${page}`, token);
+    if (res && res.ok) {
+      const json = await res.json().catch(() => null);
+      return json?.data || json;
+    }
+  } catch (err) {
+    console.log('Investor investments fetch notice:', err);
+  }
+  return null;
+}
+
+/**
+ * Fetch investor portfolio investments from GET /api/investor/portfolio-investments
+ */
+export async function fetchInvestorPortfolioInvestments(token, page = 1) {
+  try {
+    const res = await fetchAdminWithFallback(`/investor/portfolio-investments?page=${page}`, token);
+    if (res && res.ok) {
+      const json = await res.json().catch(() => null);
+      return json?.data || json;
+    }
+  } catch (err) {
+    console.log('Investor portfolio investments notice:', err);
+  }
+  return null;
+}
+
+/**
+ * Fetch investor deal commits from GET /api/investor/commits
+ */
+export async function fetchInvestorCommits(token, page = 1) {
+  try {
+    const res = await fetchAdminWithFallback(`/investor/commits?page=${page}`, token);
+    if (res && res.ok) {
+      const json = await res.json().catch(() => null);
+      return json?.data || json;
+    }
+  } catch (err) {
+    console.log('Investor commits fetch notice:', err);
+  }
+  return null;
 }

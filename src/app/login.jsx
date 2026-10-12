@@ -53,11 +53,7 @@ export default function LoginScreen() {
         if (res.isAdmin) {
           router.replace('/admin');
         } else {
-          Alert.alert(
-            'Welcome',
-            `Signed in as ${res.user?.name || 'Investor'}.`,
-            [{ text: 'Continue', onPress: () => router.replace('/') }]
-          );
+          router.replace('/investor');
         }
       } else {
         const errorMsg =

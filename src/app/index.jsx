@@ -6,6 +6,7 @@ import {
   StyleSheet,
   SafeAreaView,
   StatusBar,
+  Platform,
 } from 'react-native';
 import { router } from 'expo-router';
 import Header from '../components/Header';
@@ -26,7 +27,7 @@ import DealDetailModal from '../components/modals/DealDetailModal';
 import EventDetailModal from '../components/modals/EventDetailModal';
 import ProgramDetailModal from '../components/modals/ProgramDetailModal';
 
-import { fetchHomePageData, FALLBACK_HOME_DATA } from '../services/api';
+import { fetchHomePageData, getCachedHomeData, FALLBACK_HOME_DATA } from '../services/api';
 import { initAuth } from '../services/auth';
 import { Colors } from '../constants/theme';
 
@@ -34,15 +35,18 @@ export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
 
-  // Home Data State
-  const [homeData, setHomeData] = useState({
-    stats: FALLBACK_HOME_DATA.landing_stats,
-    programs: FALLBACK_HOME_DATA.landing_programs,
-    membershipTiers: FALLBACK_HOME_DATA.membership_tiers,
-    portfolioDeals: FALLBACK_HOME_DATA.portfolio_deals,
-    teamMembers: FALLBACK_HOME_DATA.team_members,
-    events: FALLBACK_HOME_DATA.landing_events,
-    faqs: FALLBACK_HOME_DATA.faqs,
+  // Home Data State (Instantly initialized from cache if available)
+  const [homeData, setHomeData] = useState(() => {
+    const cached = getCachedHomeData();
+    return cached || {
+      stats: FALLBACK_HOME_DATA.landing_stats,
+      programs: FALLBACK_HOME_DATA.landing_programs,
+      membershipTiers: FALLBACK_HOME_DATA.membership_tiers,
+      portfolioDeals: FALLBACK_HOME_DATA.portfolio_deals,
+      teamMembers: FALLBACK_HOME_DATA.team_members,
+      events: FALLBACK_HOME_DATA.landing_events,
+      faqs: FALLBACK_HOME_DATA.faqs,
+    };
   });
 
   // Modals state
@@ -129,6 +133,7 @@ export default function HomeScreen() {
         style={styles.container}
         contentContainerStyle={styles.contentContainer}
         showsVerticalScrollIndicator={false}
+        removeClippedSubviews={Platform.OS === 'android'}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}

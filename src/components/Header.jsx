@@ -42,6 +42,17 @@ export default function Header({ onOpenMenu, onScrollToSection }) {
 
         {/* Action buttons & Menu Trigger with generous breathing room */}
         <View style={styles.actions}>
+          {isTabletOrDesktop && (
+            <TouchableOpacity
+              style={[styles.eventsButton, styles.buttonDesktop]}
+              activeOpacity={0.8}
+              onPress={() => (onScrollToSection ? onScrollToSection('events') : router.push('/events'))}
+              accessibilityLabel="View BAN events"
+            >
+              <Text style={styles.eventsText}>EVENTS</Text>
+            </TouchableOpacity>
+          )}
+
           <TouchableOpacity
             style={[
               styles.pitchButton,
@@ -76,16 +87,18 @@ export default function Header({ onOpenMenu, onScrollToSection }) {
             onPress={() => {
               if (authState.isAdmin()) {
                 router.push('/admin');
+              } else if (authState.isLoggedIn()) {
+                router.push('/investor');
               } else {
                 router.push('/login');
               }
             }}
-            accessibilityLabel="Sign in or Admin Portal"
+            accessibilityLabel="Sign in or Investor Workspace"
           >
             <Ionicons
-              name={authState.isAdmin() ? 'shield-checkmark' : 'person-outline'}
+              name={authState.isAdmin() ? 'shield-checkmark' : authState.isLoggedIn() ? 'person' : 'person-outline'}
               size={17}
-              color={authState.isAdmin() ? Colors.forest : Colors.ink}
+              color={authState.isLoggedIn() ? Colors.forest : Colors.ink}
             />
           </TouchableOpacity>
 
@@ -152,6 +165,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     flexShrink: 0,
+  },
+  eventsButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  eventsText: {
+    color: Colors.ink,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
   },
   pitchButton: {
     paddingHorizontal: 11,
