@@ -65,6 +65,8 @@ import {
   reorderAdminHomepagePortfolios,
   deleteAdminHomepagePortfolio,
   syncAdminHomepagePortfolios,
+  fetchAdminTeamAboutSection,
+  updateAdminTeamAboutSection,
 } from '../services/api';
 
 export function getViewDisplayName(key) {
@@ -420,6 +422,21 @@ export default function AdminScreen() {
   const [isDeletingPortfolio, setIsDeletingPortfolio] = useState(false);
   const [clearAllPortfoliosModalVisible, setClearAllPortfoliosModalVisible] = useState(false);
   const [isClearingAllPortfolios, setIsClearingAllPortfolios] = useState(false);
+
+  // Team About Section State
+  const [teamAboutData, setTeamAboutData] = useState(null);
+  const [teamAboutLoading, setTeamAboutLoading] = useState(false);
+  const [teamAboutSaving, setTeamAboutSaving] = useState(false);
+  const [editTeamAboutModalVisible, setEditTeamAboutModalVisible] = useState(false);
+  const [teamAboutForm, setTeamAboutForm] = useState({
+    kicker: '',
+    heading: '',
+    body_text: '',
+    image_alt: '',
+    image_badge: '',
+    image_file: null,
+    remove_image: false,
+  });
 
   // Fetch Dashboard summary data
   const loadDashboard = useCallback(async (token = authToken) => {
@@ -857,6 +874,26 @@ export default function AdminScreen() {
     [authToken]
   );
 
+  // Fetch Team About Section
+  const loadTeamAboutSection = useCallback(
+    async (token = authToken, options = {}) => {
+      if (!token) return;
+      const { silent = false } = options;
+      if (!silent) setTeamAboutLoading(true);
+      try {
+        const res = await fetchAdminTeamAboutSection(token);
+        if (res) {
+          setTeamAboutData(res);
+        }
+      } catch (err) {
+        console.log('Error loading team about section:', err);
+      } finally {
+        if (!silent) setTeamAboutLoading(false);
+      }
+    },
+    [authToken]
+  );
+
   // Handle Tab / Sidebar View Selection
   const handleTabChange = (tab) => {
     setActiveTab(tab);
@@ -874,6 +911,8 @@ export default function AdminScreen() {
       if (landingPrograms.length === 0) loadLandingPrograms(authToken);
     } else if (tab === 'homepage-portfolios') {
       if (homepagePortfolios.length === 0) loadHomepagePortfolios(authToken);
+    } else if (tab === 'team-about') {
+      loadTeamAboutSection(authToken);
     } else if (tab === 'deals') {
       if (deals.length === 0) loadDeals(authToken);
     } else if (tab === 'founder-pitches') {
@@ -892,7 +931,6 @@ export default function AdminScreen() {
       if (banWealthOrders.length === 0) loadBanWealthOrders(authToken);
     } else if (
       [
-        'team-about',
         'events',
         'startup-services',
         'team-members',
@@ -913,6 +951,7 @@ export default function AdminScreen() {
     if (activeTab === 'landing-stats') await loadLandingPageStats(authToken);
     if (activeTab === 'landing-programs') await loadLandingPrograms(authToken);
     if (activeTab === 'homepage-portfolios') await loadHomepagePortfolios(authToken);
+    if (activeTab === 'team-about') await loadTeamAboutSection(authToken);
     if (activeTab === 'deals') await loadDeals(authToken);
     if (activeTab === 'submissions' || activeTab === 'founder-pitches' || activeTab === 'angel-academy') {
       await loadSubmissions(authToken);
@@ -924,7 +963,6 @@ export default function AdminScreen() {
     if (activeTab === 'ban-wealth-orders') await loadBanWealthOrders(authToken);
     if (
       [
-        'team-about',
         'events',
         'startup-services',
         'team-members',
@@ -2639,6 +2677,144 @@ export default function AdminScreen() {
       Alert.alert('Error', 'An unexpected error occurred while clearing selections.');
     } finally {
       setIsClearingAllPortfolios(false);
+    }
+  };
+
+  // ==========================================
+  // TEAM ABOUT SECTION HANDLERS
+  // ==========================================
+  const handleOpenEditTeamAbout = () => {
+    const paragraphs = teamAboutData?.paragraphs || teamAboutData?.body || [];
+    const bodyText = Array.isArray(paragraphs)
+      ? paragraphs.join('\n\n')
+      : typeof teamAboutData?.body === 'string'
+      ? teamAboutData.body
+      : '';
+    setTeamAboutForm({
+      kicker: teamAboutData?.kicker || '',
+      heading: teamAboutData?.heading || '',
+      body_text: bodyText,
+      image_alt: teamAboutData?.image_alt || '',
+      image_badge: teamAboutData?.image_badge || '',
+      image_file: null,
+      remove_image: false,
+    });
+    setEditTeamAboutModalVisible(true);
+  };
+
+  const handlePickTeamAboutImage = async () => {
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        type: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+        copyToCacheDirectory: true,
+      });
+
+      if (!res.canceled && res.assets && res.assets.length > 0) {
+        const file = res.assets[0];
+        if (file.size && file.size > 8 * 1024 * 1024) {
+          Alert.alert(
+            'Image Too Large',
+            'The selected photo exceeds 8 MB. Please choose an image under 8 MB.'
+          );
+          return;
+        }
+        setTeamAboutForm((prev) => ({
+          ...prev,
+          image_file: file,
+          remove_image: false,
+        }));
+      }
+    } catch (err) {
+      console.log('Error picking team about photo:', err);
+      Alert.alert('Notice', 'Could not access file picker.');
+    }
+  };
+
+  const handleRemoveTeamAboutImage = () => {
+    setTeamAboutForm((prev) => ({
+      ...prev,
+      image_file: null,
+      remove_image: true,
+    }));
+  };
+
+  const handleCancelImageChange = () => {
+    setTeamAboutForm((prev) => ({
+      ...prev,
+      image_file: null,
+      remove_image: false,
+    }));
+  };
+
+  const handleSaveTeamAbout = async () => {
+    if (!authToken) return;
+    if (!teamAboutForm.kicker.trim()) {
+      Alert.alert('Validation Error', 'Kicker (section label) is required.');
+      return;
+    }
+    if (!teamAboutForm.heading.trim()) {
+      Alert.alert('Validation Error', 'Heading is required.');
+      return;
+    }
+    if (!teamAboutForm.body_text.trim()) {
+      Alert.alert('Validation Error', 'Section body text is required.');
+      return;
+    }
+
+    setTeamAboutSaving(true);
+    try {
+      let payload;
+      if (teamAboutForm.image_file) {
+        payload = new FormData();
+        payload.append('kicker', teamAboutForm.kicker.trim());
+        payload.append('heading', teamAboutForm.heading.trim());
+        payload.append('body_text', teamAboutForm.body_text.trim());
+        payload.append('image_alt', teamAboutForm.image_alt.trim());
+        payload.append('image_badge', teamAboutForm.image_badge.trim());
+        payload.append('remove_image', '0');
+
+        const file = teamAboutForm.image_file;
+        const uri = file.uri;
+        const filename = file.name || uri.split('/').pop() || 'photo.jpg';
+        const match = /\.(\w+)$/.exec(filename);
+        const type = file.mimeType || (match ? `image/${match[1]}` : 'image/jpeg');
+
+        payload.append('image', {
+          uri,
+          name: filename,
+          type,
+        });
+      } else {
+        payload = {
+          kicker: teamAboutForm.kicker.trim(),
+          heading: teamAboutForm.heading.trim(),
+          body_text: teamAboutForm.body_text.trim(),
+          image_alt: teamAboutForm.image_alt.trim(),
+          image_badge: teamAboutForm.image_badge.trim(),
+          remove_image: teamAboutForm.remove_image ? true : false,
+        };
+      }
+
+      const res = await updateAdminTeamAboutSection(authToken, payload);
+      if (res.ok) {
+        if (res.data) {
+          setTeamAboutData(res.data);
+        } else {
+          await loadTeamAboutSection(authToken, { silent: true });
+        }
+        setEditTeamAboutModalVisible(false);
+        Alert.alert('Success', 'Team About section updated successfully!');
+      } else {
+        const errorMsg = res.errors
+          ? Object.values(res.errors).flat().join('\n')
+          : res.message || 'Could not update section.';
+        Alert.alert('Update Failed', errorMsg);
+      }
+    } catch (err) {
+      console.log('Error saving team about section:', err);
+      Alert.alert('Error', 'An unexpected error occurred while saving.');
+    } finally {
+      setTeamAboutSaving(false);
     }
   };
 
@@ -5953,20 +6129,169 @@ export default function AdminScreen() {
           {/* TAB: TEAM ABOUT */}
           {activeTab === 'team-about' && (
             <View style={styles.tabContent}>
+              {/* Section Header Row */}
               <View style={styles.sectionHeaderRow}>
-                <View>
+                <View style={{ flex: 1, marginRight: 8 }}>
                   <Text style={styles.sectionHeading}>Team About Section</Text>
-                  <Text style={styles.sectionSubheading}>Mission, overview body, and branding badge</Text>
+                  <Text style={styles.sectionSubheading}>
+                    Mission, narrative paragraphs, hero photo and branding badge
+                  </Text>
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <TouchableOpacity
+                    style={styles.refreshIconBtn}
+                    onPress={() => loadTeamAboutSection(authToken)}
+                    disabled={teamAboutLoading}
+                    accessibilityLabel="Refresh team about section"
+                  >
+                    {teamAboutLoading ? (
+                      <ActivityIndicator size="small" color={Colors.forest} />
+                    ) : (
+                      <Ionicons name="refresh" size={18} color={Colors.forest} />
+                    )}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.teamAboutEditBtn}
+                    onPress={handleOpenEditTeamAbout}
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="create-outline" size={16} color="#FFFFFF" />
+                    <Text style={styles.teamAboutEditBtnText}>Edit Section</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
 
-              <View style={styles.cmsCard}>
-                <Text style={styles.eyebrow}>ABOUT BANGLADESH ANGELS</Text>
-                <Text style={styles.cmsCardTitle}>Capital. Community. Conviction.</Text>
-                <Text style={styles.cmsCardDesc}>
-                  BAN is the country’s first and largest angel-investing platform, connecting visionary entrepreneurs with seasoned investors and fostering an ecosystem that drives innovation and economic growth.
-                </Text>
+              {/* Status & Overview Card */}
+              <View style={styles.teamAboutOverviewCard}>
+                <View style={styles.teamAboutHeaderPillsRow}>
+                  <View style={styles.teamAboutLivePill}>
+                    <View style={styles.teamAboutLiveDot} />
+                    <Text style={styles.teamAboutLiveText}>Live on BAN Website</Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={handleOpenEditTeamAbout}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#0A5554' }}>
+                      Edit Content &rarr;
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Quick stats grid */}
+                <View style={styles.teamAboutMetaGrid}>
+                  <View style={styles.teamAboutMetaItem}>
+                    <Text style={styles.teamAboutMetaLabel}>Paragraphs</Text>
+                    <Text style={styles.teamAboutMetaValue}>
+                      {teamAboutData?.paragraphs?.length || (Array.isArray(teamAboutData?.body) ? teamAboutData.body.length : 1)} blocks
+                    </Text>
+                  </View>
+                  <View style={styles.teamAboutMetaDivider} />
+                  <View style={styles.teamAboutMetaItem}>
+                    <Text style={styles.teamAboutMetaLabel}>Hero Photo</Text>
+                    <Text style={styles.teamAboutMetaValue}>
+                      {teamAboutData?.image_url ? 'Configured' : 'Default Asset'}
+                    </Text>
+                  </View>
+                  <View style={styles.teamAboutMetaDivider} />
+                  <View style={styles.teamAboutMetaItem}>
+                    <Text style={styles.teamAboutMetaLabel}>Photo Badge</Text>
+                    <Text style={styles.teamAboutMetaValue} numberOfLines={1}>
+                      {teamAboutData?.image_badge ? 'Active' : 'None'}
+                    </Text>
+                  </View>
+                </View>
               </View>
+
+              {/* LIVE SECTION PREVIEW */}
+              <View style={styles.teamAboutPreviewBox}>
+                <View style={styles.teamAboutPreviewTop}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Ionicons name="eye-outline" size={16} color="#0A5554" />
+                    <Text style={styles.teamAboutPreviewTopTitle}>LIVE SECTION PREVIEW</Text>
+                  </View>
+                  <View style={styles.teamAboutPreviewTopBadge}>
+                    <Text style={styles.teamAboutPreviewTopBadgeText}>bdangels.co/team</Text>
+                  </View>
+                </View>
+
+                {teamAboutLoading && !teamAboutData ? (
+                  <View style={styles.teamAboutEmptyState}>
+                    <ActivityIndicator size="small" color="#0A5554" />
+                    <Text style={styles.teamAboutEmptyStateText}>Loading section data...</Text>
+                  </View>
+                ) : (
+                  <>
+                    {/* Eyebrow / Kicker */}
+                    {teamAboutData?.kicker ? (
+                      <View style={styles.teamAboutKickerPill}>
+                        <Text style={styles.teamAboutKickerText}>{teamAboutData.kicker}</Text>
+                      </View>
+                    ) : null}
+
+                    {/* Heading */}
+                    <Text style={styles.teamAboutHeadingText}>
+                      {teamAboutData?.heading || 'What is Bangladesh Angels Network?'}
+                    </Text>
+
+                    {/* Body Paragraphs */}
+                    <View style={styles.teamAboutParagraphsWrap}>
+                      {(teamAboutData?.paragraphs || (Array.isArray(teamAboutData?.body) ? teamAboutData.body : [teamAboutData?.body || 'BAN is the country’s first and largest angel-investing platform, connecting visionary entrepreneurs with seasoned investors and fostering an ecosystem that drives innovation and economic growth.'])).map((para, pIdx) => (
+                        <View key={pIdx} style={styles.teamAboutParagraphCard}>
+                          <Text style={styles.teamAboutParagraphText}>{para}</Text>
+                        </View>
+                      ))}
+                    </View>
+
+                    {/* Hero Image Card */}
+                    <View style={styles.teamAboutHeroImageCard}>
+                      <Image
+                        source={{
+                          uri:
+                            teamAboutData?.image_url ||
+                            'https://bdangels.co/DSC00467.jpg',
+                        }}
+                        style={styles.teamAboutHeroImg}
+                        resizeMode="cover"
+                      />
+                      {teamAboutData?.image_badge ? (
+                        <View style={styles.teamAboutHeroBadgeOverlay}>
+                          <Ionicons name="sparkles" size={12} color="#FFFFFF" />
+                          <Text style={styles.teamAboutHeroBadgeText}>
+                            {teamAboutData.image_badge}
+                          </Text>
+                        </View>
+                      ) : null}
+                      <View style={styles.teamAboutHeroAltBar}>
+                        <Ionicons name="information-circle-outline" size={14} color="#64748B" />
+                        <Text style={styles.teamAboutHeroAltText} numberOfLines={1}>
+                          Alt text: &ldquo;{teamAboutData?.image_alt || 'BAN Community'}&rdquo;
+                        </Text>
+                      </View>
+                    </View>
+                  </>
+                )}
+              </View>
+
+              {/* View on website link card */}
+              <TouchableOpacity
+                style={styles.statsExternalLinkCard}
+                onPress={() => {
+                  Linking.openURL('https://bdangels.co/team').catch(() => {
+                    Alert.alert('Notice', 'Could not open https://bdangels.co/team');
+                  });
+                }}
+                activeOpacity={0.8}
+              >
+                <View style={styles.statsExternalLinkLeft}>
+                  <Ionicons name="globe-outline" size={20} color="#0A5554" />
+                  <View>
+                    <Text style={styles.statsExternalLinkTitle}>View section on live site</Text>
+                    <Text style={styles.statsExternalLinkDesc}>bdangels.co/team About section</Text>
+                  </View>
+                </View>
+                <Ionicons name="open-outline" size={18} color="#0A5554" />
+              </TouchableOpacity>
             </View>
           )}
 
@@ -9687,6 +10012,249 @@ export default function AdminScreen() {
             </View>
           </View>
         </View>
+      </Modal>
+
+      {/* EDIT TEAM ABOUT SECTION MODAL */}
+      <Modal
+        visible={editTeamAboutModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => !teamAboutSaving && setEditTeamAboutModalVisible(false)}
+      >
+        <SafeAreaView style={styles.editModalSafeArea}>
+          <View style={styles.editModalContainer}>
+            {/* Modal Header */}
+            <View style={styles.editModalHeader}>
+              <View style={styles.editModalHeaderLeft}>
+                <View style={styles.editModalIconWrap}>
+                  <Ionicons name="information-circle" size={20} color="#0A5554" />
+                </View>
+                <View>
+                  <Text style={styles.editModalTitle}>Edit Team About Section</Text>
+                  <Text style={styles.editModalSubtitle}>
+                    Update kicker, heading, narrative, and hero photo
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                style={styles.modalCloseBtn}
+                onPress={() => !teamAboutSaving && setEditTeamAboutModalVisible(false)}
+                disabled={teamAboutSaving}
+                accessibilityLabel="Close editor"
+              >
+                <Ionicons name="close" size={22} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Modal Form ScrollView */}
+            <ScrollView
+              style={styles.editModalScrollView}
+              contentContainerStyle={styles.editModalFormContent}
+              keyboardShouldPersistTaps="handled"
+            >
+              {/* Field 1: Kicker */}
+              <View style={styles.formField}>
+                <Text style={styles.formLabel}>Kicker / Section Label *</Text>
+                <TextInput
+                  style={styles.formInput}
+                  value={teamAboutForm.kicker}
+                  onChangeText={(text) =>
+                    setTeamAboutForm((prev) => ({ ...prev, kicker: text }))
+                  }
+                  placeholder="e.g. ABOUT BANGLADESH ANGELS"
+                  placeholderTextColor="#94A3B8"
+                  maxLength={160}
+                />
+                <Text style={styles.editorHelperText}>
+                  Small uppercase eyebrow label shown above the main heading.
+                </Text>
+              </View>
+
+              {/* Field 2: Heading */}
+              <View style={styles.formField}>
+                <Text style={styles.formLabel}>Section Heading *</Text>
+                <TextInput
+                  style={styles.formInput}
+                  value={teamAboutForm.heading}
+                  onChangeText={(text) =>
+                    setTeamAboutForm((prev) => ({ ...prev, heading: text }))
+                  }
+                  placeholder="e.g. What is Bangladesh Angels Network?"
+                  placeholderTextColor="#94A3B8"
+                  maxLength={255}
+                />
+                <Text style={styles.editorHelperText}>
+                  Main title of the about section.
+                </Text>
+              </View>
+
+              {/* Field 3: Body Text (Paragraphs) */}
+              <View style={styles.formField}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={styles.formLabel}>Section Body Paragraphs *</Text>
+                  <Text style={styles.teamAboutCharCount}>
+                    {teamAboutForm.body_text.length} / 12,000
+                  </Text>
+                </View>
+                <TextInput
+                  style={[styles.formInput, { minHeight: 180, textAlignVertical: 'top', paddingTop: 10 }]}
+                  value={teamAboutForm.body_text}
+                  onChangeText={(text) =>
+                    setTeamAboutForm((prev) => ({ ...prev, body_text: text }))
+                  }
+                  placeholder={"Type or paste your narrative here.\n\nTo create separate paragraphs, leave a blank line between them (press Enter twice)."}
+                  placeholderTextColor="#94A3B8"
+                  multiline
+                  numberOfLines={8}
+                  maxLength={12000}
+                />
+                <Text style={styles.editorHelperText}>
+                  Separate paragraphs with an empty line. Each paragraph is rendered in a dedicated block.
+                </Text>
+              </View>
+
+              {/* Field 4: Hero Photo */}
+              <View style={styles.formField}>
+                <Text style={styles.formLabel}>Hero Photo</Text>
+                <View style={styles.teamAboutPhotoPickerBox}>
+                  {teamAboutForm.image_file ? (
+                    <View style={styles.pubPickedFileCard}>
+                      <View style={[styles.pubPickedFileIconWrap, { backgroundColor: '#E6F4F1' }]}>
+                        <Ionicons name="image" size={20} color="#0A5554" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.pubPickedFileName} numberOfLines={1}>
+                          {teamAboutForm.image_file.name || 'Selected image'}
+                        </Text>
+                        <Text style={styles.pubPickedFileSize}>
+                          {teamAboutForm.image_file.size
+                            ? `${(teamAboutForm.image_file.size / (1024 * 1024)).toFixed(2)} MB • Ready to upload`
+                            : 'New image chosen'}
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        style={styles.pubChangeFileBtn}
+                        onPress={handleCancelImageChange}
+                      >
+                        <Ionicons name="close" size={14} color="#0A5554" />
+                        <Text style={styles.pubChangeFileText}>Clear</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : teamAboutForm.remove_image ? (
+                    <View style={styles.teamAboutPhotoRemovedNotice}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+                        <Ionicons name="alert-circle" size={16} color="#D97706" />
+                        <Text style={styles.teamAboutPhotoRemovedText}>
+                          Photo will be removed and reset to default asset.
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        style={styles.teamAboutPhotoUndoBtn}
+                        onPress={handleCancelImageChange}
+                      >
+                        <Text style={styles.teamAboutPhotoUndoBtnText}>Undo</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <View style={styles.teamAboutPhotoPickerRow}>
+                      <Image
+                        source={{
+                          uri:
+                            teamAboutData?.image_url ||
+                            'https://bdangels.co/DSC00467.jpg',
+                        }}
+                        style={styles.teamAboutPhotoThumb}
+                        resizeMode="cover"
+                      />
+                      <View style={styles.teamAboutPhotoActionsCol}>
+                        <TouchableOpacity
+                          style={styles.teamAboutPhotoChooseBtn}
+                          onPress={handlePickTeamAboutImage}
+                        >
+                          <Ionicons name="cloud-upload-outline" size={15} color="#0A5554" />
+                          <Text style={styles.teamAboutPhotoChooseBtnText}>
+                            {teamAboutData?.image_url ? 'Replace Photo' : 'Upload Photo'}
+                          </Text>
+                        </TouchableOpacity>
+                        {teamAboutData?.image_url ? (
+                          <TouchableOpacity
+                            style={styles.teamAboutPhotoRemoveBtn}
+                            onPress={handleRemoveTeamAboutImage}
+                          >
+                            <Ionicons name="trash-outline" size={14} color="#DC2626" />
+                            <Text style={styles.teamAboutPhotoRemoveBtnText}>Remove Custom Photo</Text>
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+                    </View>
+                  )}
+                </View>
+                <Text style={styles.editorHelperText}>
+                  Recommended dimensions: 1200x800px. Max 8 MB (JPEG, PNG, WebP).
+                </Text>
+              </View>
+
+              {/* Field 5: Floating Image Badge */}
+              <View style={styles.formField}>
+                <Text style={styles.formLabel}>Floating Photo Badge</Text>
+                <TextInput
+                  style={styles.formInput}
+                  value={teamAboutForm.image_badge}
+                  onChangeText={(text) =>
+                    setTeamAboutForm((prev) => ({ ...prev, image_badge: text }))
+                  }
+                  placeholder="e.g. Capital. Community. Conviction."
+                  placeholderTextColor="#94A3B8"
+                  maxLength={160}
+                />
+                <Text style={styles.editorHelperText}>
+                  Tagline pill overlaid on the corner of the hero photo.
+                </Text>
+              </View>
+
+              {/* Field 6: Image Alt Text */}
+              <View style={styles.formField}>
+                <Text style={styles.formLabel}>Photo Alt Text (Accessibility)</Text>
+                <TextInput
+                  style={styles.formInput}
+                  value={teamAboutForm.image_alt}
+                  onChangeText={(text) =>
+                    setTeamAboutForm((prev) => ({ ...prev, image_alt: text }))
+                  }
+                  placeholder="e.g. Bangladesh Angels Network leadership and ecosystem community"
+                  placeholderTextColor="#94A3B8"
+                  maxLength={255}
+                />
+                <Text style={styles.editorHelperText}>
+                  Descriptive text for accessibility screen readers.
+                </Text>
+              </View>
+            </ScrollView>
+
+            {/* Modal Footer */}
+            <View style={styles.editModalFooter}>
+              <TouchableOpacity
+                style={styles.editModalCancelBtn}
+                onPress={() => !teamAboutSaving && setEditTeamAboutModalVisible(false)}
+                disabled={teamAboutSaving}
+              >
+                <Text style={styles.editModalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.editModalSaveBtn}
+                onPress={handleSaveTeamAbout}
+                disabled={teamAboutSaving}
+                activeOpacity={0.85}
+              >
+                {teamAboutSaving ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.editModalSaveBtnText}>Save Changes</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </SafeAreaView>
       </Modal>
     </SafeAreaView>
   );
@@ -13662,5 +14230,318 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+
+  // Team About Section Styles
+  teamAboutOverviewCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 16,
+    ...Shadows.card,
+    gap: 12,
+  },
+  teamAboutHeaderPillsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  teamAboutLivePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: Radii.pill,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  teamAboutLiveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10B981',
+  },
+  teamAboutLiveText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#065F46',
+  },
+  teamAboutEditBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#0A5554',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  teamAboutEditBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  teamAboutMetaGrid: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  teamAboutMetaItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  teamAboutMetaLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#64748B',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  teamAboutMetaValue: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  teamAboutMetaDivider: {
+    width: 1,
+    height: 24,
+    backgroundColor: '#CBD5E1',
+  },
+  teamAboutPreviewBox: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 16,
+    ...Shadows.card,
+    gap: 14,
+  },
+  teamAboutPreviewTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  teamAboutPreviewTopTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#0A5554',
+    letterSpacing: 0.8,
+  },
+  teamAboutPreviewTopBadge: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: Radii.pill,
+  },
+  teamAboutPreviewTopBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  teamAboutKickerPill: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#E6F4F1',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: Radii.pill,
+    borderWidth: 1,
+    borderColor: '#B4E6DA',
+    marginBottom: 6,
+  },
+  teamAboutKickerText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#0A5554',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  teamAboutHeadingText: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#0F172A',
+    lineHeight: 28,
+    marginBottom: 10,
+  },
+  teamAboutParagraphsWrap: {
+    gap: 12,
+  },
+  teamAboutParagraphCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    padding: 12,
+    borderLeftWidth: 3,
+    borderLeftColor: '#0A5554',
+  },
+  teamAboutParagraphText: {
+    fontSize: 13,
+    color: '#334155',
+    lineHeight: 22,
+  },
+  teamAboutHeroImageCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    overflow: 'hidden',
+    marginTop: 6,
+  },
+  teamAboutHeroImg: {
+    width: '100%',
+    height: 200,
+    backgroundColor: '#E2E8F0',
+  },
+  teamAboutHeroBadgeOverlay: {
+    position: 'absolute',
+    bottom: 12,
+    left: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(10, 85, 84, 0.92)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: Radii.pill,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  teamAboutHeroBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.3,
+  },
+  teamAboutHeroAltBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+  },
+  teamAboutHeroAltText: {
+    fontSize: 11,
+    color: '#64748B',
+    fontStyle: 'italic',
+    flex: 1,
+  },
+  teamAboutEmptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 32,
+    gap: 8,
+  },
+  teamAboutEmptyStateText: {
+    fontSize: 13,
+    color: '#94A3B8',
+    fontWeight: '600',
+  },
+  teamAboutPhotoPickerBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 12,
+    gap: 10,
+  },
+  teamAboutPhotoPickerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  teamAboutPhotoThumb: {
+    width: 72,
+    height: 72,
+    borderRadius: 8,
+    backgroundColor: '#E2E8F0',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  teamAboutPhotoActionsCol: {
+    flex: 1,
+    gap: 6,
+  },
+  teamAboutPhotoChooseBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#E6F4F1',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#B4E6DA',
+    alignSelf: 'flex-start',
+  },
+  teamAboutPhotoChooseBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0A5554',
+  },
+  teamAboutPhotoRemoveBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#FEF2F2',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    alignSelf: 'flex-start',
+  },
+  teamAboutPhotoRemoveBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#DC2626',
+  },
+  teamAboutPhotoRemovedNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FEF3C7',
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  teamAboutPhotoRemovedText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#92400E',
+    flex: 1,
+  },
+  teamAboutPhotoUndoBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+  },
+  teamAboutPhotoUndoBtnText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#B45309',
+  },
+  teamAboutCharCount: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
   },
 });

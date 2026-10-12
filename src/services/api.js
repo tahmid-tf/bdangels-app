@@ -1186,6 +1186,56 @@ export async function syncAdminHomepagePortfolios(token, dealIdsArray) {
   return { ok: false, message: 'Could not sync homepage portfolios.' };
 }
 
+/**
+ * Fetch Team About Section from GET /api/admin/team-about-section
+ */
+export async function fetchAdminTeamAboutSection(token) {
+  try {
+    const res = await fetchAdminWithFallback('/admin/team-about-section', token);
+    if (res && res.ok) {
+      const json = await res.json();
+      return json.data || json || null;
+    }
+  } catch (err) {
+    console.log('Admin team about section fetch error:', err);
+  }
+  return null;
+}
+
+/**
+ * Update Team About Section via PUT/POST /api/admin/team-about-section
+ * Supports JSON payload or FormData (for uploading new section photo)
+ */
+export async function updateAdminTeamAboutSection(token, payload) {
+  try {
+    const isFormData = payload instanceof FormData;
+    const options = {
+      method: 'POST',
+    };
+
+    if (isFormData) {
+      options.body = payload;
+    } else {
+      options.headers = { 'Content-Type': 'application/json' };
+      options.body = JSON.stringify(payload);
+    }
+
+    const res = await fetchAdminWithFallback('/admin/team-about-section', token, options);
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        data: json.data || null,
+        message: json.message || (res.ok ? 'Team About section updated.' : 'Failed to update section.'),
+        errors: json.errors || null,
+      };
+    }
+  } catch (err) {
+    console.log('Admin update team about section error:', err);
+  }
+  return { ok: false, message: 'Could not connect to server.' };
+}
+
 
 // Embedded fallback data directly from live Laravel backend for 100% resilient rendering
 export const FALLBACK_HOME_DATA = {
