@@ -495,6 +495,7 @@ export default function AdminScreen() {
     to: 0,
   });
   const mailSearchTimeoutRef = useRef(null);
+  const [mailRecipientPage, setMailRecipientPage] = useState(1);
 
   // Email Campaign Compose & Log Modals State
   const [composeCampaignModalVisible, setComposeCampaignModalVisible] = useState(false);
@@ -5982,11 +5983,12 @@ export default function AdminScreen() {
   };
 
   // ==========================================
-  // EMAIL CAMPAIGNS HANDLERS
+  // EMAIL CAMPAIGNS HANDLERS & PAGINATION
   // ==========================================
 
   const handleMailSearchChange = (text) => {
     setMailSearch(text);
+    setMailRecipientPage(1);
     if (mailSearchTimeoutRef.current) {
       clearTimeout(mailSearchTimeoutRef.current);
     }
@@ -6000,6 +6002,7 @@ export default function AdminScreen() {
       clearTimeout(mailSearchTimeoutRef.current);
     }
     setMailSearch('');
+    setMailRecipientPage(1);
     loadMailCampaigns(authToken, '', mailAccountStatusFilter, mailPaymentStatusFilter, 1);
   };
 
@@ -6008,13 +6011,39 @@ export default function AdminScreen() {
       clearTimeout(mailSearchTimeoutRef.current);
     }
     setMailAccountStatusFilter(status);
+    setMailRecipientPage(1);
     loadMailCampaigns(authToken, mailSearch, status, mailPaymentStatusFilter, 1);
   };
 
   const handleMailPageChange = (newPage) => {
-    if (newPage < 1 || newPage > mailPagination.lastPage) return;
+    if (newPage < 1 || newPage > (mailPagination.lastPage || 1)) return;
     loadMailCampaigns(authToken, mailSearch, mailAccountStatusFilter, mailPaymentStatusFilter, newPage);
   };
+
+  const filteredMailRecipients = useMemo(() => {
+    return mailRecipients
+      .filter((rec) => {
+        if (mailAccountStatusFilter === 'free') return rec.account_status === 'free';
+        if (mailAccountStatusFilter === 'paid') return rec.account_status !== 'free';
+        return true;
+      })
+      .filter((rec) => {
+        if (!mailSearch.trim()) return true;
+        const q = mailSearch.toLowerCase();
+        return (
+          (rec.name && rec.name.toLowerCase().includes(q)) ||
+          (rec.email && rec.email.toLowerCase().includes(q)) ||
+          (rec.phone && rec.phone.toLowerCase().includes(q))
+        );
+      });
+  }, [mailRecipients, mailAccountStatusFilter, mailSearch]);
+
+  const MAIL_RECIPIENTS_PER_PAGE = 15;
+  const totalMailRecipientPages = Math.max(1, Math.ceil(filteredMailRecipients.length / MAIL_RECIPIENTS_PER_PAGE));
+  const paginatedMailRecipients = useMemo(() => {
+    const startIndex = (mailRecipientPage - 1) * MAIL_RECIPIENTS_PER_PAGE;
+    return filteredMailRecipients.slice(startIndex, startIndex + MAIL_RECIPIENTS_PER_PAGE);
+  }, [filteredMailRecipients, mailRecipientPage]);
 
   const handleOpenComposeCampaign = () => {
     setComposeFormData({
@@ -13150,6 +13179,14 @@ export default function AdminScreen() {
                         </View>
                       )}
 
+                      {mailCampaignLogs.length > 0 && (
+                        <View style={styles.recordCountRow}>
+                          <Text style={styles.recordCountText}>
+                            Showing {(mailPagination.currentPage - 1) * 15 + 1}–{Math.min(mailPagination.currentPage * 15, mailPagination.total || mailCampaignLogs.length)} of {mailPagination.total || mailCampaignLogs.length} campaigns
+                          </Text>
+                        </View>
+                      )}
+
                       {mailCampaignLogs.map((log, idx) => {
                         const isTest = log.send_mode === 'test';
                         const sentDateStr = log.created_at
@@ -13248,7 +13285,7 @@ export default function AdminScreen() {
                       })}
 
                       {/* Pagination Bar for logs */}
-                      {mailPagination.lastPage > 1 && (
+                      {mailCampaignLogs.length > 0 && (
                         <View style={styles.paginationContainer}>
                           <TouchableOpacity
                             style={[
@@ -13275,22 +13312,22 @@ export default function AdminScreen() {
 
                           <View style={styles.paginationInfoBox}>
                             <Text style={styles.paginationInfoText}>
-                              Page {mailPagination.currentPage} of {mailPagination.lastPage}
+                              Page {mailPagination.currentPage} of {mailPagination.lastPage || 1}
                             </Text>
                           </View>
 
                           <TouchableOpacity
                             style={[
                               styles.paginationBtn,
-                              mailPagination.currentPage >= mailPagination.lastPage && styles.paginationBtnDisabled,
+                              mailPagination.currentPage >= (mailPagination.lastPage || 1) && styles.paginationBtnDisabled,
                             ]}
                             onPress={() => handleMailPageChange(mailPagination.currentPage + 1)}
-                            disabled={mailPagination.currentPage >= mailPagination.lastPage || mailCampaignsLoading}
+                            disabled={mailPagination.currentPage >= (mailPagination.lastPage || 1) || mailCampaignsLoading}
                           >
                             <Text
                               style={[
                                 styles.paginationBtnText,
-                                mailPagination.currentPage >= mailPagination.lastPage && styles.paginationBtnTextDisabled,
+                                mailPagination.currentPage >= (mailPagination.lastPage || 1) && styles.paginationBtnTextDisabled,
                               ]}
                             >
                               Next
@@ -13298,7 +13335,7 @@ export default function AdminScreen() {
                             <Ionicons
                               name="chevron-forward"
                               size={16}
-                              color={mailPagination.currentPage >= mailPagination.lastPage ? '#9CA3AF' : '#0A5554'}
+                              color={mailPagination.currentPage >= (mailPagination.lastPage || 1) ? '#9CA3AF' : '#0A5554'}
                             />
                           </TouchableOpacity>
                         </View>
@@ -13367,8 +13404,17 @@ export default function AdminScreen() {
                     })}
                   </ScrollView>
 
+                  {/* Summary count row */}
+                  {filteredMailRecipients.length > 0 && (
+                    <View style={styles.recordCountRow}>
+                      <Text style={styles.recordCountText}>
+                        Showing {(mailRecipientPage - 1) * MAIL_RECIPIENTS_PER_PAGE + 1}–{Math.min(mailRecipientPage * MAIL_RECIPIENTS_PER_PAGE, filteredMailRecipients.length)} of {filteredMailRecipients.length} recipients
+                      </Text>
+                    </View>
+                  )}
+
                   {/* Recipients List */}
-                  {mailRecipients.length === 0 ? (
+                  {filteredMailRecipients.length === 0 ? (
                     <View style={styles.emptyState}>
                       <Ionicons name="people-outline" size={44} color={Colors.mutedLight} />
                       <Text style={styles.emptyTitle}>No Recipients Found</Text>
@@ -13378,76 +13424,126 @@ export default function AdminScreen() {
                     </View>
                   ) : (
                     <View style={styles.cardsList}>
-                      {mailRecipients
-                        .filter((rec) => {
-                          if (mailAccountStatusFilter === 'free') return rec.account_status === 'free';
-                          if (mailAccountStatusFilter === 'paid') return rec.account_status !== 'free';
-                          return true;
-                        })
-                        .filter((rec) => {
-                          if (!mailSearch.trim()) return true;
-                          const q = mailSearch.toLowerCase();
-                          return (
-                            (rec.name && rec.name.toLowerCase().includes(q)) ||
-                            (rec.email && rec.email.toLowerCase().includes(q)) ||
-                            (rec.phone && rec.phone.toLowerCase().includes(q))
-                          );
-                        })
-                        .slice(0, 50)
-                        .map((rec, idx) => {
-                          const initial = (rec.name || 'M').charAt(0).toUpperCase();
-                          const isPaid = rec.account_status !== 'free';
+                      {paginatedMailRecipients.map((rec, idx) => {
+                        const initial = (rec.name || 'M').charAt(0).toUpperCase();
+                        const isPaid = rec.account_status !== 'free';
 
-                          return (
-                            <View key={`rec-${rec.id || idx}`} style={styles.recipientCard}>
-                              <View style={styles.recipientAvatarCircle}>
-                                <Text style={styles.recipientAvatarText}>{initial}</Text>
-                              </View>
-                              <View style={{ flex: 1 }}>
-                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                                  <Text style={styles.recipientName}>{rec.name || 'Anonymous'}</Text>
-                                  <View
+                        return (
+                          <View key={`rec-${rec.id || idx}`} style={styles.recipientCard}>
+                            <View style={styles.recipientAvatarCircle}>
+                              <Text style={styles.recipientAvatarText}>{initial}</Text>
+                            </View>
+                            <View style={{ flex: 1 }}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                <Text style={styles.recipientName}>{rec.name || 'Anonymous'}</Text>
+                                {Boolean(rec.is_verified) && (
+                                  <Ionicons name="checkmark-circle" size={13} color="#0284C7" />
+                                )}
+                                <View
+                                  style={[
+                                    styles.recipientTierBadge,
+                                    isPaid ? styles.recipientTierPaid : styles.recipientTierFree,
+                                  ]}
+                                >
+                                  <Text
                                     style={[
-                                      styles.recipientTierBadge,
-                                      isPaid ? styles.recipientTierPaid : styles.recipientTierFree,
+                                      styles.recipientTierBadgeText,
+                                      isPaid ? { color: '#065F46' } : { color: '#475569' },
                                     ]}
                                   >
-                                    <Text
-                                      style={[
-                                        styles.recipientTierBadgeText,
-                                        isPaid ? { color: '#065F46' } : { color: '#475569' },
-                                      ]}
-                                    >
-                                      {isPaid ? 'PAID' : 'FREE'}
-                                    </Text>
-                                  </View>
+                                    {isPaid ? 'PAID ANGEL' : 'FREE MEMBER'}
+                                  </Text>
                                 </View>
+                              </View>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                                <Ionicons name="mail-outline" size={11} color="#64748B" />
                                 <Text style={styles.recipientEmail} numberOfLines={1}>
                                   {rec.email || 'No email'}
                                 </Text>
-                                {Boolean(rec.phone) && (
-                                  <Text style={styles.recipientPhone}>{rec.phone}</Text>
-                                )}
                               </View>
-                              <TouchableOpacity
-                                style={styles.recipientDirectBtn}
-                                onPress={() => {
-                                  setComposeFormData({
-                                    subject: '',
-                                    message: '',
-                                    send_mode: 'test',
-                                    preview_email: rec.email || '',
-                                    target_type: 'all',
-                                  });
-                                  setComposeCampaignModalVisible(true);
-                                }}
-                                activeOpacity={0.7}
-                              >
-                                <Ionicons name="mail-outline" size={16} color="#0A5554" />
-                              </TouchableOpacity>
+                              {Boolean(rec.phone) && (
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 1 }}>
+                                  <Ionicons name="call-outline" size={10} color="#94A3B8" />
+                                  <Text style={styles.recipientPhone}>{rec.phone}</Text>
+                                </View>
+                              )}
                             </View>
-                          );
-                        })}
+                            <TouchableOpacity
+                              style={styles.recipientDirectBtn}
+                              onPress={() => {
+                                setComposeFormData({
+                                  subject: '',
+                                  message: '',
+                                  send_mode: 'test',
+                                  preview_email: rec.email || '',
+                                  target_type: 'all',
+                                });
+                                setComposeCampaignModalVisible(true);
+                              }}
+                              activeOpacity={0.7}
+                            >
+                              <Ionicons name="paper-plane-outline" size={15} color="#0A5554" />
+                            </TouchableOpacity>
+                          </View>
+                        );
+                      })}
+
+                      {/* Pagination Bar for Recipients */}
+                      {totalMailRecipientPages > 1 && (
+                        <View style={styles.paginationContainer}>
+                          <TouchableOpacity
+                            style={[
+                              styles.paginationBtn,
+                              mailRecipientPage <= 1 && styles.paginationBtnDisabled,
+                            ]}
+                            onPress={() => setMailRecipientPage((p) => Math.max(1, p - 1))}
+                            disabled={mailRecipientPage <= 1}
+                          >
+                            <Ionicons
+                              name="chevron-back"
+                              size={16}
+                              color={mailRecipientPage <= 1 ? '#9CA3AF' : '#0A5554'}
+                            />
+                            <Text
+                              style={[
+                                styles.paginationBtnText,
+                                mailRecipientPage <= 1 && styles.paginationBtnTextDisabled,
+                              ]}
+                            >
+                              Prev
+                            </Text>
+                          </TouchableOpacity>
+
+                          <View style={styles.paginationInfoBox}>
+                            <Text style={styles.paginationInfoText}>
+                              Page {mailRecipientPage} of {totalMailRecipientPages}
+                            </Text>
+                          </View>
+
+                          <TouchableOpacity
+                            style={[
+                              styles.paginationBtn,
+                              mailRecipientPage >= totalMailRecipientPages && styles.paginationBtnDisabled,
+                            ]}
+                            onPress={() => setMailRecipientPage((p) => Math.min(totalMailRecipientPages, p + 1))}
+                            disabled={mailRecipientPage >= totalMailRecipientPages}
+                          >
+                            <Text
+                              style={[
+                                styles.paginationBtnText,
+                                mailRecipientPage >= totalMailRecipientPages && styles.paginationBtnTextDisabled,
+                              ]}
+                            >
+                              Next
+                            </Text>
+                            <Ionicons
+                              name="chevron-forward"
+                              size={16}
+                              color={mailRecipientPage >= totalMailRecipientPages ? '#9CA3AF' : '#0A5554'}
+                            />
+                          </TouchableOpacity>
+                        </View>
+                      )}
                     </View>
                   )}
                 </View>
@@ -22247,9 +22343,9 @@ export default function AdminScreen() {
                 </View>
 
                 {/* Review Notes Input */}
-                <Text style={[styles.editInputLabel, { marginTop: 14 }]}>Internal Review Note</Text>
+                <Text style={styles.composeLabel}>Internal Review Note</Text>
                 <TextInput
-                  style={[styles.editTextInput, { height: 90, textAlignVertical: 'top', paddingTop: 10 }]}
+                  style={[styles.composeTextArea, { height: 90, minHeight: 90, textAlignVertical: 'top', paddingTop: 10 }]}
                   multiline
                   numberOfLines={3}
                   placeholder="Enter compliance notes, bank voucher confirmation, or rejection reason..."
@@ -22260,24 +22356,24 @@ export default function AdminScreen() {
               </View>
 
               {/* Action Buttons */}
-              <View style={styles.editActionRow}>
+              <View style={styles.composeBtnRow}>
                 <TouchableOpacity
-                  style={styles.editCancelBtn}
+                  style={styles.composeCancelBtn}
                   onPress={() => setViewWealthOrderModalVisible(false)}
                   disabled={updatingWealthOrderStatus}
                 >
-                  <Text style={styles.editCancelBtnText}>Cancel</Text>
+                  <Text style={styles.composeCancelBtnText}>Cancel</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={[styles.editSaveBtn, { backgroundColor: '#0A5554' }]}
+                  style={[styles.composeSubmitBtn, { backgroundColor: '#0A5554' }]}
                   onPress={() => handleUpdateWealthOrderStatus()}
                   disabled={updatingWealthOrderStatus}
                 >
                   {updatingWealthOrderStatus ? (
                     <ActivityIndicator size="small" color="#FFFFFF" />
                   ) : (
-                    <Text style={styles.editSaveBtnText}>Save Status & Note</Text>
+                    <Text style={styles.composeSubmitBtnText}>Save Status & Note</Text>
                   )}
                 </TouchableOpacity>
               </View>
@@ -22330,59 +22426,79 @@ export default function AdminScreen() {
               showsVerticalScrollIndicator={false}
             >
               {/* Send Mode Toggle: Live Broadcast vs Test Preview */}
-              <Text style={styles.editInputLabel}>Broadcast Delivery Mode</Text>
-              <View style={styles.mailModeSwitchRow}>
+              <Text style={styles.composeLabel}>Broadcast Delivery Mode</Text>
+              <View style={styles.composeModeCardsRow}>
                 <TouchableOpacity
                   style={[
-                    styles.mailModeSwitchBtn,
-                    composeFormData.send_mode === 'live' && styles.mailModeSwitchBtnActiveLive,
+                    styles.composeModeCard,
+                    composeFormData.send_mode === 'live' && styles.composeModeCardActive,
                   ]}
                   onPress={() => setComposeFormData((prev) => ({ ...prev, send_mode: 'live' }))}
                   activeOpacity={0.8}
                 >
-                  <Ionicons
-                    name="paper-plane-outline"
-                    size={16}
-                    color={composeFormData.send_mode === 'live' ? '#065F46' : '#64748B'}
-                  />
+                  <View style={styles.composeModeCardTop}>
+                    <Ionicons
+                      name="paper-plane"
+                      size={18}
+                      color={composeFormData.send_mode === 'live' ? '#0A5554' : '#64748B'}
+                    />
+                    <Ionicons
+                      name={composeFormData.send_mode === 'live' ? 'radio-button-on' : 'radio-button-off'}
+                      size={16}
+                      color={composeFormData.send_mode === 'live' ? '#0A5554' : '#94A3B8'}
+                    />
+                  </View>
                   <Text
                     style={[
-                      styles.mailModeSwitchText,
-                      composeFormData.send_mode === 'live' && { color: '#065F46', fontWeight: '800' },
+                      styles.composeModeCardTitle,
+                      composeFormData.send_mode === 'live' && { color: '#0A5554' },
                     ]}
                   >
                     Live Broadcast
+                  </Text>
+                  <Text style={styles.composeModeCardDesc}>
+                    Dispatch to members
                   </Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
                   style={[
-                    styles.mailModeSwitchBtn,
-                    composeFormData.send_mode === 'test' && styles.mailModeSwitchBtnActiveTest,
+                    styles.composeModeCard,
+                    composeFormData.send_mode === 'test' && styles.composeModeCardActiveTest,
                   ]}
                   onPress={() => setComposeFormData((prev) => ({ ...prev, send_mode: 'test' }))}
                   activeOpacity={0.8}
                 >
-                  <Ionicons
-                    name="flask-outline"
-                    size={16}
-                    color={composeFormData.send_mode === 'test' ? '#1E40AF' : '#64748B'}
-                  />
+                  <View style={styles.composeModeCardTop}>
+                    <Ionicons
+                      name="flask"
+                      size={18}
+                      color={composeFormData.send_mode === 'test' ? '#0284C7' : '#64748B'}
+                    />
+                    <Ionicons
+                      name={composeFormData.send_mode === 'test' ? 'radio-button-on' : 'radio-button-off'}
+                      size={16}
+                      color={composeFormData.send_mode === 'test' ? '#0284C7' : '#94A3B8'}
+                    />
+                  </View>
                   <Text
                     style={[
-                      styles.mailModeSwitchText,
-                      composeFormData.send_mode === 'test' && { color: '#1E40AF', fontWeight: '800' },
+                      styles.composeModeCardTitle,
+                      composeFormData.send_mode === 'test' && { color: '#0284C7' },
                     ]}
                   >
-                    Send Test Preview
+                    Test Preview
+                  </Text>
+                  <Text style={styles.composeModeCardDesc}>
+                    Send single draft
                   </Text>
                 </TouchableOpacity>
               </View>
 
               {/* If Live: Target Audience Selector */}
               {composeFormData.send_mode === 'live' ? (
-                <View style={{ marginTop: 12 }}>
-                  <Text style={styles.editInputLabel}>Recipient Target Group</Text>
+                <View style={{ marginTop: 14 }}>
+                  <Text style={styles.composeLabel}>Recipient Target Group</Text>
                   <View style={styles.mailTargetGroupRow}>
                     {[
                       { key: 'all', label: `All Members (${mailRecipients.length})` },
@@ -22415,10 +22531,10 @@ export default function AdminScreen() {
                 </View>
               ) : (
                 /* If Test: Preview Email Input */
-                <View style={{ marginTop: 12 }}>
-                  <Text style={styles.editInputLabel}>Send Test Preview To *</Text>
+                <View style={{ marginTop: 14 }}>
+                  <Text style={styles.composeLabel}>Send Test Preview To *</Text>
                   <TextInput
-                    style={styles.editTextInput}
+                    style={styles.composeInput}
                     placeholder="e.g. your-email@bdangels.co"
                     placeholderTextColor="#94A3B8"
                     value={composeFormData.preview_email}
@@ -22431,9 +22547,9 @@ export default function AdminScreen() {
 
               {/* Subject Input */}
               <View style={{ marginTop: 14 }}>
-                <Text style={styles.editInputLabel}>Email Subject Line *</Text>
+                <Text style={styles.composeLabel}>Email Subject Line *</Text>
                 <TextInput
-                  style={styles.editTextInput}
+                  style={styles.composeInput}
                   placeholder="e.g. BDAngels Memo: New FinTech Syndicate Opportunity"
                   placeholderTextColor="#94A3B8"
                   value={composeFormData.subject}
@@ -22443,9 +22559,9 @@ export default function AdminScreen() {
 
               {/* Message Content Input */}
               <View style={{ marginTop: 14 }}>
-                <Text style={styles.editInputLabel}>Broadcast Content / Message *</Text>
+                <Text style={styles.composeLabel}>Broadcast Content / Message *</Text>
                 <TextInput
-                  style={[styles.editTextInput, { height: 160, textAlignVertical: 'top', paddingTop: 12 }]}
+                  style={styles.composeTextArea}
                   multiline
                   numberOfLines={8}
                   placeholder="Write your email body text here. You may use paragraphs and plain text formatting..."
@@ -22466,21 +22582,19 @@ export default function AdminScreen() {
               </View>
 
               {/* Buttons */}
-              <View style={[styles.editActionRow, { marginTop: 20 }]}>
+              <View style={styles.composeBtnRow}>
                 <TouchableOpacity
-                  style={styles.editCancelBtn}
+                  style={styles.composeCancelBtn}
                   onPress={() => setComposeCampaignModalVisible(false)}
                   disabled={composeSending}
                 >
-                  <Text style={styles.editCancelBtnText}>Cancel</Text>
+                  <Text style={styles.composeCancelBtnText}>Cancel</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
                   style={[
-                    styles.editSaveBtn,
-                    composeFormData.send_mode === 'test'
-                      ? { backgroundColor: '#0284C7' }
-                      : { backgroundColor: '#0A5554' },
+                    styles.composeSubmitBtn,
+                    composeFormData.send_mode === 'test' && { backgroundColor: '#0284C7', shadowColor: '#0284C7' },
                   ]}
                   onPress={handleSendCampaign}
                   disabled={composeSending}
@@ -22488,16 +22602,16 @@ export default function AdminScreen() {
                   {composeSending ? (
                     <ActivityIndicator size="small" color="#FFFFFF" />
                   ) : (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <>
                       <Ionicons
                         name={composeFormData.send_mode === 'test' ? 'flask-outline' : 'paper-plane'}
-                        size={15}
+                        size={16}
                         color="#FFFFFF"
                       />
-                      <Text style={styles.editSaveBtnText}>
+                      <Text style={styles.composeSubmitBtnText}>
                         {composeFormData.send_mode === 'test' ? 'Send Test Email' : 'Broadcast Now'}
                       </Text>
-                    </View>
+                    </>
                   )}
                 </TouchableOpacity>
               </View>
@@ -29223,6 +29337,180 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#1E293B',
     lineHeight: 19,
+  },
+
+  // Compose modal form & action styles
+  composeLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 6,
+  },
+  composeInput: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 13,
+    color: '#0F172A',
+  },
+  composeTextArea: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 13,
+    color: '#0F172A',
+    minHeight: 140,
+    textAlignVertical: 'top',
+  },
+  composeBtnRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 20,
+    marginBottom: 20,
+  },
+  composeCancelBtn: {
+    flex: 1,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  composeCancelBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  composeSubmitBtn: {
+    flex: 1.5,
+    backgroundColor: '#0A5554',
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 6,
+    shadowColor: '#0A5554',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  composeSubmitBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  composeModeCardsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 4,
+  },
+  composeModeCard: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+    gap: 4,
+  },
+  composeModeCardActive: {
+    borderColor: '#0A5554',
+    backgroundColor: '#F0FDFA',
+  },
+  composeModeCardActiveTest: {
+    borderColor: '#0284C7',
+    backgroundColor: '#F0F9FF',
+  },
+  composeModeCardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  composeModeCardTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#334155',
+  },
+  composeModeCardDesc: {
+    fontSize: 11,
+    color: '#64748B',
+    lineHeight: 15,
+  },
+  recordCountRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 6,
+    paddingHorizontal: 2,
+    marginBottom: 4,
+  },
+  recordCountText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  // Legacy aliases for edit modals
+  editInputLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 6,
+  },
+  editTextInput: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 13,
+    color: '#0F172A',
+  },
+  editActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 20,
+    marginBottom: 20,
+  },
+  editCancelBtn: {
+    flex: 1,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editCancelBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  editSaveBtn: {
+    flex: 1.5,
+    backgroundColor: '#0A5554',
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editSaveBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
 });
 
