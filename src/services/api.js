@@ -765,17 +765,155 @@ export async function updateAdminSubscriptionTiers(token, tiersPayload) {
 }
 
 /**
- * Fetch Investor Investments from GET /api/admin/investor-investments
+ * Fetch Completed Investor Investments from GET /api/admin/investor-investments
  */
-export async function fetchAdminInvestorInvestments(token) {
+export async function fetchAdminInvestorInvestments(token, params = {}) {
   try {
-    const res = await fetchAdminWithFallback('/admin/investor-investments', token);
+    const query = new URLSearchParams();
+    if (params.q) query.append('q', params.q);
+    if (params.currency && params.currency !== 'all') query.append('currency', params.currency);
+    if (params.from) query.append('from', params.from);
+    if (params.to) query.append('to', params.to);
+    if (params.page) query.append('page', String(params.page));
+    if (params.per_page) query.append('per_page', String(params.per_page));
+
+    const qs = query.toString() ? `?${query.toString()}` : '';
+    const res = await fetchAdminWithFallback(`/admin/investor-investments${qs}`, token);
     if (res && res.ok) {
       const json = await res.json();
       return json.data || json;
     }
   } catch (err) {
     console.log('Admin investor investments fetch error:', err);
+  }
+  return null;
+}
+
+/**
+ * Record a new completed investor investment via POST /api/admin/investor-investments
+ */
+export async function createAdminInvestorInvestment(token, investmentData) {
+  try {
+    const res = await fetchAdminWithFallback('/admin/investor-investments', token, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(investmentData),
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        data: json.data || json,
+        message: json.message || (res.ok ? 'Investment recorded successfully.' : 'Could not record investment.'),
+        errors: json.errors || null,
+      };
+    }
+  } catch (err) {
+    console.log('Create investor investment error:', err);
+  }
+  return { ok: false, message: 'Network error recording investment.' };
+}
+
+/**
+ * Update completed investor investment via PATCH /api/admin/investor-investments/{id}
+ */
+export async function updateAdminInvestorInvestment(token, id, investmentData) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/investor-investments/${id}`, token, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(investmentData),
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        data: json.data || json,
+        message: json.message || (res.ok ? 'Investment updated successfully.' : 'Could not update investment.'),
+        errors: json.errors || null,
+      };
+    }
+  } catch (err) {
+    console.log('Update investor investment error:', err);
+  }
+  return { ok: false, message: 'Network error updating investment.' };
+}
+
+/**
+ * Fetch single completed investor investment via GET /api/admin/investor-investments/{id}
+ */
+export async function fetchAdminInvestorInvestment(token, id) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/investor-investments/${id}`, token);
+    if (res && res.ok) {
+      const json = await res.json();
+      return json.data || json;
+    }
+  } catch (err) {
+    console.log('Admin investor investment show error:', err);
+  }
+  return null;
+}
+
+/**
+ * Delete completed investor investment via DELETE /api/admin/investor-investments/{id}
+ */
+export async function deleteAdminInvestorInvestment(token, id) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/investor-investments/${id}`, token, {
+      method: 'DELETE',
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        message: json.message || (res.ok ? 'Investment deleted successfully.' : 'Could not delete investment.'),
+      };
+    }
+  } catch (err) {
+    console.log('Delete investor investment error:', err);
+  }
+  return { ok: false, message: 'Network error deleting investment.' };
+}
+
+/**
+ * Fetch autocomplete suggestions for investor investment form from GET /api/admin/investor-investments/suggestions
+ */
+export async function fetchAdminInvestorInvestmentSuggestions(token, field, query = '') {
+  try {
+    const q = encodeURIComponent(query);
+    const res = await fetchAdminWithFallback(`/admin/investor-investments/suggestions?field=${field}&q=${q}`, token);
+    if (res && res.ok) {
+      const json = await res.json();
+      return json.data || json || [];
+    }
+  } catch (err) {
+    console.log('Investor investment suggestions error:', err);
+  }
+  return [];
+}
+
+/**
+ * Fetch Deal Investment Activity & Syndicates from GET /api/admin/investments
+ */
+export async function fetchAdminDealInvestments(token, params = {}) {
+  try {
+    const query = new URLSearchParams();
+    if (params.q) query.append('q', params.q);
+    if (params.type && params.type !== 'all') query.append('type', params.type);
+    if (params.status && params.status !== 'all') query.append('status', params.status);
+    if (params.stage && params.stage !== 'all') query.append('stage', params.stage);
+    if (params.page) query.append('page', String(params.page));
+    if (params.per_page) query.append('per_page', String(params.per_page));
+
+    const qs = query.toString() ? `?${query.toString()}` : '';
+    const res = await fetchAdminWithFallback(`/admin/investments${qs}`, token);
+    if (res && res.ok) {
+      const json = await res.json();
+      return json.data || json;
+    }
+  } catch (err) {
+    console.log('Admin deal investments fetch error:', err);
   }
   return null;
 }

@@ -52,6 +52,11 @@ import {
   fetchAdminSubscriptions,
   updateAdminSubscriptionTiers,
   fetchAdminInvestorInvestments,
+  createAdminInvestorInvestment,
+  updateAdminInvestorInvestment,
+  deleteAdminInvestorInvestment,
+  fetchAdminInvestorInvestmentSuggestions,
+  fetchAdminDealInvestments,
   fetchAdminBanWealthOrders,
   fetchHomePageData,
   fetchBlogsPageData,
@@ -373,8 +378,75 @@ export default function AdminScreen() {
   });
 
   // Investor Investments State
+  const [investmentsSubTab, setInvestmentsSubTab] = useState('completed'); // 'completed' | 'deals'
   const [investorInvestments, setInvestorInvestments] = useState([]);
   const [investorInvestmentsLoading, setInvestorInvestmentsLoading] = useState(false);
+  const [investorInvestmentsSearch, setInvestorInvestmentsSearch] = useState('');
+  const [investorInvestmentsCurrencyFilter, setInvestorInvestmentsCurrencyFilter] = useState('all');
+  const [investorInvestmentsSummary, setInvestorInvestmentsSummary] = useState({
+    total_records: 0,
+    total_investors: 0,
+    currency_totals: [],
+  });
+  const [investorInvestmentsPagination, setInvestorInvestmentsPagination] = useState({
+    currentPage: 1,
+    lastPage: 1,
+    total: 0,
+    perPage: 25,
+    from: 0,
+    to: 0,
+  });
+  const investorInvestmentsSearchTimeoutRef = useRef(null);
+
+  // Deal Activity State
+  const [dealInvestments, setDealInvestments] = useState([]);
+  const [dealInvestmentsLoading, setDealInvestmentsLoading] = useState(false);
+  const [dealInvestmentsSearch, setDealInvestmentsSearch] = useState('');
+  const [dealInvestmentsTypeFilter, setDealInvestmentsTypeFilter] = useState('all'); // 'all' | 'interested' | 'invest' | 'commit' | 'review'
+  const [dealInvestmentsCounts, setDealInvestmentsCounts] = useState({
+    total_deals: 0,
+    total_interested: 0,
+    total_invest: 0,
+    total_commits: 0,
+    total_reviews: 0,
+  });
+  const [dealInvestmentsPagination, setDealInvestmentsPagination] = useState({
+    currentPage: 1,
+    lastPage: 1,
+    total: 0,
+    perPage: 20,
+    from: 0,
+    to: 0,
+  });
+  const dealInvestmentsSearchTimeoutRef = useRef(null);
+
+  // Investment Modals State
+  const [viewInvestmentModalVisible, setViewInvestmentModalVisible] = useState(false);
+  const [selectedInvestmentForView, setSelectedInvestmentForView] = useState(null);
+
+  const [investmentFormModalVisible, setInvestmentFormModalVisible] = useState(false);
+  const [investmentFormMode, setInvestmentFormMode] = useState('create'); // 'create' | 'edit'
+  const [investmentFormSaving, setInvestmentFormSaving] = useState(false);
+  const [investmentFormData, setInvestmentFormData] = useState({
+    id: null,
+    investor_id: '',
+    deal_id: '',
+    investor_name: '',
+    startup_name: '',
+    amount: '',
+    currency: 'BDT',
+    completed_at: '',
+  });
+  const [investorSuggestions, setInvestorSuggestions] = useState([]);
+  const [startupSuggestions, setStartupSuggestions] = useState([]);
+  const [investorSuggestionsLoading, setInvestorSuggestionsLoading] = useState(false);
+  const [startupSuggestionsLoading, setStartupSuggestionsLoading] = useState(false);
+  const investorSuggestionTimeoutRef = useRef(null);
+  const startupSuggestionTimeoutRef = useRef(null);
+
+  const [deleteInvestmentModalVisible, setDeleteInvestmentModalVisible] = useState(false);
+  const [selectedInvestmentForDelete, setSelectedInvestmentForDelete] = useState(null);
+  const [isDeletingInvestment, setIsDeletingInvestment] = useState(false);
 
   // BAN Wealth Orders State
   const [banWealthOrders, setBanWealthOrders] = useState([]);
@@ -884,19 +956,115 @@ export default function AdminScreen() {
   }, [authToken]);
 
   // Fetch Investor Investments
-  const loadInvestorInvestments = useCallback(async (token = authToken) => {
-    if (!token) return;
-    setInvestorInvestmentsLoading(true);
-    try {
-      const res = await fetchAdminInvestorInvestments(token);
-      const list = res?.data || (Array.isArray(res) ? res : []);
-      setInvestorInvestments(list);
-    } catch (err) {
-      console.log('Error loading investor investments:', err);
-    } finally {
-      setInvestorInvestmentsLoading(false);
-    }
-  }, [authToken]);
+  const loadInvestorInvestments = useCallback(
+    async (
+      token = authToken,
+      search = investorInvestmentsSearch,
+      currency = investorInvestmentsCurrencyFilter,
+      page = 1,
+      options = {}
+    ) => {
+      if (!token) return;
+      const { silent = false } = options;
+      if (!silent) setInvestorInvestmentsLoading(true);
+      try {
+        const res = await fetchAdminInvestorInvestments(token, {
+          q: search,
+          currency: currency !== 'all' ? currency : undefined,
+          page,
+          per_page: 25,
+        });
+
+        if (res) {
+          const invObj = res.investments || res;
+          const list = invObj?.data || (Array.isArray(invObj) ? invObj : []);
+          setInvestorInvestments(list);
+
+          if (invObj && invObj.current_page) {
+            setInvestorInvestmentsPagination({
+              currentPage: invObj.current_page,
+              lastPage: invObj.last_page || 1,
+              total: invObj.total || list.length,
+              perPage: invObj.per_page || 25,
+              from: invObj.from || (list.length > 0 ? (invObj.current_page - 1) * 25 + 1 : 0),
+              to: invObj.to || (list.length > 0 ? (invObj.current_page - 1) * 25 + list.length : 0),
+            });
+          } else {
+            setInvestorInvestmentsPagination({
+              currentPage: 1,
+              lastPage: 1,
+              total: list.length,
+              perPage: 25,
+              from: list.length > 0 ? 1 : 0,
+              to: list.length,
+            });
+          }
+
+          if (res.summary) {
+            setInvestorInvestmentsSummary({
+              total_records: res.summary.total_records || 0,
+              total_investors: res.summary.total_investors || 0,
+              currency_totals: Array.isArray(res.summary.currency_totals) ? res.summary.currency_totals : [],
+            });
+          }
+        }
+      } catch (err) {
+        console.log('Error loading investor investments:', err);
+      } finally {
+        if (!silent) setInvestorInvestmentsLoading(false);
+      }
+    },
+    [authToken, investorInvestmentsSearch, investorInvestmentsCurrencyFilter]
+  );
+
+  // Fetch Deal Investments Activity & Syndicates
+  const loadDealInvestments = useCallback(
+    async (
+      token = authToken,
+      search = dealInvestmentsSearch,
+      type = dealInvestmentsTypeFilter,
+      page = 1,
+      options = {}
+    ) => {
+      if (!token) return;
+      const { silent = false } = options;
+      if (!silent) setDealInvestmentsLoading(true);
+      try {
+        const res = await fetchAdminDealInvestments(token, {
+          q: search,
+          type: type !== 'all' ? type : undefined,
+          page,
+          per_page: 20,
+        });
+
+        if (res) {
+          const dealsObj = res.deals || res;
+          const list = dealsObj?.data || (Array.isArray(dealsObj) ? dealsObj : []);
+          setDealInvestments(list);
+
+          if (dealsObj && dealsObj.current_page) {
+            setDealInvestmentsPagination({
+              currentPage: dealsObj.current_page,
+              lastPage: dealsObj.last_page || 1,
+              total: dealsObj.total || list.length,
+              perPage: dealsObj.per_page || 20,
+              from: dealsObj.from || (list.length > 0 ? (dealsObj.current_page - 1) * 20 + 1 : 0),
+              to: dealsObj.to || (list.length > 0 ? (dealsObj.current_page - 1) * 20 + list.length : 0),
+            });
+          }
+
+          if (res.counts) {
+            setDealInvestmentsCounts(res.counts);
+          }
+        }
+      } catch (err) {
+        console.log('Error loading deal investments activity:', err);
+      } finally {
+        if (!silent) setDealInvestmentsLoading(false);
+      }
+    },
+    [authToken, dealInvestmentsSearch, dealInvestmentsTypeFilter]
+  );
 
   // Fetch BAN Wealth Orders
   const loadBanWealthOrders = useCallback(async (token = authToken) => {
@@ -1024,6 +1192,10 @@ export default function AdminScreen() {
       if (dealSearchTimeoutRef.current) clearTimeout(dealSearchTimeoutRef.current);
       if (pitchSearchTimeoutRef.current) clearTimeout(pitchSearchTimeoutRef.current);
       if (subscriptionSearchTimeoutRef.current) clearTimeout(subscriptionSearchTimeoutRef.current);
+      if (investorInvestmentsSearchTimeoutRef.current) clearTimeout(investorInvestmentsSearchTimeoutRef.current);
+      if (dealInvestmentsSearchTimeoutRef.current) clearTimeout(dealInvestmentsSearchTimeoutRef.current);
+      if (investorSuggestionTimeoutRef.current) clearTimeout(investorSuggestionTimeoutRef.current);
+      if (startupSuggestionTimeoutRef.current) clearTimeout(startupSuggestionTimeoutRef.current);
     };
   }, []);
 
@@ -1717,6 +1889,7 @@ export default function AdminScreen() {
       if (!subscriptionsData) loadSubscriptions(authToken);
     } else if (tab === 'investments' || tab === 'investor-investments') {
       if (investorInvestments.length === 0) loadInvestorInvestments(authToken);
+      if (dealInvestments.length === 0) loadDealInvestments(authToken);
     } else if (tab === 'ban-wealth-orders') {
       if (banWealthOrders.length === 0) loadBanWealthOrders(authToken);
     }
@@ -1743,7 +1916,10 @@ export default function AdminScreen() {
     }
     if (activeTab === 'subscriptions') await loadSubscriptions(authToken);
     if (activeTab === 'investments' || activeTab === 'investor-investments') {
-      await loadInvestorInvestments(authToken);
+      await Promise.allSettled([
+        loadInvestorInvestments(authToken, investorInvestmentsSearch, investorInvestmentsCurrencyFilter, investorInvestmentsPagination.currentPage),
+        loadDealInvestments(authToken, dealInvestmentsSearch, dealInvestmentsTypeFilter, dealInvestmentsPagination.currentPage),
+      ]);
     }
     if (activeTab === 'ban-wealth-orders') await loadBanWealthOrders(authToken);
     if (
@@ -5219,6 +5395,299 @@ export default function AdminScreen() {
     }
   };
 
+  // ==========================================
+  // INVESTMENTS MODULE HANDLERS
+  // ==========================================
+
+  // Helper functions for Investment formatting
+  const formatInvestmentAmount = (amount, currency = 'BDT') => {
+    const num = Number(amount || 0);
+    const formattedNum = isNaN(num) ? '0' : num.toLocaleString();
+    const c = (currency || 'BDT').toUpperCase();
+    if (c === 'USD') return `$${formattedNum}`;
+    if (c === 'BDT') return `৳${formattedNum}`;
+    if (c === 'SGD') return `S$${formattedNum}`;
+    if (c === 'EUR') return `€${formattedNum}`;
+    if (c === 'GBP') return `£${formattedNum}`;
+    return `${c} ${formattedNum}`;
+  };
+
+  const formatInvestmentDate = (dateStr) => {
+    if (!dateStr) return 'N/A';
+    try {
+      const d = new Date(dateStr);
+      return isNaN(d.getTime())
+        ? String(dateStr)
+        : d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+    } catch {
+      return String(dateStr);
+    }
+  };
+
+  // Debounced Search Handlers for Completed Investments
+  const handleInvestorInvestmentsSearchChange = (text) => {
+    setInvestorInvestmentsSearch(text);
+    if (investorInvestmentsSearchTimeoutRef.current) {
+      clearTimeout(investorInvestmentsSearchTimeoutRef.current);
+    }
+    investorInvestmentsSearchTimeoutRef.current = setTimeout(() => {
+      loadInvestorInvestments(authToken, text, investorInvestmentsCurrencyFilter, 1);
+    }, 400);
+  };
+
+  const handleClearInvestorInvestmentsSearch = () => {
+    if (investorInvestmentsSearchTimeoutRef.current) {
+      clearTimeout(investorInvestmentsSearchTimeoutRef.current);
+    }
+    setInvestorInvestmentsSearch('');
+    loadInvestorInvestments(authToken, '', investorInvestmentsCurrencyFilter, 1);
+  };
+
+  const handleInvestorInvestmentsCurrencyChange = (curr) => {
+    if (investorInvestmentsSearchTimeoutRef.current) {
+      clearTimeout(investorInvestmentsSearchTimeoutRef.current);
+    }
+    setInvestorInvestmentsCurrencyFilter(curr);
+    loadInvestorInvestments(authToken, investorInvestmentsSearch, curr, 1);
+  };
+
+  const handleInvestorInvestmentsPageChange = (newPage) => {
+    if (newPage < 1 || newPage > investorInvestmentsPagination.lastPage) return;
+    loadInvestorInvestments(authToken, investorInvestmentsSearch, investorInvestmentsCurrencyFilter, newPage);
+  };
+
+  // Debounced Search Handlers for Deal Activity & Syndicates
+  const handleDealInvestmentsSearchChange = (text) => {
+    setDealInvestmentsSearch(text);
+    if (dealInvestmentsSearchTimeoutRef.current) {
+      clearTimeout(dealInvestmentsSearchTimeoutRef.current);
+    }
+    dealInvestmentsSearchTimeoutRef.current = setTimeout(() => {
+      loadDealInvestments(authToken, text, dealInvestmentsTypeFilter, 1);
+    }, 400);
+  };
+
+  const handleClearDealInvestmentsSearch = () => {
+    if (dealInvestmentsSearchTimeoutRef.current) {
+      clearTimeout(dealInvestmentsSearchTimeoutRef.current);
+    }
+    setDealInvestmentsSearch('');
+    loadDealInvestments(authToken, '', dealInvestmentsTypeFilter, 1);
+  };
+
+  const handleDealInvestmentsTypeChange = (type) => {
+    if (dealInvestmentsSearchTimeoutRef.current) {
+      clearTimeout(dealInvestmentsSearchTimeoutRef.current);
+    }
+    setDealInvestmentsTypeFilter(type);
+    loadDealInvestments(authToken, dealInvestmentsSearch, type, 1);
+  };
+
+  const handleDealInvestmentsPageChange = (newPage) => {
+    if (newPage < 1 || newPage > dealInvestmentsPagination.lastPage) return;
+    loadDealInvestments(authToken, dealInvestmentsSearch, dealInvestmentsTypeFilter, newPage);
+  };
+
+  // Autocomplete Suggestions Handlers
+  const handleSearchInvestorSuggestions = (text) => {
+    setInvestmentFormData((prev) => ({ ...prev, investor_name: text, investor_id: '' }));
+    if (investorSuggestionTimeoutRef.current) clearTimeout(investorSuggestionTimeoutRef.current);
+    if (!text.trim()) {
+      setInvestorSuggestions([]);
+      return;
+    }
+    investorSuggestionTimeoutRef.current = setTimeout(async () => {
+      setInvestorSuggestionsLoading(true);
+      try {
+        const items = await fetchAdminInvestorInvestmentSuggestions(authToken, 'name', text.trim());
+        setInvestorSuggestions(Array.isArray(items) ? items : []);
+      } catch (err) {
+        console.log('Error fetching investor suggestions:', err);
+      } finally {
+        setInvestorSuggestionsLoading(false);
+      }
+    }, 300);
+  };
+
+  const handleSelectInvestorSuggestion = (item) => {
+    setInvestmentFormData((prev) => ({
+      ...prev,
+      investor_id: item.id,
+      investor_name: item.name || item.label || '',
+    }));
+    setInvestorSuggestions([]);
+  };
+
+  const handleSearchStartupSuggestions = (text) => {
+    setInvestmentFormData((prev) => ({ ...prev, startup_name: text, deal_id: '' }));
+    if (startupSuggestionTimeoutRef.current) clearTimeout(startupSuggestionTimeoutRef.current);
+    if (!text.trim()) {
+      setStartupSuggestions([]);
+      return;
+    }
+    startupSuggestionTimeoutRef.current = setTimeout(async () => {
+      setStartupSuggestionsLoading(true);
+      try {
+        const items = await fetchAdminInvestorInvestmentSuggestions(authToken, 'startup', text.trim());
+        setStartupSuggestions(Array.isArray(items) ? items : []);
+      } catch (err) {
+        console.log('Error fetching startup suggestions:', err);
+      } finally {
+        setStartupSuggestionsLoading(false);
+      }
+    }, 300);
+  };
+
+  const handleSelectStartupSuggestion = (item) => {
+    setInvestmentFormData((prev) => ({
+      ...prev,
+      deal_id: item.id,
+      startup_name: item.title || item.label || '',
+    }));
+    setStartupSuggestions([]);
+  };
+
+  // Modal Open Handlers
+  const handleOpenViewInvestment = (inv) => {
+    setSelectedInvestmentForView(inv);
+    setViewInvestmentModalVisible(true);
+  };
+
+  const handleOpenCreateInvestment = () => {
+    setInvestmentFormMode('create');
+    setInvestmentFormData({
+      id: null,
+      investor_id: '',
+      deal_id: '',
+      investor_name: '',
+      startup_name: '',
+      amount: '',
+      currency: 'BDT',
+      completed_at: new Date().toISOString().split('T')[0],
+    });
+    setInvestorSuggestions([]);
+    setStartupSuggestions([]);
+    setInvestmentFormModalVisible(true);
+  };
+
+  const handleOpenEditInvestment = (inv) => {
+    const rawDate = inv.completed_at ? String(inv.completed_at).slice(0, 10) : new Date().toISOString().split('T')[0];
+    setInvestmentFormMode('edit');
+    setInvestmentFormData({
+      id: inv.id,
+      investor_id: inv.investor_id || inv.investor?.id || '',
+      deal_id: inv.deal_id || inv.startup_id || inv.startup?.id || '',
+      investor_name: inv.investor_name || inv.investor?.name || '',
+      startup_name: inv.startup_name || inv.startup?.title || '',
+      amount: String(inv.amount || ''),
+      currency: inv.currency ? String(inv.currency).toUpperCase() : 'BDT',
+      completed_at: rawDate,
+    });
+    setInvestorSuggestions([]);
+    setStartupSuggestions([]);
+    setInvestmentFormModalVisible(true);
+  };
+
+  const handleSaveInvestment = async () => {
+    if (!authToken) return;
+    if (!investmentFormData.investor_id) {
+      Alert.alert('Validation Error', 'Please search and select an investor from the suggestions.');
+      return;
+    }
+    if (!investmentFormData.deal_id) {
+      Alert.alert('Validation Error', 'Please search and select a portfolio deal/startup from the suggestions.');
+      return;
+    }
+    const amountNum = parseFloat(investmentFormData.amount);
+    if (isNaN(amountNum) || amountNum <= 0) {
+      Alert.alert('Validation Error', 'Please enter a valid investment amount greater than 0.');
+      return;
+    }
+    const curr = (investmentFormData.currency || '').trim().toUpperCase();
+    if (!curr || curr.length !== 3) {
+      Alert.alert('Validation Error', 'Please choose or enter a valid 3-letter currency code (e.g. BDT, USD, SGD).');
+      return;
+    }
+    if (!investmentFormData.completed_at || !/^\d{4}-\d{2}-\d{2}$/.test(investmentFormData.completed_at)) {
+      Alert.alert('Validation Error', 'Please specify a valid completion date in YYYY-MM-DD format.');
+      return;
+    }
+
+    setInvestmentFormSaving(true);
+    try {
+      const payload = {
+        investor_id: Number(investmentFormData.investor_id),
+        deal_id: Number(investmentFormData.deal_id),
+        amount: amountNum,
+        currency: curr,
+        completed_at: investmentFormData.completed_at,
+      };
+
+      const res = investmentFormMode === 'create'
+        ? await createAdminInvestorInvestment(authToken, payload)
+        : await updateAdminInvestorInvestment(authToken, investmentFormData.id, payload);
+
+      if (res.ok) {
+        Alert.alert(
+          'Success',
+          investmentFormMode === 'create'
+            ? 'Investment record created successfully.'
+            : 'Investment record updated successfully.'
+        );
+        setInvestmentFormModalVisible(false);
+        // Also update view modal if it was open
+        if (selectedInvestmentForView && selectedInvestmentForView.id === investmentFormData.id) {
+          setSelectedInvestmentForView((prev) => ({
+            ...prev,
+            ...payload,
+            investor_name: investmentFormData.investor_name,
+            startup_name: investmentFormData.startup_name,
+          }));
+        }
+        loadInvestorInvestments(authToken, investorInvestmentsSearch, investorInvestmentsCurrencyFilter, investorInvestmentsPagination.currentPage, { silent: true });
+      } else {
+        const errorMsg = res.errors
+          ? Object.values(res.errors).flat().join('\n')
+          : res.message || 'Could not save investment record.';
+        Alert.alert('Save Failed', errorMsg);
+      }
+    } catch (err) {
+      console.log('Error saving investment:', err);
+      Alert.alert('Error', 'An unexpected error occurred while saving the investment.');
+    } finally {
+      setInvestmentFormSaving(false);
+    }
+  };
+
+  const handleOpenDeleteInvestment = (inv) => {
+    setSelectedInvestmentForDelete(inv);
+    setDeleteInvestmentModalVisible(true);
+  };
+
+  const handleConfirmDeleteInvestment = async () => {
+    if (!authToken || !selectedInvestmentForDelete) return;
+    setIsDeletingInvestment(true);
+    try {
+      const res = await deleteAdminInvestorInvestment(authToken, selectedInvestmentForDelete.id);
+      if (res.ok) {
+        Alert.alert('Deleted', 'Investment record deleted successfully.');
+        setDeleteInvestmentModalVisible(false);
+        if (selectedInvestmentForView && selectedInvestmentForView.id === selectedInvestmentForDelete.id) {
+          setViewInvestmentModalVisible(false);
+        }
+        setSelectedInvestmentForDelete(null);
+        loadInvestorInvestments(authToken, investorInvestmentsSearch, investorInvestmentsCurrencyFilter, 1);
+      } else {
+        Alert.alert('Delete Failed', res.message || 'Could not delete investment record.');
+      }
+    } catch (err) {
+      console.log('Error deleting investment:', err);
+      Alert.alert('Error', 'An unexpected error occurred while deleting the record.');
+    } finally {
+      setIsDeletingInvestment(false);
+    }
+  };
+
   // Handle Logout
   const handleLogout = () => {
     Alert.alert('Sign Out', 'Are you sure you want to log out of the admin panel?', [
@@ -7830,61 +8299,741 @@ export default function AdminScreen() {
           {/* TAB: INVESTMENTS / INVESTOR INVESTMENTS */}
           {(activeTab === 'investments' || activeTab === 'investor-investments') && (
             <View style={styles.tabContent}>
+              {/* Header with Title and Actions */}
               <View style={styles.sectionHeaderRow}>
-                <View>
-                  <Text style={styles.sectionHeading}>Completed Investments</Text>
-                  <Text style={styles.sectionSubheading}>Syndicate and direct portfolio transactions</Text>
+                <View style={{ flex: 1, marginRight: 8 }}>
+                  <Text style={styles.sectionHeading}>Investments & Syndicates</Text>
+                  <Text style={styles.sectionSubheading}>
+                    {investmentsSubTab === 'completed'
+                      ? investorInvestmentsPagination.total > 0
+                        ? `Showing ${investorInvestmentsPagination.from}–${investorInvestmentsPagination.to} of ${investorInvestmentsPagination.total} completed records`
+                        : 'Closed transactions and portfolio investments'
+                      : dealInvestmentsPagination.total > 0
+                      ? `Showing ${dealInvestmentsPagination.from}–${dealInvestmentsPagination.to} of ${dealInvestmentsPagination.total} syndicate deals`
+                      : 'Deal-level expressions of interest & commits'}
+                  </Text>
                 </View>
+                <View style={styles.sectionHeaderActions}>
+                  <TouchableOpacity
+                    style={styles.addMemberBtn}
+                    onPress={handleOpenCreateInvestment}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="add" size={18} color="#FFFFFF" />
+                    <Text style={styles.addMemberBtnText}>Record</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.refreshIconBtn}
+                    onPress={() => {
+                      loadInvestorInvestments(
+                        authToken,
+                        investorInvestmentsSearch,
+                        investorInvestmentsCurrencyFilter,
+                        investorInvestmentsPagination.currentPage
+                      );
+                      loadDealInvestments(
+                        authToken,
+                        dealInvestmentsSearch,
+                        dealInvestmentsTypeFilter,
+                        dealInvestmentsPagination.currentPage
+                      );
+                    }}
+                  >
+                    <Ionicons name="refresh" size={18} color={Colors.forest} />
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Top KPI Summary Cards */}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={styles.invKpiScroll}
+                contentContainerStyle={styles.invKpiScrollContent}
+              >
+                <View style={styles.invKpiCard}>
+                  <View style={[styles.invKpiIconWrap, { backgroundColor: '#E6F4F1' }]}>
+                    <Ionicons name="receipt-outline" size={18} color="#0A5554" />
+                  </View>
+                  <View>
+                    <Text style={styles.invKpiValue}>
+                      {investorInvestmentsSummary.total_records || investorInvestmentsPagination.total || 0}
+                    </Text>
+                    <Text style={styles.invKpiLabel}>Completed Records</Text>
+                  </View>
+                </View>
+
+                <View style={styles.invKpiCard}>
+                  <View style={[styles.invKpiIconWrap, { backgroundColor: '#EFF6FF' }]}>
+                    <Ionicons name="people-outline" size={18} color="#2563EB" />
+                  </View>
+                  <View>
+                    <Text style={styles.invKpiValue}>
+                      {investorInvestmentsSummary.total_investors || 0}
+                    </Text>
+                    <Text style={styles.invKpiLabel}>Active Investors</Text>
+                  </View>
+                </View>
+
+                {investorInvestmentsSummary.currency_totals &&
+                investorInvestmentsSummary.currency_totals.length > 0 ? (
+                  investorInvestmentsSummary.currency_totals.map((ct) => (
+                    <View key={`ct-${ct.currency}`} style={styles.invKpiCard}>
+                      <View style={[styles.invKpiIconWrap, { backgroundColor: '#ECFDF5' }]}>
+                        <Ionicons name="cash-outline" size={18} color="#059669" />
+                      </View>
+                      <View>
+                        <Text style={styles.invKpiValue}>
+                          {formatInvestmentAmount(ct.total, ct.currency)}
+                        </Text>
+                        <Text style={styles.invKpiLabel}>{ct.currency} Volume</Text>
+                      </View>
+                    </View>
+                  ))
+                ) : (
+                  <>
+                    <View style={styles.invKpiCard}>
+                      <View style={[styles.invKpiIconWrap, { backgroundColor: '#ECFDF5' }]}>
+                        <Ionicons name="cash-outline" size={18} color="#059669" />
+                      </View>
+                      <View>
+                        <Text style={styles.invKpiValue}>$0</Text>
+                        <Text style={styles.invKpiLabel}>USD Volume</Text>
+                      </View>
+                    </View>
+                    <View style={styles.invKpiCard}>
+                      <View style={[styles.invKpiIconWrap, { backgroundColor: '#FEF3C7' }]}>
+                        <Ionicons name="cash-outline" size={18} color="#D97706" />
+                      </View>
+                      <View>
+                        <Text style={styles.invKpiValue}>৳0</Text>
+                        <Text style={styles.invKpiLabel}>BDT Volume</Text>
+                      </View>
+                    </View>
+                  </>
+                )}
+
+                <View style={styles.invKpiCard}>
+                  <View style={[styles.invKpiIconWrap, { backgroundColor: '#F3E8FF' }]}>
+                    <Ionicons name="trending-up-outline" size={18} color="#7E22CE" />
+                  </View>
+                  <View>
+                    <Text style={styles.invKpiValue}>
+                      {(dealInvestmentsCounts.total_interested || 0) +
+                        (dealInvestmentsCounts.total_invest || 0) +
+                        (dealInvestmentsCounts.total_commits || 0)}
+                    </Text>
+                    <Text style={styles.invKpiLabel}>Syndicate Expressions</Text>
+                  </View>
+                </View>
+              </ScrollView>
+
+              {/* Sub-Tab Switcher */}
+              <View style={styles.invSubTabContainer}>
                 <TouchableOpacity
-                  style={styles.refreshIconBtn}
-                  onPress={() => loadInvestorInvestments(authToken)}
+                  style={[
+                    styles.invSubTabBtn,
+                    investmentsSubTab === 'completed' && styles.invSubTabBtnActive,
+                  ]}
+                  onPress={() => setInvestmentsSubTab('completed')}
                 >
-                  <Ionicons name="refresh" size={18} color={Colors.forest} />
+                  <Ionicons
+                    name="checkmark-done-circle-outline"
+                    size={16}
+                    color={investmentsSubTab === 'completed' ? '#0A5554' : '#64748B'}
+                  />
+                  <Text
+                    style={[
+                      styles.invSubTabText,
+                      investmentsSubTab === 'completed' && styles.invSubTabTextActive,
+                    ]}
+                  >
+                    Completed Records
+                  </Text>
+                  <View
+                    style={[
+                      styles.invSubTabBadge,
+                      investmentsSubTab === 'completed' && styles.invSubTabBadgeActive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.invSubTabBadgeText,
+                        investmentsSubTab === 'completed' && styles.invSubTabBadgeTextActive,
+                      ]}
+                    >
+                      {investorInvestmentsPagination.total}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.invSubTabBtn,
+                    investmentsSubTab === 'deals' && styles.invSubTabBtnActive,
+                  ]}
+                  onPress={() => {
+                    setInvestmentsSubTab('deals');
+                    if (dealInvestments.length === 0) {
+                      loadDealInvestments(authToken);
+                    }
+                  }}
+                >
+                  <Ionicons
+                    name="git-network-outline"
+                    size={16}
+                    color={investmentsSubTab === 'deals' ? '#0A5554' : '#64748B'}
+                  />
+                  <Text
+                    style={[
+                      styles.invSubTabText,
+                      investmentsSubTab === 'deals' && styles.invSubTabTextActive,
+                    ]}
+                  >
+                    Deal Activity
+                  </Text>
+                  <View
+                    style={[
+                      styles.invSubTabBadge,
+                      investmentsSubTab === 'deals' && styles.invSubTabBadgeActive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.invSubTabBadgeText,
+                        investmentsSubTab === 'deals' && styles.invSubTabBadgeTextActive,
+                      ]}
+                    >
+                      {dealInvestmentsCounts.total_deals || dealInvestmentsPagination.total || 0}
+                    </Text>
+                  </View>
                 </TouchableOpacity>
               </View>
 
-              {investorInvestmentsLoading ? (
-                <View style={styles.listLoadingBox}>
-                  <ActivityIndicator size="small" color={Colors.forest} />
-                  <Text style={styles.loadingText}>Fetching investments...</Text>
-                </View>
-              ) : investorInvestments.length === 0 ? (
-                <View style={styles.emptyState}>
-                  <Ionicons name="trending-up-outline" size={40} color={Colors.mutedLight} />
-                  <Text style={styles.emptyTitle}>No Investment Records</Text>
-                  <Text style={styles.emptyText}>Completed investment transactions will appear here.</Text>
-                </View>
-              ) : (
-                <View style={styles.cardsList}>
-                  {investorInvestments.map((inv, idx) => (
-                    <View key={`inv-${inv.id || idx}`} style={styles.dealCard}>
-                      <View style={styles.dealCardHeader}>
-                        <View style={styles.dealTitleWrap}>
-                          <Text style={styles.dealTitle}>
-                            {inv.investor_name || inv.investor?.name || 'Investor'}
+              {/* TAB 1: COMPLETED INVESTMENTS */}
+              {investmentsSubTab === 'completed' && (
+                <View>
+                  {/* Search Input */}
+                  <View style={styles.dealSearchBar}>
+                    <Ionicons name="search" size={18} color="#64748B" style={styles.searchIcon} />
+                    <TextInput
+                      style={styles.dealSearchInput}
+                      placeholder="Search investor, email, startup..."
+                      placeholderTextColor="#94A3B8"
+                      value={investorInvestmentsSearch}
+                      onChangeText={handleInvestorInvestmentsSearchChange}
+                      onSubmitEditing={() => {
+                        if (investorInvestmentsSearchTimeoutRef.current) {
+                          clearTimeout(investorInvestmentsSearchTimeoutRef.current);
+                        }
+                        loadInvestorInvestments(
+                          authToken,
+                          investorInvestmentsSearch,
+                          investorInvestmentsCurrencyFilter,
+                          1
+                        );
+                      }}
+                      returnKeyType="search"
+                    />
+                    {investorInvestmentsSearch.length > 0 && (
+                      <TouchableOpacity
+                        style={styles.searchClearBtn}
+                        onPress={handleClearInvestorInvestmentsSearch}
+                      >
+                        <Ionicons name="close-circle" size={18} color="#94A3B8" />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  {/* Currency Filter Chips */}
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    style={styles.invFilterScroll}
+                    contentContainerStyle={styles.invFilterScrollContent}
+                  >
+                    {['all', 'BDT', 'USD', 'SGD', 'EUR', 'GBP'].map((curr) => {
+                      const isSelected = investorInvestmentsCurrencyFilter === curr;
+                      return (
+                        <TouchableOpacity
+                          key={`curr-filter-${curr}`}
+                          style={[styles.invFilterChip, isSelected && styles.invFilterChipActive]}
+                          onPress={() => handleInvestorInvestmentsCurrencyChange(curr)}
+                        >
+                          <Text
+                            style={[
+                              styles.invFilterChipText,
+                              isSelected && styles.invFilterChipTextActive,
+                            ]}
+                          >
+                            {curr === 'all' ? 'All Currencies' : curr}
                           </Text>
-                          <Text style={styles.dealCompany}>
-                            Invested in: {inv.startup_name || inv.startup?.title || 'Portfolio Startup'}
-                          </Text>
-                        </View>
-                        <View style={styles.statusCompleted}>
-                          <Text style={styles.statusCompletedText}>COMPLETED</Text>
-                        </View>
-                      </View>
-                      <View style={styles.dealMetaRow}>
-                        <View style={styles.metaPill}>
-                          <Text style={styles.metaPillText}>
-                            {inv.currency || 'BDT'} {Number(inv.amount || 0).toLocaleString()}
-                          </Text>
-                        </View>
-                        {Boolean(inv.completed_at) && (
-                          <Text style={styles.dealDateText}>
-                            {new Date(inv.completed_at).toLocaleDateString()}
-                          </Text>
-                        )}
-                      </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+
+                  {/* Loading / Empty / Cards */}
+                  {investorInvestmentsLoading ? (
+                    <View style={styles.listLoadingBox}>
+                      <ActivityIndicator size="small" color={Colors.forest} />
+                      <Text style={styles.loadingText}>Fetching completed investments...</Text>
                     </View>
-                  ))}
+                  ) : investorInvestments.length === 0 ? (
+                    <View style={styles.emptyState}>
+                      <Ionicons name="receipt-outline" size={44} color={Colors.mutedLight} />
+                      <Text style={styles.emptyTitle}>No Investment Records Found</Text>
+                      <Text style={styles.emptyText}>
+                        {investorInvestmentsSearch || investorInvestmentsCurrencyFilter !== 'all'
+                          ? 'No investments match your current filters.'
+                          : 'Record your first closed investment transaction to get started.'}
+                      </Text>
+                      <TouchableOpacity
+                        style={[styles.addMemberBtn, { marginTop: 12 }]}
+                        onPress={handleOpenCreateInvestment}
+                      >
+                        <Ionicons name="add" size={18} color="#FFFFFF" />
+                        <Text style={styles.addMemberBtnText}>Record Investment</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <View style={styles.cardsList}>
+                      {investorInvestments.map((inv, idx) => {
+                        const investorName =
+                          inv.investor_name || inv.investor?.name || 'Investor';
+                        const investorEmail = inv.investor_email || inv.investor?.email || '';
+                        const startupName =
+                          inv.startup_name || inv.startup?.title || 'Portfolio Company';
+                        const initials = investorName
+                          .split(' ')
+                          .map((n) => n[0])
+                          .slice(0, 2)
+                          .join('')
+                          .toUpperCase();
+
+                        return (
+                          <View key={`inv-card-${inv.id || idx}`} style={styles.invCard}>
+                            {/* Card Top Row */}
+                            <View style={styles.invCardHeader}>
+                              <View style={styles.invAvatarWrap}>
+                                <Text style={styles.invAvatarText}>{initials || 'IN'}</Text>
+                              </View>
+                              <View style={{ flex: 1, marginLeft: 10 }}>
+                                <Text style={styles.invInvestorName} numberOfLines={1}>
+                                  {investorName}
+                                </Text>
+                                {Boolean(investorEmail) && (
+                                  <Text style={styles.invInvestorEmail} numberOfLines={1}>
+                                    {investorEmail}
+                                  </Text>
+                                )}
+                              </View>
+                              <View style={styles.invStatusCompleted}>
+                                <Ionicons name="checkmark-circle" size={12} color="#059669" />
+                                <Text style={styles.invStatusCompletedText}>COMPLETED</Text>
+                              </View>
+                            </View>
+
+                            {/* Startup & Amount Section */}
+                            <View style={styles.invDealInfoRow}>
+                              <View style={styles.invStartupBadge}>
+                                <Ionicons name="business" size={13} color="#0A5554" />
+                                <Text style={styles.invStartupText} numberOfLines={1}>
+                                  {startupName}
+                                </Text>
+                              </View>
+                            </View>
+
+                            {/* Metrics Row: Amount and Date */}
+                            <View style={styles.invMetaRow}>
+                              <View style={styles.invAmountPill}>
+                                <Text style={styles.invAmountText}>
+                                  {formatInvestmentAmount(inv.amount, inv.currency)}
+                                </Text>
+                              </View>
+
+                              {Boolean(inv.completed_at) && (
+                                <View style={styles.invDateRow}>
+                                  <Ionicons name="calendar-outline" size={13} color="#64748B" />
+                                  <Text style={styles.invDateText}>
+                                    {formatInvestmentDate(inv.completed_at)}
+                                  </Text>
+                                </View>
+                              )}
+                            </View>
+
+                            {/* Card Actions Footer */}
+                            <View style={styles.invCardFooter}>
+                              <TouchableOpacity
+                                style={styles.invViewBtn}
+                                onPress={() => handleOpenViewInvestment(inv)}
+                              >
+                                <Ionicons name="eye-outline" size={15} color="#0A5554" />
+                                <Text style={styles.invViewBtnText}>Details</Text>
+                              </TouchableOpacity>
+
+                              <View style={{ flexDirection: 'row', gap: 8 }}>
+                                <TouchableOpacity
+                                  style={styles.invEditBtn}
+                                  onPress={() => handleOpenEditInvestment(inv)}
+                                >
+                                  <Ionicons name="create-outline" size={15} color="#2563EB" />
+                                  <Text style={styles.invEditBtnText}>Edit</Text>
+                                </TouchableOpacity>
+
+                                <TouchableOpacity
+                                  style={styles.invDeleteBtn}
+                                  onPress={() => handleOpenDeleteInvestment(inv)}
+                                >
+                                  <Ionicons name="trash-outline" size={15} color="#EF4444" />
+                                </TouchableOpacity>
+                              </View>
+                            </View>
+                          </View>
+                        );
+                      })}
+
+                      {/* Pagination Bar */}
+                      {investorInvestmentsPagination.lastPage > 1 && (
+                        <View style={styles.paginationRow}>
+                          <TouchableOpacity
+                            style={[
+                              styles.pageBtn,
+                              investorInvestmentsPagination.currentPage <= 1 && styles.pageBtnDisabled,
+                            ]}
+                            disabled={investorInvestmentsPagination.currentPage <= 1}
+                            onPress={() =>
+                              handleInvestorInvestmentsPageChange(
+                                investorInvestmentsPagination.currentPage - 1
+                              )
+                            }
+                          >
+                            <Ionicons
+                              name="chevron-back"
+                              size={16}
+                              color={
+                                investorInvestmentsPagination.currentPage <= 1
+                                  ? '#94A3B8'
+                                  : '#0F172A'
+                              }
+                            />
+                            <Text
+                              style={[
+                                styles.pageBtnText,
+                                investorInvestmentsPagination.currentPage <= 1 &&
+                                  styles.pageBtnTextDisabled,
+                              ]}
+                            >
+                              Prev
+                            </Text>
+                          </TouchableOpacity>
+
+                          <View style={styles.pageIndicatorWrap}>
+                            <Text style={styles.pageIndicatorText}>
+                              Page {investorInvestmentsPagination.currentPage} of{' '}
+                              {investorInvestmentsPagination.lastPage}
+                            </Text>
+                          </View>
+
+                          <TouchableOpacity
+                            style={[
+                              styles.pageBtn,
+                              investorInvestmentsPagination.currentPage >=
+                                investorInvestmentsPagination.lastPage && styles.pageBtnDisabled,
+                            ]}
+                            disabled={
+                              investorInvestmentsPagination.currentPage >=
+                              investorInvestmentsPagination.lastPage
+                            }
+                            onPress={() =>
+                              handleInvestorInvestmentsPageChange(
+                                investorInvestmentsPagination.currentPage + 1
+                              )
+                            }
+                          >
+                            <Text
+                              style={[
+                                styles.pageBtnText,
+                                investorInvestmentsPagination.currentPage >=
+                                  investorInvestmentsPagination.lastPage &&
+                                  styles.pageBtnTextDisabled,
+                              ]}
+                            >
+                              Next
+                            </Text>
+                            <Ionicons
+                              name="chevron-forward"
+                              size={16}
+                              color={
+                                investorInvestmentsPagination.currentPage >=
+                                investorInvestmentsPagination.lastPage
+                                  ? '#94A3B8'
+                                  : '#0F172A'
+                              }
+                            />
+                          </TouchableOpacity>
+                        </View>
+                      )}
+                    </View>
+                  )}
+                </View>
+              )}
+
+              {/* TAB 2: DEAL ACTIVITY & SYNDICATES */}
+              {investmentsSubTab === 'deals' && (
+                <View>
+                  {/* Search Input */}
+                  <View style={styles.dealSearchBar}>
+                    <Ionicons name="search" size={18} color="#64748B" style={styles.searchIcon} />
+                    <TextInput
+                      style={styles.dealSearchInput}
+                      placeholder="Search deal title, sector, description..."
+                      placeholderTextColor="#94A3B8"
+                      value={dealInvestmentsSearch}
+                      onChangeText={handleDealInvestmentsSearchChange}
+                      onSubmitEditing={() => {
+                        if (dealInvestmentsSearchTimeoutRef.current) {
+                          clearTimeout(dealInvestmentsSearchTimeoutRef.current);
+                        }
+                        loadDealInvestments(
+                          authToken,
+                          dealInvestmentsSearch,
+                          dealInvestmentsTypeFilter,
+                          1
+                        );
+                      }}
+                      returnKeyType="search"
+                    />
+                    {dealInvestmentsSearch.length > 0 && (
+                      <TouchableOpacity
+                        style={styles.searchClearBtn}
+                        onPress={handleClearDealInvestmentsSearch}
+                      >
+                        <Ionicons name="close-circle" size={18} color="#94A3B8" />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  {/* Activity Filter Chips */}
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    style={styles.invFilterScroll}
+                    contentContainerStyle={styles.invFilterScrollContent}
+                  >
+                    {[
+                      { key: 'all', label: `All Deals (${dealInvestmentsCounts.total_deals || 0})` },
+                      {
+                        key: 'interested',
+                        label: `Interested (${dealInvestmentsCounts.total_interested || 0})`,
+                      },
+                      { key: 'invest', label: `Invest Intent (${dealInvestmentsCounts.total_invest || 0})` },
+                      { key: 'commit', label: `Commits (${dealInvestmentsCounts.total_commits || 0})` },
+                      { key: 'review', label: `Review (${dealInvestmentsCounts.total_reviews || 0})` },
+                    ].map((chip) => {
+                      const isSelected = dealInvestmentsTypeFilter === chip.key;
+                      return (
+                        <TouchableOpacity
+                          key={`deal-act-chip-${chip.key}`}
+                          style={[styles.invFilterChip, isSelected && styles.invFilterChipActive]}
+                          onPress={() => handleDealInvestmentsTypeChange(chip.key)}
+                        >
+                          <Text
+                            style={[
+                              styles.invFilterChipText,
+                              isSelected && styles.invFilterChipTextActive,
+                            ]}
+                          >
+                            {chip.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+
+                  {/* Loading / Empty / Deals Cards */}
+                  {dealInvestmentsLoading ? (
+                    <View style={styles.listLoadingBox}>
+                      <ActivityIndicator size="small" color={Colors.forest} />
+                      <Text style={styles.loadingText}>Fetching syndicate activity...</Text>
+                    </View>
+                  ) : dealInvestments.length === 0 ? (
+                    <View style={styles.emptyState}>
+                      <Ionicons name="git-network-outline" size={44} color={Colors.mutedLight} />
+                      <Text style={styles.emptyTitle}>No Syndicate Activity Found</Text>
+                      <Text style={styles.emptyText}>
+                        No deals match the selected filter or syndicate criteria.
+                      </Text>
+                    </View>
+                  ) : (
+                    <View style={styles.cardsList}>
+                      {dealInvestments.map((deal, idx) => (
+                        <View key={`deal-inv-${deal.id || idx}`} style={styles.invCard}>
+                          {/* Deal Header */}
+                          <View style={styles.invCardHeader}>
+                            <View
+                              style={[
+                                styles.invAvatarWrap,
+                                { backgroundColor: '#F1F5F9' },
+                              ]}
+                            >
+                              <Ionicons name="briefcase-outline" size={18} color="#0A5554" />
+                            </View>
+                            <View style={{ flex: 1, marginLeft: 10 }}>
+                              <Text style={styles.invInvestorName} numberOfLines={1}>
+                                {deal.title || 'Portfolio Deal'}
+                              </Text>
+                              {Boolean(deal.sector) && (
+                                <Text style={styles.invInvestorEmail}>{deal.sector}</Text>
+                              )}
+                            </View>
+                            {Boolean(deal.status) && (
+                              <View
+                                style={[
+                                  styles.invStatusCompleted,
+                                  deal.status === 'active'
+                                    ? { backgroundColor: '#ECFDF5' }
+                                    : { backgroundColor: '#F1F5F9' },
+                                ]}
+                              >
+                                <Text
+                                  style={[
+                                    styles.invStatusCompletedText,
+                                    deal.status === 'active'
+                                      ? { color: '#059669' }
+                                      : { color: '#64748B' },
+                                  ]}
+                                >
+                                  {(deal.status || 'ACTIVE').toUpperCase()}
+                                </Text>
+                              </View>
+                            )}
+                          </View>
+
+                          {/* Activity Counters Row */}
+                          <View style={styles.dealActivityCountersRow}>
+                            <View style={[styles.dealActPill, { backgroundColor: '#EFF6FF' }]}>
+                              <Ionicons name="eye-outline" size={12} color="#2563EB" />
+                              <Text style={[styles.dealActPillText, { color: '#1D4ED8' }]}>
+                                {deal.interested_count || 0} Interested
+                              </Text>
+                            </View>
+
+                            <View style={[styles.dealActPill, { backgroundColor: '#ECFDF5' }]}>
+                              <Ionicons name="trending-up" size={12} color="#059669" />
+                              <Text style={[styles.dealActPillText, { color: '#047857' }]}>
+                                {deal.invest_count || 0} Invest
+                              </Text>
+                            </View>
+
+                            <View style={[styles.dealActPill, { backgroundColor: '#FEF3C7' }]}>
+                              <Ionicons name="checkmark-done" size={12} color="#D97706" />
+                              <Text style={[styles.dealActPillText, { color: '#B45309' }]}>
+                                {deal.commit_count || 0} Commits
+                              </Text>
+                            </View>
+
+                            <View style={[styles.dealActPill, { backgroundColor: '#F3E8FF' }]}>
+                              <Ionicons name="logo-whatsapp" size={12} color="#7E22CE" />
+                              <Text style={[styles.dealActPillText, { color: '#6B21A8' }]}>
+                                {deal.review_count || 0} Review
+                              </Text>
+                            </View>
+                          </View>
+
+                          {/* Deal Footer with Activity Drawer Trigger */}
+                          <View style={styles.invCardFooter}>
+                            <TouchableOpacity
+                              style={[styles.invViewBtn, { flex: 1, justifyContent: 'center' }]}
+                              onPress={() => handleOpenDealActivity(deal)}
+                            >
+                              <Ionicons name="people-outline" size={15} color="#0A5554" />
+                              <Text style={styles.invViewBtnText}>View Member Activity</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      ))}
+
+                      {/* Pagination Bar */}
+                      {dealInvestmentsPagination.lastPage > 1 && (
+                        <View style={styles.paginationRow}>
+                          <TouchableOpacity
+                            style={[
+                              styles.pageBtn,
+                              dealInvestmentsPagination.currentPage <= 1 && styles.pageBtnDisabled,
+                            ]}
+                            disabled={dealInvestmentsPagination.currentPage <= 1}
+                            onPress={() =>
+                              handleDealInvestmentsPageChange(
+                                dealInvestmentsPagination.currentPage - 1
+                              )
+                            }
+                          >
+                            <Ionicons
+                              name="chevron-back"
+                              size={16}
+                              color={
+                                dealInvestmentsPagination.currentPage <= 1 ? '#94A3B8' : '#0F172A'
+                              }
+                            />
+                            <Text
+                              style={[
+                                styles.pageBtnText,
+                                dealInvestmentsPagination.currentPage <= 1 &&
+                                  styles.pageBtnTextDisabled,
+                              ]}
+                            >
+                              Prev
+                            </Text>
+                          </TouchableOpacity>
+
+                          <View style={styles.pageIndicatorWrap}>
+                            <Text style={styles.pageIndicatorText}>
+                              Page {dealInvestmentsPagination.currentPage} of{' '}
+                              {dealInvestmentsPagination.lastPage}
+                            </Text>
+                          </View>
+
+                          <TouchableOpacity
+                            style={[
+                              styles.pageBtn,
+                              dealInvestmentsPagination.currentPage >=
+                                dealInvestmentsPagination.lastPage && styles.pageBtnDisabled,
+                            ]}
+                            disabled={
+                              dealInvestmentsPagination.currentPage >=
+                              dealInvestmentsPagination.lastPage
+                            }
+                            onPress={() =>
+                              handleDealInvestmentsPageChange(
+                                dealInvestmentsPagination.currentPage + 1
+                              )
+                            }
+                          >
+                            <Text
+                              style={[
+                                styles.pageBtnText,
+                                dealInvestmentsPagination.currentPage >=
+                                  dealInvestmentsPagination.lastPage && styles.pageBtnTextDisabled,
+                              ]}
+                            >
+                              Next
+                            </Text>
+                            <Ionicons
+                              name="chevron-forward"
+                              size={16}
+                              color={
+                                dealInvestmentsPagination.currentPage >=
+                                dealInvestmentsPagination.lastPage
+                                  ? '#94A3B8'
+                                  : '#0F172A'
+                              }
+                            />
+                          </TouchableOpacity>
+                        </View>
+                      )}
+                    </View>
+                  )}
                 </View>
               )}
             </View>
@@ -19040,6 +20189,491 @@ export default function AdminScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* MODAL: VIEW COMPLETED INVESTMENT DETAILS */}
+      <Modal
+        visible={viewInvestmentModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setViewInvestmentModalVisible(false)}
+      >
+        <View style={styles.editModalSafeArea}>
+          <View style={[styles.editModalContainer, { marginTop: 40 }]}>
+            {/* Header */}
+            <View style={styles.editModalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                <View
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 18,
+                    backgroundColor: '#E6F4F1',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Ionicons name="trending-up" size={20} color="#0A5554" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.editModalTitle}>Investment Record</Text>
+                  <Text style={styles.editModalSubtitle}>
+                    #{selectedInvestmentForView?.id} • {selectedInvestmentForView?.startup_name || 'Portfolio Company'}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                style={styles.modalCloseBtn}
+                onPress={() => setViewInvestmentModalVisible(false)}
+              >
+                <Ionicons name="close" size={22} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              style={{ flex: 1 }}
+              contentContainerStyle={{ padding: 20, paddingBottom: 40 }}
+              showsVerticalScrollIndicator={false}
+            >
+              {/* Amount Highlight Box */}
+              <View style={styles.invDetailAmountBox}>
+                <Text style={styles.invDetailAmountLabel}>INVESTMENT AMOUNT</Text>
+                <Text style={styles.invDetailAmountValue}>
+                  {formatInvestmentAmount(selectedInvestmentForView?.amount, selectedInvestmentForView?.currency)}
+                </Text>
+                <View style={styles.invDetailStatusBadge}>
+                  <Ionicons name="checkmark-circle" size={14} color="#059669" />
+                  <Text style={styles.invDetailStatusBadgeText}>COMPLETED TRANSACTION</Text>
+                </View>
+              </View>
+
+              {/* Investor Section */}
+              <View style={styles.invDetailSection}>
+                <Text style={styles.invDetailSectionTitle}>INVESTOR DETAILS</Text>
+                <View style={styles.invDetailCard}>
+                  <View style={styles.invDetailRow}>
+                    <Text style={styles.invDetailLabel}>Investor Name:</Text>
+                    <Text style={styles.invDetailValue}>
+                      {selectedInvestmentForView?.investor_name || selectedInvestmentForView?.investor?.name || 'N/A'}
+                    </Text>
+                  </View>
+                  <View style={styles.invDetailRow}>
+                    <Text style={styles.invDetailLabel}>Email Address:</Text>
+                    <Text style={styles.invDetailValue}>
+                      {selectedInvestmentForView?.investor_email || selectedInvestmentForView?.investor?.email || 'N/A'}
+                    </Text>
+                  </View>
+                  <View style={styles.invDetailRow}>
+                    <Text style={styles.invDetailLabel}>Investor ID:</Text>
+                    <Text style={styles.invDetailValue}>
+                      #{selectedInvestmentForView?.investor_id || selectedInvestmentForView?.investor?.id || 'N/A'}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+
+              {/* Startup / Deal Section */}
+              <View style={styles.invDetailSection}>
+                <Text style={styles.invDetailSectionTitle}>PORTFOLIO STARTUP / DEAL</Text>
+                <View style={styles.invDetailCard}>
+                  <View style={styles.invDetailRow}>
+                    <Text style={styles.invDetailLabel}>Startup / Deal:</Text>
+                    <Text style={styles.invDetailValue}>
+                      {selectedInvestmentForView?.startup_name || selectedInvestmentForView?.startup?.title || 'N/A'}
+                    </Text>
+                  </View>
+                  <View style={styles.invDetailRow}>
+                    <Text style={styles.invDetailLabel}>Deal ID:</Text>
+                    <Text style={styles.invDetailValue}>
+                      #{selectedInvestmentForView?.deal_id || selectedInvestmentForView?.startup_id || 'N/A'}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+
+              {/* Transaction Dates */}
+              <View style={styles.invDetailSection}>
+                <Text style={styles.invDetailSectionTitle}>TRANSACTION DETAILS</Text>
+                <View style={styles.invDetailCard}>
+                  <View style={styles.invDetailRow}>
+                    <Text style={styles.invDetailLabel}>Completion Date:</Text>
+                    <Text style={styles.invDetailValue}>
+                      {formatInvestmentDate(selectedInvestmentForView?.completed_at)}
+                    </Text>
+                  </View>
+                  <View style={styles.invDetailRow}>
+                    <Text style={styles.invDetailLabel}>Currency:</Text>
+                    <Text style={styles.invDetailValue}>
+                      {(selectedInvestmentForView?.currency || 'BDT').toUpperCase()}
+                    </Text>
+                  </View>
+                  {Boolean(selectedInvestmentForView?.created_by_name || selectedInvestmentForView?.creator?.name) && (
+                    <View style={styles.invDetailRow}>
+                      <Text style={styles.invDetailLabel}>Recorded By:</Text>
+                      <Text style={styles.invDetailValue}>
+                        {selectedInvestmentForView?.created_by_name || selectedInvestmentForView?.creator?.name}
+                      </Text>
+                    </View>
+                  )}
+                  {Boolean(selectedInvestmentForView?.created_at) && (
+                    <View style={styles.invDetailRow}>
+                      <Text style={styles.invDetailLabel}>System Created:</Text>
+                      <Text style={styles.invDetailValue}>
+                        {formatInvestmentDate(selectedInvestmentForView?.created_at)}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              </View>
+
+              {/* Buttons */}
+              <View style={{ flexDirection: 'row', gap: 12, marginTop: 10 }}>
+                <TouchableOpacity
+                  style={[styles.subModalCancelBtn, { flex: 1 }]}
+                  onPress={() => setViewInvestmentModalVisible(false)}
+                >
+                  <Text style={styles.subModalCancelBtnText}>Close</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.subModalSaveBtn, { flex: 1, backgroundColor: '#0A5554' }]}
+                  onPress={() => {
+                    setViewInvestmentModalVisible(false);
+                    handleOpenEditInvestment(selectedInvestmentForView);
+                  }}
+                >
+                  <Ionicons name="pencil" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                  <Text style={styles.subModalSaveBtnText}>Edit Record</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* MODAL: CREATE / EDIT COMPLETED INVESTMENT */}
+      <Modal
+        visible={investmentFormModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setInvestmentFormModalVisible(false)}
+      >
+        <View style={styles.editModalSafeArea}>
+          <View style={[styles.editModalContainer, { marginTop: 40 }]}>
+            {/* Header */}
+            <View style={styles.editModalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                <View
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 18,
+                    backgroundColor: '#E6F4F1',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Ionicons
+                    name={investmentFormMode === 'create' ? 'add-circle-outline' : 'pencil-outline'}
+                    size={20}
+                    color="#0A5554"
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.editModalTitle}>
+                    {investmentFormMode === 'create' ? 'Record Investment' : 'Edit Investment'}
+                  </Text>
+                  <Text style={styles.editModalSubtitle}>
+                    {investmentFormMode === 'create'
+                      ? 'Add a closed investment transaction'
+                      : `Update record #${investmentFormData.id}`}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                style={styles.modalCloseBtn}
+                onPress={() => setInvestmentFormModalVisible(false)}
+              >
+                <Ionicons name="close" size={22} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              style={{ flex: 1 }}
+              contentContainerStyle={{ padding: 20, paddingBottom: 40 }}
+              keyboardShouldPersistTaps="handled"
+            >
+              {/* INVESTOR AUTOCOMPLETE PICKER */}
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>
+                  Investor <Text style={{ color: '#EF4444' }}>*</Text>
+                </Text>
+                {investmentFormData.investor_id ? (
+                  <View style={styles.invSelectedBadge}>
+                    <Ionicons name="person-circle" size={20} color="#0A5554" />
+                    <View style={{ flex: 1, marginLeft: 8 }}>
+                      <Text style={styles.invSelectedBadgeText} numberOfLines={1}>
+                        {investmentFormData.investor_name}
+                      </Text>
+                      <Text style={styles.invSelectedBadgeSub}>ID: #{investmentFormData.investor_id}</Text>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setInvestmentFormData((p) => ({ ...p, investor_id: '', investor_name: '' }));
+                      }}
+                      style={styles.invSelectedBadgeRemove}
+                    >
+                      <Ionicons name="close-circle" size={18} color="#64748B" />
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <View>
+                    <View style={styles.invSearchInputWrap}>
+                      <Ionicons name="search" size={16} color="#64748B" style={{ marginLeft: 10 }} />
+                      <TextInput
+                        style={styles.invSearchInput}
+                        placeholder="Type investor name or email..."
+                        placeholderTextColor="#94A3B8"
+                        value={investmentFormData.investor_name}
+                        onChangeText={handleSearchInvestorSuggestions}
+                      />
+                      {investorSuggestionsLoading && (
+                        <ActivityIndicator size="small" color="#0A5554" style={{ marginRight: 10 }} />
+                      )}
+                    </View>
+                    {investorSuggestions.length > 0 && (
+                      <View style={styles.invSuggestionsDropdown}>
+                        {investorSuggestions.map((item) => (
+                          <TouchableOpacity
+                            key={`inv-sug-${item.id}`}
+                            style={styles.invSuggestionItem}
+                            onPress={() => handleSelectInvestorSuggestion(item)}
+                          >
+                            <Ionicons name="person-outline" size={14} color="#0A5554" />
+                            <View style={{ marginLeft: 8, flex: 1 }}>
+                              <Text style={styles.invSuggestionItemText}>{item.name}</Text>
+                              {Boolean(item.email) && (
+                                <Text style={styles.invSuggestionItemSub}>{item.email}</Text>
+                              )}
+                            </View>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    )}
+                  </View>
+                )}
+              </View>
+
+              {/* STARTUP / DEAL AUTOCOMPLETE PICKER */}
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>
+                  Portfolio Startup / Deal <Text style={{ color: '#EF4444' }}>*</Text>
+                </Text>
+                {investmentFormData.deal_id ? (
+                  <View style={styles.invSelectedBadge}>
+                    <Ionicons name="business" size={20} color="#0A5554" />
+                    <View style={{ flex: 1, marginLeft: 8 }}>
+                      <Text style={styles.invSelectedBadgeText} numberOfLines={1}>
+                        {investmentFormData.startup_name}
+                      </Text>
+                      <Text style={styles.invSelectedBadgeSub}>Deal ID: #{investmentFormData.deal_id}</Text>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setInvestmentFormData((p) => ({ ...p, deal_id: '', startup_name: '' }));
+                      }}
+                      style={styles.invSelectedBadgeRemove}
+                    >
+                      <Ionicons name="close-circle" size={18} color="#64748B" />
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <View>
+                    <View style={styles.invSearchInputWrap}>
+                      <Ionicons name="search" size={16} color="#64748B" style={{ marginLeft: 10 }} />
+                      <TextInput
+                        style={styles.invSearchInput}
+                        placeholder="Type startup or deal title..."
+                        placeholderTextColor="#94A3B8"
+                        value={investmentFormData.startup_name}
+                        onChangeText={handleSearchStartupSuggestions}
+                      />
+                      {startupSuggestionsLoading && (
+                        <ActivityIndicator size="small" color="#0A5554" style={{ marginRight: 10 }} />
+                      )}
+                    </View>
+                    {startupSuggestions.length > 0 && (
+                      <View style={styles.invSuggestionsDropdown}>
+                        {startupSuggestions.map((item) => (
+                          <TouchableOpacity
+                            key={`deal-sug-${item.id}`}
+                            style={styles.invSuggestionItem}
+                            onPress={() => handleSelectStartupSuggestion(item)}
+                          >
+                            <Ionicons name="business-outline" size={14} color="#0A5554" />
+                            <View style={{ marginLeft: 8, flex: 1 }}>
+                              <Text style={styles.invSuggestionItemText}>{item.title || item.label}</Text>
+                            </View>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    )}
+                  </View>
+                )}
+              </View>
+
+              {/* AMOUNT */}
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>
+                  Investment Amount <Text style={{ color: '#EF4444' }}>*</Text>
+                </Text>
+                <TextInput
+                  style={styles.formInput}
+                  placeholder="e.g. 500000"
+                  placeholderTextColor="#94A3B8"
+                  keyboardType="numeric"
+                  value={investmentFormData.amount}
+                  onChangeText={(text) => setInvestmentFormData((p) => ({ ...p, amount: text }))}
+                />
+              </View>
+
+              {/* CURRENCY PICKER */}
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>
+                  Currency <Text style={{ color: '#EF4444' }}>*</Text>
+                </Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+                  {['BDT', 'USD', 'SGD', 'EUR', 'GBP'].map((c) => {
+                    const isSelected = (investmentFormData.currency || '').toUpperCase() === c;
+                    return (
+                      <TouchableOpacity
+                        key={`curr-chip-${c}`}
+                        style={[styles.invFormCurrChip, isSelected && styles.invFormCurrChipActive]}
+                        onPress={() => setInvestmentFormData((p) => ({ ...p, currency: c }))}
+                      >
+                        <Text
+                          style={[styles.invFormCurrChipText, isSelected && styles.invFormCurrChipTextActive]}
+                        >
+                          {c}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+                <TextInput
+                  style={[styles.formInput, { height: 40, textTransform: 'uppercase' }]}
+                  placeholder="Or enter 3-letter currency code (e.g. CAD, AUD)"
+                  placeholderTextColor="#94A3B8"
+                  maxLength={3}
+                  autoCapitalize="characters"
+                  value={investmentFormData.currency}
+                  onChangeText={(text) =>
+                    setInvestmentFormData((p) => ({ ...p, currency: text.toUpperCase() }))
+                  }
+                />
+              </View>
+
+              {/* COMPLETION DATE */}
+              <View style={styles.formGroup}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={styles.formLabel}>
+                    Completion Date (YYYY-MM-DD) <Text style={{ color: '#EF4444' }}>*</Text>
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() =>
+                      setInvestmentFormData((p) => ({
+                        ...p,
+                        completed_at: new Date().toISOString().split('T')[0],
+                      }))
+                    }
+                  >
+                    <Text style={{ fontSize: 12, color: '#0A5554', fontWeight: '700' }}>Today</Text>
+                  </TouchableOpacity>
+                </View>
+                <TextInput
+                  style={styles.formInput}
+                  placeholder="YYYY-MM-DD"
+                  placeholderTextColor="#94A3B8"
+                  value={investmentFormData.completed_at}
+                  onChangeText={(text) => setInvestmentFormData((p) => ({ ...p, completed_at: text }))}
+                />
+              </View>
+
+              {/* ACTION BUTTONS */}
+              <View style={styles.subModalBtnRow}>
+                <TouchableOpacity
+                  style={styles.subModalCancelBtn}
+                  onPress={() => setInvestmentFormModalVisible(false)}
+                  disabled={investmentFormSaving}
+                >
+                  <Text style={styles.subModalCancelBtnText}>Cancel</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.subModalSaveBtn}
+                  onPress={handleSaveInvestment}
+                  disabled={investmentFormSaving}
+                >
+                  {investmentFormSaving ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.subModalSaveBtnText}>
+                      {investmentFormMode === 'create' ? 'Record Investment' : 'Save Changes'}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* MODAL: DELETE INVESTOR INVESTMENT */}
+      <Modal
+        visible={deleteInvestmentModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setDeleteInvestmentModalVisible(false)}
+      >
+        <View style={styles.deleteModalOverlay}>
+          <View style={styles.deleteModalBox}>
+            <View style={[styles.deleteModalIconWrap, { backgroundColor: '#FEE2E2' }]}>
+              <Ionicons name="trash-outline" size={26} color="#DC2626" />
+            </View>
+            <Text style={styles.deleteModalTitle}>Delete Investment Record?</Text>
+            <Text style={styles.deleteModalMessage}>
+              Are you sure you want to permanently delete this investment record?{'\n\n'}
+              <Text style={{ fontWeight: '800', color: '#0F172A' }}>
+                {selectedInvestmentForDelete?.investor_name || 'Investor'}
+              </Text>{' '}
+              in{' '}
+              <Text style={{ fontWeight: '800', color: '#0F172A' }}>
+                {selectedInvestmentForDelete?.startup_name || 'Startup'}
+              </Text>{' '}
+              ({formatInvestmentAmount(selectedInvestmentForDelete?.amount, selectedInvestmentForDelete?.currency)})
+            </Text>
+            <View style={styles.deleteModalBtnRow}>
+              <TouchableOpacity
+                style={styles.deleteModalCancelBtn}
+                onPress={() => setDeleteInvestmentModalVisible(false)}
+                disabled={isDeletingInvestment}
+              >
+                <Text style={styles.deleteModalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.deleteModalConfirmBtn}
+                onPress={handleConfirmDeleteInvestment}
+                disabled={isDeletingInvestment}
+              >
+                {isDeletingInvestment ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.deleteModalConfirmBtnText}>Delete Record</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -24626,6 +26260,464 @@ const styles = StyleSheet.create({
   },
   formGroup: {
     gap: 6,
+  },
+
+  // ==========================================
+  // INVESTMENTS MODULE STYLES
+  // ==========================================
+
+  // KPI Summary Cards
+  invKpiScroll: {
+    marginVertical: 12,
+  },
+  invKpiScrollContent: {
+    flexDirection: 'row',
+    gap: 10,
+    paddingRight: 16,
+  },
+  invKpiCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    minWidth: 150,
+    gap: 10,
+  },
+  invKpiIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  invKpiValue: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  invKpiLabel: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '600',
+    marginTop: 1,
+  },
+
+  // Sub-Tab Switcher
+  invSubTabContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 10,
+    padding: 3,
+    marginBottom: 14,
+    gap: 4,
+  },
+  invSubTabBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 9,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    gap: 6,
+  },
+  invSubTabBtnActive: {
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  invSubTabText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  invSubTabTextActive: {
+    color: '#0A5554',
+    fontWeight: '800',
+  },
+  invSubTabBadge: {
+    backgroundColor: '#E2E8F0',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 10,
+  },
+  invSubTabBadgeActive: {
+    backgroundColor: '#E6F4F1',
+  },
+  invSubTabBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  invSubTabBadgeTextActive: {
+    color: '#0A5554',
+  },
+
+  // Currency & Activity Filter Chips
+  invFilterScroll: {
+    marginBottom: 12,
+  },
+  invFilterScrollContent: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingRight: 16,
+  },
+  invFilterChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  invFilterChipActive: {
+    backgroundColor: '#0A5554',
+    borderColor: '#0A5554',
+  },
+  invFilterChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  invFilterChipTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+
+  // Investment Cards
+  invCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 14,
+    marginBottom: 10,
+    gap: 10,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  invCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  invAvatarWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#E6F4F1',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  invAvatarText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0A5554',
+  },
+  invInvestorName: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  invInvestorEmail: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  invStatusCompleted: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+    gap: 4,
+  },
+  invStatusCompletedText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#059669',
+  },
+  invDealInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  invStartupBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    gap: 6,
+    flex: 1,
+  },
+  invStartupText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1E293B',
+    flex: 1,
+  },
+  invMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  invAmountPill: {
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  invAmountText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#059669',
+  },
+  invDateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  invDateText: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  invCardFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+    paddingTop: 10,
+    marginTop: 2,
+  },
+  invViewBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: '#E6F4F1',
+    gap: 4,
+  },
+  invViewBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0A5554',
+  },
+  invEditBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: '#EFF6FF',
+    gap: 4,
+  },
+  invEditBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#2563EB',
+  },
+  invDeleteBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 6,
+    backgroundColor: '#FEE2E2',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // Deal Activity Counters
+  dealActivityCountersRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  dealActPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    gap: 4,
+  },
+  dealActPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+
+  // View Modal Details
+  invDetailAmountBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 18,
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  invDetailAmountLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+    letterSpacing: 0.5,
+  },
+  invDetailAmountValue: {
+    fontSize: 26,
+    fontWeight: '900',
+    color: '#059669',
+    marginVertical: 4,
+  },
+  invDetailStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 10,
+    gap: 5,
+    marginTop: 4,
+  },
+  invDetailStatusBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#059669',
+  },
+  invDetailSection: {
+    marginBottom: 14,
+  },
+  invDetailSectionTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  invDetailCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 12,
+    gap: 8,
+  },
+  invDetailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  invDetailLabel: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  invDetailValue: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+
+  // Autocomplete & Form Inputs
+  invSelectedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E6F4F1',
+    borderWidth: 1,
+    borderColor: '#0A5554',
+    padding: 10,
+    borderRadius: 8,
+  },
+  invSelectedBadgeText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0A5554',
+  },
+  invSelectedBadgeSub: {
+    fontSize: 11,
+    color: '#64748B',
+  },
+  invSelectedBadgeRemove: {
+    padding: 4,
+  },
+  invSearchInputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+  },
+  invSearchInput: {
+    flex: 1,
+    height: 42,
+    paddingHorizontal: 10,
+    fontSize: 13,
+    color: '#0F172A',
+  },
+  invSuggestionsDropdown: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    marginTop: 4,
+    maxHeight: 180,
+    overflow: 'hidden',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  invSuggestionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  invSuggestionItemText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  invSuggestionItemSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  invFormCurrChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  invFormCurrChipActive: {
+    backgroundColor: '#0A5554',
+    borderColor: '#0A5554',
+  },
+  invFormCurrChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  invFormCurrChipTextActive: {
+    color: '#FFFFFF',
   },
 });
 
