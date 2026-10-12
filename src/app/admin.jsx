@@ -77,6 +77,11 @@ import {
   updateAdminStartupService,
   reorderAdminStartupServices,
   deleteAdminStartupService,
+  fetchAdminTeamMembers,
+  createAdminTeamMember,
+  updateAdminTeamMember,
+  reorderAdminTeamMembers,
+  deleteAdminTeamMember,
 } from '../services/api';
 
 export function getViewDisplayName(key) {
@@ -198,8 +203,8 @@ export default function AdminScreen() {
   const [banWealthOrdersLoading, setBanWealthOrdersLoading] = useState(false);
 
   // CMS Content State
-  const [cmsData, setCmsData] = useState(null);
-  const [cmsLoading, setCmsLoading] = useState(false);
+  const [, setCmsData] = useState(null);
+  const [, setCmsLoading] = useState(false);
 
   // Members Tab State
   const [members, setMembers] = useState([]);
@@ -518,6 +523,33 @@ export default function AdminScreen() {
     logo_file: null,
     remove_logo: false,
     remove_brochure: false,
+  });
+
+  // Team Directory State
+  const [teamMembersList, setTeamMembersList] = useState([]);
+  const [teamMembersCounts, setTeamMembersCounts] = useState({ all: 0, management: 0, governing_board: 0 });
+  const [teamMembersLoading, setTeamMembersLoading] = useState(false);
+  const [teamMembersSaving, setTeamMembersSaving] = useState(false);
+  const [teamMembersSearch, setTeamMembersSearch] = useState('');
+  const [teamMembersSectionFilter, setTeamMembersSectionFilter] = useState('all'); // 'all', 'management', 'governing_board'
+  const [selectedTeamMemberForView, setSelectedTeamMemberForView] = useState(null);
+  const [viewTeamMemberModalVisible, setViewTeamMemberModalVisible] = useState(false);
+  const [createTeamMemberModalVisible, setCreateTeamMemberModalVisible] = useState(false);
+  const [editTeamMemberModalVisible, setEditTeamMemberModalVisible] = useState(false);
+  const [editingTeamMember, setEditingTeamMember] = useState(null);
+  const [deleteTeamMemberModalVisible, setDeleteTeamMemberModalVisible] = useState(false);
+  const [selectedTeamMemberForDelete, setSelectedTeamMemberForDelete] = useState(null);
+  const [isDeletingTeamMember, setIsDeletingTeamMember] = useState(false);
+
+  const [teamMemberFormData, setTeamMemberFormData] = useState({
+    section: 'management',
+    name: '',
+    title: '',
+    subtitle: '',
+    linkedin_url: '',
+    sort_order: '',
+    photo_file: null,
+    remove_photo: false,
   });
 
   // Fetch Dashboard summary data
@@ -1049,6 +1081,33 @@ export default function AdminScreen() {
     [authToken]
   );
 
+  // Fetch Team Members
+  const loadTeamMembers = useCallback(
+    async (token = authToken, options = {}) => {
+      if (!token) return;
+      const { silent = false } = options;
+      if (!silent) setTeamMembersLoading(true);
+      try {
+        const res = await fetchAdminTeamMembers(token, {
+          section: teamMembersSectionFilter,
+          search: teamMembersSearch,
+        });
+        if (res && res.data) {
+          const list = Array.isArray(res.data) ? res.data : [];
+          setTeamMembersList(list);
+          if (res.counts) {
+            setTeamMembersCounts(res.counts);
+          }
+        }
+      } catch (err) {
+        console.log('Error loading team members:', err);
+      } finally {
+        if (!silent) setTeamMembersLoading(false);
+      }
+    },
+    [authToken, teamMembersSectionFilter, teamMembersSearch]
+  );
+
   // Handle Tab / Sidebar View Selection
   const handleTabChange = (tab) => {
     setActiveTab(tab);
@@ -1072,6 +1131,8 @@ export default function AdminScreen() {
       loadEvents(authToken, eventsSearch, eventsTypeFilter, eventsLandingFilter);
     } else if (tab === 'startup-services') {
       loadStartupServices(authToken);
+    } else if (tab === 'team-members') {
+      loadTeamMembers(authToken);
     } else if (tab === 'deals') {
       if (deals.length === 0) loadDeals(authToken);
     } else if (tab === 'founder-pitches') {
@@ -1088,12 +1149,6 @@ export default function AdminScreen() {
       if (investorInvestments.length === 0) loadInvestorInvestments(authToken);
     } else if (tab === 'ban-wealth-orders') {
       if (banWealthOrders.length === 0) loadBanWealthOrders(authToken);
-    } else if (
-      [
-        'team-members',
-      ].includes(tab)
-    ) {
-      if (!cmsData) loadCmsData();
     }
   };
 
@@ -1111,6 +1166,7 @@ export default function AdminScreen() {
     if (activeTab === 'team-about') await loadTeamAboutSection(authToken);
     if (activeTab === 'events') await loadEvents(authToken, eventsSearch, eventsTypeFilter, eventsLandingFilter);
     if (activeTab === 'startup-services') await loadStartupServices(authToken);
+    if (activeTab === 'team-members') await loadTeamMembers(authToken);
     if (activeTab === 'deals') await loadDeals(authToken);
     if (activeTab === 'submissions' || activeTab === 'founder-pitches' || activeTab === 'angel-academy') {
       await loadSubmissions(authToken);
@@ -3638,6 +3694,261 @@ export default function AdminScreen() {
     } catch (err) {
       console.log('Error reordering startup services:', err);
       loadStartupServices(authToken, { silent: true });
+    }
+  };
+
+  // ==========================================
+  // TEAM DIRECTORY HANDLERS
+  // ==========================================
+  const handleOpenCreateTeamMember = (defaultSection = 'management') => {
+    const targetSection = teamMembersSectionFilter !== 'all' ? teamMembersSectionFilter : defaultSection;
+    const sameSectionMembers = teamMembersList.filter((m) => m.section === targetSection);
+    setTeamMemberFormData({
+      section: targetSection,
+      name: '',
+      title: '',
+      subtitle: '',
+      linkedin_url: '',
+      sort_order: String(sameSectionMembers.length + 1),
+      photo_file: null,
+      remove_photo: false,
+    });
+    setEditingTeamMember(null);
+    setCreateTeamMemberModalVisible(true);
+  };
+
+  const handleOpenEditTeamMember = (item) => {
+    if (!item) return;
+    setEditingTeamMember(item);
+    setTeamMemberFormData({
+      section: item.section || 'management',
+      name: item.name || '',
+      title: item.title || '',
+      subtitle: item.subtitle || '',
+      linkedin_url: item.linkedin_url || '',
+      sort_order: item.sort_order !== undefined && item.sort_order !== null ? String(item.sort_order) : '',
+      photo_file: null,
+      remove_photo: false,
+    });
+    setEditTeamMemberModalVisible(true);
+  };
+
+  const handleOpenViewTeamMember = (item) => {
+    setSelectedTeamMemberForView(item);
+    setViewTeamMemberModalVisible(true);
+  };
+
+  const handlePickTeamMemberPhoto = async () => {
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        type: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+        copyToCacheDirectory: true,
+      });
+
+      if (!res.canceled && res.assets && res.assets.length > 0) {
+        const file = res.assets[0];
+        if (file.size && file.size > 5 * 1024 * 1024) {
+          Alert.alert('File Limit Exceeded', 'The selected photo is larger than 5 MB.');
+          return;
+        }
+        setTeamMemberFormData((prev) => ({
+          ...prev,
+          photo_file: file,
+          remove_photo: false,
+        }));
+      }
+    } catch (err) {
+      console.log('Error picking team photo:', err);
+      Alert.alert('Notice', 'Could not open image picker.');
+    }
+  };
+
+  const handleRemoveTeamMemberPhoto = () => {
+    setTeamMemberFormData((prev) => ({
+      ...prev,
+      photo_file: null,
+      remove_photo: true,
+    }));
+  };
+
+  const handleCancelTeamMemberPhotoChange = () => {
+    setTeamMemberFormData((prev) => ({
+      ...prev,
+      photo_file: null,
+      remove_photo: false,
+    }));
+  };
+
+  const buildTeamMemberPayload = (formData) => {
+    const hasNewPhoto = !!formData.photo_file;
+    const isRemovingPhoto = !!formData.remove_photo;
+    const needsFormData = hasNewPhoto || isRemovingPhoto;
+
+    if (needsFormData) {
+      const data = new FormData();
+      data.append('section', formData.section || 'management');
+      data.append('name', (formData.name || '').trim());
+      data.append('title', (formData.title || '').trim());
+      if (formData.subtitle) data.append('subtitle', formData.subtitle.trim());
+      if (formData.linkedin_url) data.append('linkedin_url', formData.linkedin_url.trim());
+      if (formData.sort_order !== '' && formData.sort_order !== null && formData.sort_order !== undefined) {
+        data.append('sort_order', String(formData.sort_order));
+      }
+      if (formData.photo_file) {
+        const uri = formData.photo_file.uri;
+        const filename = uri.split('/').pop() || 'photo.jpg';
+        const match = /\.(\w+)$/.exec(filename);
+        const type = match ? `image/${match[1]}` : 'image/jpeg';
+        data.append('photo', {
+          uri,
+          name: filename,
+          type,
+        });
+      } else if (formData.remove_photo) {
+        data.append('remove_photo', '1');
+      }
+      return data;
+    }
+
+    return {
+      section: formData.section || 'management',
+      name: (formData.name || '').trim(),
+      title: (formData.title || '').trim(),
+      subtitle: formData.subtitle ? formData.subtitle.trim() : null,
+      linkedin_url: formData.linkedin_url ? formData.linkedin_url.trim() : null,
+      sort_order: formData.sort_order !== '' && formData.sort_order !== null ? parseInt(formData.sort_order, 10) : undefined,
+    };
+  };
+
+  const handleSaveCreateTeamMember = async () => {
+    if (!authToken) return;
+    if (!teamMemberFormData.name.trim()) {
+      Alert.alert('Required Field', 'Please enter the member\'s full name.');
+      return;
+    }
+    if (!teamMemberFormData.title.trim()) {
+      Alert.alert('Required Field', 'Please enter the member\'s title or designation.');
+      return;
+    }
+
+    setTeamMembersSaving(true);
+    try {
+      const payload = buildTeamMemberPayload(teamMemberFormData);
+      const res = await createAdminTeamMember(authToken, payload);
+      if (res.ok) {
+        setCreateTeamMemberModalVisible(false);
+        Alert.alert('Success', 'Team member added successfully!');
+        loadTeamMembers(authToken);
+      } else {
+        const errorMsg = res.errors
+          ? Object.values(res.errors).flat().join('\n')
+          : res.message || 'Could not add team member.';
+        Alert.alert('Create Failed', errorMsg);
+      }
+    } catch (err) {
+      console.log('Error creating team member:', err);
+      Alert.alert('Error', 'An unexpected error occurred while adding team member.');
+    } finally {
+      setTeamMembersSaving(false);
+    }
+  };
+
+  const handleSaveEditTeamMember = async () => {
+    if (!authToken || !editingTeamMember) return;
+    if (!teamMemberFormData.name.trim()) {
+      Alert.alert('Required Field', 'Please enter the member\'s full name.');
+      return;
+    }
+    if (!teamMemberFormData.title.trim()) {
+      Alert.alert('Required Field', 'Please enter the member\'s title or designation.');
+      return;
+    }
+
+    setTeamMembersSaving(true);
+    try {
+      const payload = buildTeamMemberPayload(teamMemberFormData);
+      const res = await updateAdminTeamMember(authToken, editingTeamMember.id, payload);
+      if (res.ok) {
+        const updated = res.data || { ...editingTeamMember, ...teamMemberFormData };
+        setTeamMembersList((prev) =>
+          prev.map((m) => (m.id === editingTeamMember.id ? updated : m))
+        );
+        if (selectedTeamMemberForView?.id === editingTeamMember.id) {
+          setSelectedTeamMemberForView(updated);
+        }
+        setEditTeamMemberModalVisible(false);
+        setEditingTeamMember(null);
+        Alert.alert('Success', 'Team member updated successfully!');
+        loadTeamMembers(authToken, { silent: true });
+      } else {
+        const errorMsg = res.errors
+          ? Object.values(res.errors).flat().join('\n')
+          : res.message || 'Could not update team member.';
+        Alert.alert('Update Failed', errorMsg);
+      }
+    } catch (err) {
+      console.log('Error updating team member:', err);
+      Alert.alert('Error', 'An unexpected error occurred while updating team member.');
+    } finally {
+      setTeamMembersSaving(false);
+    }
+  };
+
+  const handleOpenDeleteTeamMember = (item) => {
+    setSelectedTeamMemberForDelete(item);
+    setDeleteTeamMemberModalVisible(true);
+  };
+
+  const handleConfirmDeleteTeamMember = async () => {
+    if (!authToken || !selectedTeamMemberForDelete) return;
+    setIsDeletingTeamMember(true);
+    try {
+      const res = await deleteAdminTeamMember(authToken, selectedTeamMemberForDelete.id);
+      if (res.ok) {
+        setTeamMembersList((prev) => prev.filter((m) => m.id !== selectedTeamMemberForDelete.id));
+        setTeamMembersCounts((prev) => ({
+          ...prev,
+          all: Math.max(0, (prev.all || 1) - 1),
+          management: selectedTeamMemberForDelete.section === 'management' ? Math.max(0, (prev.management || 1) - 1) : prev.management,
+          governing_board: selectedTeamMemberForDelete.section === 'governing_board' ? Math.max(0, (prev.governing_board || 1) - 1) : prev.governing_board,
+        }));
+        setDeleteTeamMemberModalVisible(false);
+        if (selectedTeamMemberForView?.id === selectedTeamMemberForDelete.id) {
+          setViewTeamMemberModalVisible(false);
+          setSelectedTeamMemberForView(null);
+        }
+        setSelectedTeamMemberForDelete(null);
+        Alert.alert('Deleted', 'Team member deleted successfully.');
+      } else {
+        Alert.alert('Delete Failed', res.message || 'Could not delete team member.');
+      }
+    } catch (err) {
+      console.log('Error deleting team member:', err);
+      Alert.alert('Error', 'An unexpected error occurred while deleting member.');
+    } finally {
+      setIsDeletingTeamMember(false);
+      setSelectedTeamMemberForDelete(null);
+    }
+  };
+
+  const handleMoveTeamMember = async (index, direction) => {
+    if (!authToken) return;
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= teamMembersList.length) return;
+
+    const newList = [...teamMembersList];
+    const [moved] = newList.splice(index, 1);
+    newList.splice(targetIndex, 0, moved);
+
+    // Optimistically update
+    setTeamMembersList(newList);
+
+    try {
+      const orderIds = newList.map((item) => item.id);
+      await reorderAdminTeamMembers(authToken, orderIds);
+    } catch (err) {
+      console.log('Error reordering team members:', err);
+      loadTeamMembers(authToken, { silent: true });
     }
   };
 
@@ -7846,44 +8157,316 @@ export default function AdminScreen() {
           {/* TAB: TEAM DIRECTORY */}
           {activeTab === 'team-members' && (
             <View style={styles.tabContent}>
+              {/* Header with Title and Add Button */}
               <View style={styles.sectionHeaderRow}>
-                <View>
+                <View style={{ flex: 1, paddingRight: 8 }}>
                   <Text style={styles.sectionHeading}>Team Directory</Text>
-                  <Text style={styles.sectionSubheading}>Management team and governing board</Text>
+                  <Text style={styles.sectionSubheading}>
+                    Leadership, operators & governing board
+                  </Text>
                 </View>
-                <TouchableOpacity
-                  style={styles.refreshIconBtn}
-                  onPress={loadCmsData}
-                  disabled={cmsLoading}
-                >
-                  <Ionicons
-                    name="refresh"
-                    size={18}
-                    color={Colors.forest}
-                    style={cmsLoading ? { opacity: 0.5 } : {}}
-                  />
-                </TouchableOpacity>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <TouchableOpacity
+                    style={styles.teamAboutEditBtn}
+                    onPress={() => handleOpenCreateTeamMember('management')}
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="add" size={16} color="#FFFFFF" />
+                    <Text style={styles.teamAboutEditBtnText}>Add Member</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.refreshIconBtn}
+                    onPress={() => loadTeamMembers(authToken)}
+                    disabled={teamMembersLoading}
+                  >
+                    <Ionicons
+                      name="refresh"
+                      size={18}
+                      color={Colors.forest}
+                      style={teamMembersLoading ? { opacity: 0.5 } : {}}
+                    />
+                  </TouchableOpacity>
+                </View>
               </View>
 
-              <View style={styles.cardsList}>
-                {(cmsData?.team?.management || [
-                  { name: 'Nirjhor Rahman', title: 'Chief Executive Officer' },
-                  { name: 'Sajid Rahman', title: 'Investment Advisor' },
-                  { name: 'Tahmid Ferdous', title: 'Tech Analyst & Developer' },
-                ]).map((tm, idx) => (
-                  <View key={`tm-${idx}`} style={styles.memberCard}>
-                    <View style={styles.memberCardTop}>
-                      <View style={styles.avatarCircleLarge}>
-                        <Text style={styles.avatarTextLarge}>{tm.name.charAt(0)}</Text>
+              {/* Section Filter Chips Row */}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={{ marginBottom: 12 }}
+                contentContainerStyle={{ gap: 8 }}
+              >
+                {[
+                  { key: 'all', label: 'All Members', count: teamMembersCounts.all || teamMembersList.length },
+                  { key: 'management', label: 'Management', count: teamMembersCounts.management },
+                  { key: 'governing_board', label: 'Governing Board', count: teamMembersCounts.governing_board },
+                ].map((chip) => {
+                  const isActive = teamMembersSectionFilter === chip.key;
+                  return (
+                    <TouchableOpacity
+                      key={chip.key}
+                      style={[
+                        styles.filterChip,
+                        isActive && styles.filterChipActive,
+                        { flexDirection: 'row', alignItems: 'center', gap: 6 },
+                      ]}
+                      onPress={() => setTeamMembersSectionFilter(chip.key)}
+                      activeOpacity={0.8}
+                    >
+                      <Text
+                        style={[
+                          styles.filterChipText,
+                          isActive && styles.filterChipTextActive,
+                        ]}
+                      >
+                        {chip.label}
+                      </Text>
+                      <View
+                        style={[
+                          styles.filterChipBadge,
+                          isActive && styles.filterChipBadgeActive,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.filterChipBadgeText,
+                            isActive && styles.filterChipBadgeTextActive,
+                          ]}
+                        >
+                          {chip.count}
+                        </Text>
                       </View>
-                      <View style={styles.memberInfo}>
-                        <Text style={styles.memberName}>{tm.name}</Text>
-                        <Text style={styles.memberEmail}>{tm.title}</Text>
-                      </View>
-                    </View>
-                  </View>
-                ))}
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+
+              {/* Real-time Search Bar */}
+              <View style={styles.searchBarContainer}>
+                <Ionicons name="search-outline" size={18} color="#64748B" style={{ marginLeft: 12 }} />
+                <TextInput
+                  style={[styles.searchInput, { paddingLeft: 8 }]}
+                  placeholder="Search members by name, title, or affiliation..."
+                  placeholderTextColor="#94A3B8"
+                  value={teamMembersSearch}
+                  onChangeText={setTeamMembersSearch}
+                  clearButtonMode="while-editing"
+                />
+                {teamMembersSearch ? (
+                  <TouchableOpacity
+                    onPress={() => setTeamMembersSearch('')}
+                    style={{ padding: 8, marginRight: 4 }}
+                  >
+                    <Ionicons name="close-circle" size={18} color="#94A3B8" />
+                  </TouchableOpacity>
+                ) : null}
               </View>
+
+              {/* List of Team Members */}
+              {teamMembersLoading && teamMembersList.length === 0 ? (
+                <View style={styles.statsLoadingBox}>
+                  <ActivityIndicator size="large" color="#0A5554" />
+                  <Text style={styles.statsLoadingText}>Loading team directory...</Text>
+                </View>
+              ) : teamMembersList.length === 0 ? (
+                <View style={[styles.emptyContainer, { backgroundColor: '#FFFFFF', borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', padding: 24 }]}>
+                  <View style={styles.statsEmptyIconWrap}>
+                    <Ionicons name="people-outline" size={26} color="#94A3B8" />
+                  </View>
+                  <Text style={{ fontSize: 16, fontWeight: '700', color: '#0F172A', marginBottom: 6 }}>No Team Members Found</Text>
+                  <Text style={{ fontSize: 13, color: '#64748B', textAlign: 'center', marginBottom: 14 }}>
+                    {teamMembersSearch || teamMembersSectionFilter !== 'all'
+                      ? 'No members match the selected filter or search term.'
+                      : 'Add leadership and governing board members to showcase your team on the live site.'}
+                  </Text>
+                  <TouchableOpacity
+                    style={[styles.programsAddBtn, { alignSelf: 'center' }]}
+                    onPress={() => handleOpenCreateTeamMember('management')}
+                  >
+                    <Ionicons name="add" size={16} color="#FFFFFF" />
+                    <Text style={styles.programsAddBtnText}>Add Team Member</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View style={{ gap: 12 }}>
+                  {teamMembersList
+                    .filter((item) => {
+                      if (teamMembersSectionFilter !== 'all' && item.section !== teamMembersSectionFilter) {
+                        return false;
+                      }
+                      if (!teamMembersSearch) return true;
+                      const q = teamMembersSearch.toLowerCase();
+                      const nameMatch = (item.name || '').toLowerCase().includes(q);
+                      const titleMatch = (item.title || '').toLowerCase().includes(q);
+                      const subMatch = (item.subtitle || '').toLowerCase().includes(q);
+                      return nameMatch || titleMatch || subMatch;
+                    })
+                    .map((item, idx) => {
+                      const isManagement = item.section === 'management';
+                      const photoSrc = item.photo_url || null;
+
+                      return (
+                        <View key={`team-m-${item.id}`} style={[styles.eventCard, { padding: 14, gap: 10 }]}>
+                          {/* Member Top Row */}
+                          <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
+                            {photoSrc ? (
+                              <Image
+                                source={{ uri: photoSrc }}
+                                style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: '#E2E8F0', borderWidth: 1, borderColor: '#CBD5E1' }}
+                              />
+                            ) : (
+                              <View
+                                style={{
+                                  width: 52,
+                                  height: 52,
+                                  borderRadius: 26,
+                                  backgroundColor: '#E6F4F1',
+                                  borderWidth: 1,
+                                  borderColor: '#B4E6DA',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                }}
+                              >
+                                <Text style={{ fontSize: 20, fontWeight: '800', color: '#0A5554' }}>
+                                  {(item.name || 'M').charAt(0).toUpperCase()}
+                                </Text>
+                              </View>
+                            )}
+
+                            <View style={{ flex: 1 }}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginBottom: 2 }}>
+                                <Text style={[styles.eventTitle, { fontSize: 16, flex: 1 }]} numberOfLines={1}>
+                                  {item.name}
+                                </Text>
+
+                                {/* Up / Down Reordering Buttons */}
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                  <TouchableOpacity
+                                    style={{ padding: 4, borderRadius: 6, backgroundColor: idx === 0 ? '#F8FAFC' : '#F1F5F9', opacity: idx === 0 ? 0.35 : 1 }}
+                                    disabled={idx === 0}
+                                    onPress={() => handleMoveTeamMember(idx, 'up')}
+                                    activeOpacity={0.7}
+                                  >
+                                    <Ionicons name="arrow-up" size={12} color="#334155" />
+                                  </TouchableOpacity>
+                                  <TouchableOpacity
+                                    style={{ padding: 4, borderRadius: 6, backgroundColor: idx === teamMembersList.length - 1 ? '#F8FAFC' : '#F1F5F9', opacity: idx === teamMembersList.length - 1 ? 0.35 : 1 }}
+                                    disabled={idx === teamMembersList.length - 1}
+                                    onPress={() => handleMoveTeamMember(idx, 'down')}
+                                    activeOpacity={0.7}
+                                  >
+                                    <Ionicons name="arrow-down" size={12} color="#334155" />
+                                  </TouchableOpacity>
+                                </View>
+                              </View>
+
+                              <Text style={{ fontSize: 13, fontWeight: '700', color: '#0A5554', marginBottom: 2 }} numberOfLines={1}>
+                                {item.title}
+                              </Text>
+
+                              {item.subtitle ? (
+                                <Text style={{ fontSize: 12, color: '#64748B', marginBottom: 6 }} numberOfLines={1}>
+                                  {item.subtitle}
+                                </Text>
+                              ) : null}
+
+                              {/* Section & Sort Badge */}
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                                <View
+                                  style={[
+                                    styles.eventTypePill,
+                                    isManagement ? styles.eventTypePillEvent : styles.eventTypePillWebinar,
+                                  ]}
+                                >
+                                  <Text
+                                    style={[
+                                      styles.eventTypePillText,
+                                      isManagement ? styles.eventTypePillTextEvent : styles.eventTypePillTextWebinar,
+                                    ]}
+                                  >
+                                    {isManagement ? 'Management' : 'Governing Board'}
+                                  </Text>
+                                </View>
+                                <View style={{ backgroundColor: '#F1F5F9', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6 }}>
+                                  <Text style={{ fontSize: 10, fontWeight: '800', color: '#64748B' }}>
+                                    Order #{item.sort_order || idx + 1}
+                                  </Text>
+                                </View>
+                              </View>
+                            </View>
+                          </View>
+
+                          {/* LinkedIn Link (if available) */}
+                          {item.linkedin_url ? (
+                            <TouchableOpacity
+                              style={styles.eventCtaBar}
+                              onPress={() => {
+                                Linking.openURL(item.linkedin_url).catch(() => Alert.alert('Notice', `Could not open: ${item.linkedin_url}`));
+                              }}
+                              activeOpacity={0.8}
+                            >
+                              <Ionicons name="logo-linkedin" size={14} color="#0A66C2" />
+                              <Text style={[styles.eventCtaBarText, { color: '#0A66C2' }]} numberOfLines={1}>
+                                {item.linkedin_url}
+                              </Text>
+                              <Ionicons name="open-outline" size={12} color="#0A66C2" />
+                            </TouchableOpacity>
+                          ) : null}
+
+                          {/* Action Toolbar */}
+                          <View style={styles.eventActionsRow}>
+                            <TouchableOpacity
+                              style={styles.eventActionBtn}
+                              onPress={() => handleOpenViewTeamMember(item)}
+                              activeOpacity={0.8}
+                            >
+                              <Ionicons name="eye-outline" size={14} color="#0A5554" />
+                              <Text style={styles.eventActionBtnText}>View Details</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                              style={[styles.eventActionBtn, styles.eventActionBtnEdit]}
+                              onPress={() => handleOpenEditTeamMember(item)}
+                              activeOpacity={0.8}
+                            >
+                              <Ionicons name="create-outline" size={14} color="#0284C7" />
+                              <Text style={[styles.eventActionBtnText, { color: '#0284C7' }]}>Edit</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                              style={[styles.eventActionBtn, styles.eventActionBtnDelete]}
+                              onPress={() => handleOpenDeleteTeamMember(item)}
+                              activeOpacity={0.8}
+                            >
+                              <Ionicons name="trash-outline" size={14} color="#DC2626" />
+                              <Text style={[styles.eventActionBtnText, { color: '#DC2626' }]}>Delete</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      );
+                    })}
+                </View>
+              )}
+
+              {/* View on website link card */}
+              <TouchableOpacity
+                style={styles.statsExternalLinkCard}
+                onPress={() => {
+                  Linking.openURL('https://bdangels.co/team').catch(() => {
+                    Alert.alert('Notice', 'Could not open https://bdangels.co/team');
+                  });
+                }}
+                activeOpacity={0.8}
+              >
+                <View style={styles.statsExternalLinkLeft}>
+                  <Ionicons name="globe-outline" size={20} color="#0A5554" />
+                  <View>
+                    <Text style={styles.statsExternalLinkTitle}>View team on live site</Text>
+                    <Text style={styles.statsExternalLinkDesc}>bdangels.co/team leadership and board</Text>
+                  </View>
+                </View>
+                <Ionicons name="open-outline" size={18} color="#0A5554" />
+              </TouchableOpacity>
             </View>
           )}
 
@@ -13170,6 +13753,610 @@ export default function AdminScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* ========================================== */}
+      {/* 1. VIEW TEAM MEMBER DETAILS MODAL         */}
+      {/* ========================================== */}
+      <Modal
+        visible={viewTeamMemberModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setViewTeamMemberModalVisible(false)}
+      >
+        <SafeAreaView style={styles.editModalSafeArea}>
+          <View style={styles.editModalContainer}>
+            {/* Modal Header */}
+            <View style={styles.editModalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                <View
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 18,
+                    backgroundColor: '#E6F4F1',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Ionicons name="people-outline" size={20} color="#0A5554" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.editModalTitle} numberOfLines={1}>
+                    Team Member Details
+                  </Text>
+                  <Text style={styles.editModalSubtitle} numberOfLines={1}>
+                    Leadership & Governing Board roster
+                  </Text>
+                </View>
+              </View>
+
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                {selectedTeamMemberForView?.id ? (
+                  <View style={styles.editModalIdBadge}>
+                    <Text style={styles.editModalIdBadgeText}>
+                      #{selectedTeamMemberForView.id}
+                    </Text>
+                  </View>
+                ) : null}
+                <TouchableOpacity
+                  style={styles.modalCloseBtn}
+                  onPress={() => setViewTeamMemberModalVisible(false)}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="close" size={20} color="#64748B" />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Modal Body */}
+            <ScrollView
+              style={styles.editModalScrollView}
+              contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
+              showsVerticalScrollIndicator={false}
+            >
+              {selectedTeamMemberForView ? (
+                <View style={{ gap: 16 }}>
+                  {/* Hero Card */}
+                  <View style={[styles.eventCard, { padding: 16, alignItems: 'center', gap: 10 }]}>
+                    {selectedTeamMemberForView.photo_url ? (
+                      <Image
+                        source={{ uri: selectedTeamMemberForView.photo_url }}
+                        style={{
+                          width: 88,
+                          height: 88,
+                          borderRadius: 44,
+                          backgroundColor: '#E2E8F0',
+                          borderWidth: 2,
+                          borderColor: '#CBD5E1',
+                        }}
+                      />
+                    ) : (
+                      <View
+                        style={{
+                          width: 88,
+                          height: 88,
+                          borderRadius: 44,
+                          backgroundColor: '#E6F4F1',
+                          borderWidth: 2,
+                          borderColor: '#B4E6DA',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        <Text style={{ fontSize: 32, fontWeight: '800', color: '#0A5554' }}>
+                          {(selectedTeamMemberForView.name || 'M').charAt(0).toUpperCase()}
+                        </Text>
+                      </View>
+                    )}
+
+                    <Text style={[styles.eventTitle, { fontSize: 20, textAlign: 'center', marginTop: 4 }]}>
+                      {selectedTeamMemberForView.name}
+                    </Text>
+
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: '#0A5554', textAlign: 'center' }}>
+                      {selectedTeamMemberForView.title}
+                    </Text>
+
+                    {selectedTeamMemberForView.subtitle ? (
+                      <Text style={{ fontSize: 13, color: '#64748B', textAlign: 'center' }}>
+                        {selectedTeamMemberForView.subtitle}
+                      </Text>
+                    ) : null}
+
+                    {/* Section & Sort Order Badges */}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
+                      <View
+                        style={[
+                          styles.eventLandingBadge,
+                          selectedTeamMemberForView.section === 'management'
+                            ? { backgroundColor: '#E6F4F1', borderColor: '#B4E6DA' }
+                            : { backgroundColor: '#EEF2FF', borderColor: '#C7D2FE' },
+                        ]}
+                      >
+                        <Ionicons
+                          name={selectedTeamMemberForView.section === 'management' ? 'briefcase-outline' : 'shield-checkmark-outline'}
+                          size={13}
+                          color={selectedTeamMemberForView.section === 'management' ? '#0A5554' : '#4338CA'}
+                        />
+                        <Text
+                          style={[
+                            styles.eventLandingBadgeText,
+                            { color: selectedTeamMemberForView.section === 'management' ? '#0A5554' : '#4338CA' },
+                          ]}
+                        >
+                          {selectedTeamMemberForView.section === 'management' ? 'Management Team' : 'Governing Board'}
+                        </Text>
+                      </View>
+
+                      <View style={{ backgroundColor: '#F1F5F9', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 }}>
+                        <Text style={{ fontSize: 12, fontWeight: '800', color: '#475569' }}>
+                          Order #{selectedTeamMemberForView.sort_order || 1}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+
+                  {/* Member Details List */}
+                  <View style={{ backgroundColor: '#FFFFFF', borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', padding: 14, gap: 12 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '800', color: '#0A5554', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                      Member Information
+                    </Text>
+
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+                      <Text style={{ fontSize: 13, color: '#64748B' }}>Full Name</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A', flex: 1, textAlign: 'right' }}>
+                        {selectedTeamMemberForView.name}
+                      </Text>
+                    </View>
+
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+                      <Text style={{ fontSize: 13, color: '#64748B' }}>Designation / Title</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A', flex: 1, textAlign: 'right' }}>
+                        {selectedTeamMemberForView.title}
+                      </Text>
+                    </View>
+
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+                      <Text style={{ fontSize: 13, color: '#64748B' }}>Subtitle / Affiliation</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: selectedTeamMemberForView.subtitle ? '#0F172A' : '#94A3B8', flex: 1, textAlign: 'right' }}>
+                        {selectedTeamMemberForView.subtitle || 'None'}
+                      </Text>
+                    </View>
+
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+                      <Text style={{ fontSize: 13, color: '#64748B' }}>Directory Section</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: selectedTeamMemberForView.section === 'management' ? '#0A5554' : '#4338CA' }}>
+                        {selectedTeamMemberForView.section === 'management' ? 'Executive Management' : 'Governing Board'}
+                      </Text>
+                    </View>
+
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+                      <Text style={{ fontSize: 13, color: '#64748B' }}>Roster Display Priority</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>
+                        #{selectedTeamMemberForView.sort_order || 1}
+                      </Text>
+                    </View>
+
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6 }}>
+                      <Text style={{ fontSize: 13, color: '#64748B' }}>LinkedIn Profile</Text>
+                      {selectedTeamMemberForView.linkedin_url ? (
+                        <TouchableOpacity
+                          style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#EFF6FF', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6, borderWidth: 1, borderColor: '#BFDBFE' }}
+                          onPress={() => Linking.openURL(selectedTeamMemberForView.linkedin_url)}
+                          activeOpacity={0.8}
+                        >
+                          <Ionicons name="logo-linkedin" size={14} color="#0284C7" />
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#0369A1' }}>Open Profile</Text>
+                        </TouchableOpacity>
+                      ) : (
+                        <Text style={{ fontSize: 13, color: '#94A3B8' }}>Not provided</Text>
+                      )}
+                    </View>
+                  </View>
+
+                  {/* Public Display Context Info */}
+                  <View style={{ backgroundColor: '#F8FAFC', borderRadius: 10, borderWidth: 1, borderColor: '#E2E8F0', padding: 12, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                    <Ionicons name="information-circle-outline" size={20} color="#0A5554" />
+                    <Text style={{ fontSize: 12, color: '#475569', flex: 1, lineHeight: 18 }}>
+                      Appears on the public <Text style={{ fontWeight: '700', color: '#0F172A' }}>/team</Text> page under the {selectedTeamMemberForView.section === 'management' ? 'Executive Management' : 'Governing Board'} section.
+                    </Text>
+                  </View>
+                </View>
+              ) : null}
+            </ScrollView>
+
+            {/* Modal Footer */}
+            <View style={styles.editModalFooter}>
+              <TouchableOpacity
+                style={styles.editModalCancelBtn}
+                onPress={() => setViewTeamMemberModalVisible(false)}
+              >
+                <Text style={styles.editModalCancelBtnText}>Close</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.editModalSaveBtn}
+                onPress={() => {
+                  const m = selectedTeamMemberForView;
+                  setViewTeamMemberModalVisible(false);
+                  if (m) handleOpenEditTeamMember(m);
+                }}
+              >
+                <Ionicons name="create-outline" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.editModalSaveBtnText}>Edit Member</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      {/* ========================================== */}
+      {/* 2. CREATE / EDIT TEAM MEMBER MODAL        */}
+      {/* ========================================== */}
+      <Modal
+        visible={createTeamMemberModalVisible || editTeamMemberModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => {
+          setCreateTeamMemberModalVisible(false);
+          setEditTeamMemberModalVisible(false);
+          setEditingTeamMember(null);
+        }}
+      >
+        <SafeAreaView style={styles.editModalSafeArea}>
+          <View style={styles.editModalContainer}>
+            {/* Modal Header */}
+            <View style={styles.editModalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                <View
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 18,
+                    backgroundColor: '#E6F4F1',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Ionicons name="people-outline" size={20} color="#0A5554" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.editModalTitle} numberOfLines={1}>
+                    {editingTeamMember ? 'Edit Team Member' : 'New Team Member'}
+                  </Text>
+                  <Text style={styles.editModalSubtitle} numberOfLines={1}>
+                    {editingTeamMember ? 'Update leadership card info & photo' : 'Add member to leadership roster'}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                {editingTeamMember?.id ? (
+                  <View style={styles.editModalIdBadge}>
+                    <Text style={styles.editModalIdBadgeText}>
+                      #{editingTeamMember.id}
+                    </Text>
+                  </View>
+                ) : null}
+                <TouchableOpacity
+                  style={styles.modalCloseBtn}
+                  onPress={() => {
+                    setCreateTeamMemberModalVisible(false);
+                    setEditTeamMemberModalVisible(false);
+                    setEditingTeamMember(null);
+                  }}
+                  activeOpacity={0.7}
+                  disabled={teamMembersSaving}
+                >
+                  <Ionicons name="close" size={20} color="#64748B" />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Modal Body */}
+            <ScrollView
+              style={styles.editModalScrollView}
+              contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
+              <View style={{ gap: 16 }}>
+                {/* Field 1: Section Selector */}
+                <View style={styles.formField}>
+                  <Text style={styles.formLabel}>Directory Section *</Text>
+                  <View style={{ flexDirection: 'row', gap: 10 }}>
+                    {[
+                      { key: 'management', label: 'Management', icon: 'briefcase-outline', desc: 'Core executive & operations team' },
+                      { key: 'governing_board', label: 'Governing Board', icon: 'shield-checkmark-outline', desc: 'Advisory board & directors' },
+                    ].map((sec) => {
+                      const isSelected = teamMemberFormData.section === sec.key;
+                      return (
+                        <TouchableOpacity
+                          key={`sec-select-${sec.key}`}
+                          style={{
+                            flex: 1,
+                            backgroundColor: isSelected ? '#E6F4F1' : '#FFFFFF',
+                            borderRadius: 10,
+                            borderWidth: 1.5,
+                            borderColor: isSelected ? '#0A5554' : '#E2E8F0',
+                            padding: 12,
+                            alignItems: 'center',
+                            gap: 4,
+                          }}
+                          onPress={() => setTeamMemberFormData((prev) => ({ ...prev, section: sec.key }))}
+                          activeOpacity={0.8}
+                        >
+                          <Ionicons
+                            name={sec.icon}
+                            size={20}
+                            color={isSelected ? '#0A5554' : '#64748B'}
+                          />
+                          <Text
+                            style={{
+                              fontSize: 13,
+                              fontWeight: '700',
+                              color: isSelected ? '#0A5554' : '#334155',
+                              textAlign: 'center',
+                            }}
+                          >
+                            {sec.label}
+                          </Text>
+                          <Text
+                            style={{
+                              fontSize: 10,
+                              color: isSelected ? '#065F46' : '#94A3B8',
+                              textAlign: 'center',
+                            }}
+                            numberOfLines={2}
+                          >
+                            {sec.desc}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+
+                {/* Field 2: Photo Upload */}
+                <View style={styles.formField}>
+                  <Text style={styles.formLabel}>Member Photo (Optional)</Text>
+                  <View style={styles.teamAboutPhotoPickerBox}>
+                    <View style={styles.teamAboutPhotoPickerRow}>
+                      {teamMemberFormData.photo_file ? (
+                        <Image
+                          source={{ uri: teamMemberFormData.photo_file.uri }}
+                          style={[styles.teamAboutPhotoThumb, { borderRadius: 36 }]}
+                        />
+                      ) : editingTeamMember && editingTeamMember.photo_url && !teamMemberFormData.remove_photo ? (
+                        <Image
+                          source={{ uri: editingTeamMember.photo_url }}
+                          style={[styles.teamAboutPhotoThumb, { borderRadius: 36 }]}
+                        />
+                      ) : (
+                        <View
+                          style={[
+                            styles.teamAboutPhotoThumb,
+                            {
+                              borderRadius: 36,
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              backgroundColor: '#F1F5F9',
+                              borderColor: '#CBD5E1',
+                            },
+                          ]}
+                        >
+                          <Ionicons name="person-outline" size={28} color="#94A3B8" />
+                        </View>
+                      )}
+
+                      <View style={styles.teamAboutPhotoActionsCol}>
+                        <TouchableOpacity
+                          style={styles.teamAboutPhotoChooseBtn}
+                          onPress={handlePickTeamMemberPhoto}
+                          activeOpacity={0.8}
+                        >
+                          <Ionicons name="camera-outline" size={16} color="#0A5554" />
+                          <Text style={styles.teamAboutPhotoChooseBtnText}>
+                            {teamMemberFormData.photo_file ? 'Change Photo' : 'Choose Photo'}
+                          </Text>
+                        </TouchableOpacity>
+
+                        {teamMemberFormData.photo_file ? (
+                          <TouchableOpacity
+                            style={styles.teamAboutPhotoRemoveBtn}
+                            onPress={handleCancelTeamMemberPhotoChange}
+                            activeOpacity={0.8}
+                          >
+                            <Ionicons name="close-circle-outline" size={14} color="#DC2626" />
+                            <Text style={styles.teamAboutPhotoRemoveBtnText}>Cancel Selected</Text>
+                          </TouchableOpacity>
+                        ) : editingTeamMember && editingTeamMember.photo_url && !teamMemberFormData.remove_photo ? (
+                          <TouchableOpacity
+                            style={styles.teamAboutPhotoRemoveBtn}
+                            onPress={handleRemoveTeamMemberPhoto}
+                            activeOpacity={0.8}
+                          >
+                            <Ionicons name="trash-outline" size={14} color="#DC2626" />
+                            <Text style={styles.teamAboutPhotoRemoveBtnText}>Remove Photo</Text>
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+                    </View>
+
+                    {teamMemberFormData.remove_photo ? (
+                      <View style={styles.teamAboutPhotoRemovedNotice}>
+                        <Text style={styles.teamAboutPhotoRemovedText}>Photo marked for removal on save.</Text>
+                        <TouchableOpacity
+                          style={styles.teamAboutPhotoUndoBtn}
+                          onPress={() => setTeamMemberFormData((prev) => ({ ...prev, remove_photo: false }))}
+                        >
+                          <Text style={styles.teamAboutPhotoUndoBtnText}>Undo</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : null}
+
+                    <Text style={{ fontSize: 11, color: '#94A3B8' }}>
+                      Square portrait photos (JPG, PNG, WebP) work best. Max 5 MB.
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Field 3: Full Name */}
+                <View style={styles.formField}>
+                  <Text style={styles.formLabel}>Full Name *</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    value={teamMemberFormData.name}
+                    onChangeText={(text) => setTeamMemberFormData((prev) => ({ ...prev, name: text }))}
+                    placeholder="e.g. Sarah Jenkins"
+                    placeholderTextColor="#94A3B8"
+                    maxLength={255}
+                  />
+                </View>
+
+                {/* Field 4: Title / Designation */}
+                <View style={styles.formField}>
+                  <Text style={styles.formLabel}>Title / Role Designation *</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    value={teamMemberFormData.title}
+                    onChangeText={(text) => setTeamMemberFormData((prev) => ({ ...prev, title: text }))}
+                    placeholder="e.g. Managing Director or Board Member"
+                    placeholderTextColor="#94A3B8"
+                    maxLength={255}
+                  />
+                  <Text style={{ fontSize: 11, color: '#94A3B8', marginTop: 4 }}>
+                    Shown directly beneath the member name in cards and roster listings.
+                  </Text>
+                </View>
+
+                {/* Field 5: Subtitle / Affiliation */}
+                <View style={styles.formField}>
+                  <Text style={styles.formLabel}>Subtitle / Affiliation (Optional)</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    value={teamMemberFormData.subtitle}
+                    onChangeText={(text) => setTeamMemberFormData((prev) => ({ ...prev, subtitle: text }))}
+                    placeholder="e.g. Founder & CEO, Anchor Ventures"
+                    placeholderTextColor="#94A3B8"
+                    maxLength={255}
+                  />
+                  <Text style={{ fontSize: 11, color: '#94A3B8', marginTop: 4 }}>
+                    Optional secondary title or company affiliation.
+                  </Text>
+                </View>
+
+                {/* Field 6: LinkedIn URL */}
+                <View style={styles.formField}>
+                  <Text style={styles.formLabel}>LinkedIn Profile URL (Optional)</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    value={teamMemberFormData.linkedin_url}
+                    onChangeText={(text) => setTeamMemberFormData((prev) => ({ ...prev, linkedin_url: text }))}
+                    placeholder="https://www.linkedin.com/in/username"
+                    placeholderTextColor="#94A3B8"
+                    keyboardType="url"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    maxLength={500}
+                  />
+                </View>
+
+                {/* Field 7: Sort Order */}
+                <View style={styles.formField}>
+                  <Text style={styles.formLabel}>Display Priority / Sort Order</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    value={String(teamMemberFormData.sort_order ?? '')}
+                    onChangeText={(text) => setTeamMemberFormData((prev) => ({ ...prev, sort_order: text }))}
+                    placeholder="1"
+                    placeholderTextColor="#94A3B8"
+                    keyboardType="numeric"
+                    maxLength={5}
+                  />
+                  <Text style={{ fontSize: 11, color: '#94A3B8', marginTop: 4 }}>
+                    Lower numbers appear first within the section roster on the public page.
+                  </Text>
+                </View>
+              </View>
+            </ScrollView>
+
+            {/* Modal Footer */}
+            <View style={styles.editModalFooter}>
+              <TouchableOpacity
+                style={styles.editModalCancelBtn}
+                onPress={() => {
+                  setCreateTeamMemberModalVisible(false);
+                  setEditTeamMemberModalVisible(false);
+                  setEditingTeamMember(null);
+                }}
+                disabled={teamMembersSaving}
+              >
+                <Text style={styles.editModalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.editModalSaveBtn}
+                onPress={editingTeamMember ? handleSaveEditTeamMember : handleSaveCreateTeamMember}
+                disabled={teamMembersSaving}
+              >
+                {teamMembersSaving ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <Ionicons name="checkmark-sharp" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                    <Text style={styles.editModalSaveBtnText}>
+                      {editingTeamMember ? 'Save Changes' : 'Create Member'}
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      {/* ========================================== */}
+      {/* 3. DELETE TEAM MEMBER MODAL               */}
+      {/* ========================================== */}
+      <Modal
+        visible={deleteTeamMemberModalVisible}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => setDeleteTeamMemberModalVisible(false)}
+      >
+        <View style={styles.deleteModalOverlay}>
+          <View style={styles.deleteModalBox}>
+            <View style={[styles.deleteModalIconWrap, { backgroundColor: '#FEE2E2' }]}>
+              <Ionicons name="trash-outline" size={26} color="#DC2626" />
+            </View>
+            <Text style={styles.deleteModalTitle}>Delete Team Member?</Text>
+            <Text style={styles.deleteModalMessage}>
+              Are you sure you want to permanently delete &ldquo;{selectedTeamMemberForDelete?.name}&rdquo; ({selectedTeamMemberForDelete?.title})? It will be removed from the public /team page roster.
+            </Text>
+            <View style={styles.deleteModalBtnRow}>
+              <TouchableOpacity
+                style={styles.deleteModalCancelBtn}
+                onPress={() => setDeleteTeamMemberModalVisible(false)}
+                disabled={isDeletingTeamMember}
+              >
+                <Text style={styles.deleteModalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.deleteModalConfirmBtn}
+                onPress={handleConfirmDeleteTeamMember}
+                disabled={isDeletingTeamMember}
+              >
+                {isDeletingTeamMember ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.deleteModalConfirmBtnText}>Delete Member</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -13740,6 +14927,24 @@ const styles = StyleSheet.create({
     color: Colors.ink,
   },
   filterChipTextActive: {
+    color: '#FFFFFF',
+  },
+  filterChipBadge: {
+    backgroundColor: '#E2E8F0',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: Radii.pill,
+    marginLeft: 6,
+  },
+  filterChipBadgeActive: {
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+  },
+  filterChipBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  filterChipBadgeTextActive: {
     color: '#FFFFFF',
   },
   cardsList: {

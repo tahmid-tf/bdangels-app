@@ -1519,6 +1519,177 @@ export async function deleteAdminStartupService(token, id) {
   return { ok: false, message: 'Could not delete startup service.' };
 }
 
+/**
+ * Fetch Team Members via GET /api/admin/team-members
+ */
+export async function fetchAdminTeamMembers(token, options = {}) {
+  try {
+    const { section, search } = options;
+    const params = new URLSearchParams();
+    if (section && section !== 'all') params.append('section', section);
+    if (search) params.append('search', search);
+
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    const res = await fetchAdminWithFallback(`/admin/team-members${qs}`, token, {
+      method: 'GET',
+    });
+    if (res) {
+      const json = await res.json();
+      if (res.ok && json.data) {
+        return {
+          ok: true,
+          data: json.data.members || (Array.isArray(json.data) ? json.data : []),
+          management: json.data.management || [],
+          governing_board: json.data.governing_board || [],
+          counts: json.data.counts || { all: 0, management: 0, governing_board: 0 },
+        };
+      }
+      return {
+        ok: false,
+        data: [],
+        management: [],
+        governing_board: [],
+        counts: { all: 0, management: 0, governing_board: 0 },
+        message: json.message || 'Failed to load team members.',
+      };
+    }
+  } catch (err) {
+    console.log('Admin fetch team members error:', err);
+  }
+  return {
+    ok: false,
+    data: [],
+    management: [],
+    governing_board: [],
+    counts: { all: 0, management: 0, governing_board: 0 },
+    message: 'Could not connect to server.',
+  };
+}
+
+/**
+ * Fetch single team member via GET /api/admin/team-members/{id}
+ */
+export async function fetchAdminTeamMember(token, id) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/team-members/${id}`, token, {
+      method: 'GET',
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        data: json.data || null,
+        message: json.message || '',
+      };
+    }
+  } catch (err) {
+    console.log('Admin fetch team member error:', err);
+  }
+  return { ok: false, data: null, message: 'Could not connect to server.' };
+}
+
+/**
+ * Create team member via POST /api/admin/team-members
+ */
+export async function createAdminTeamMember(token, payload) {
+  try {
+    const isFormData = typeof FormData !== 'undefined' && payload instanceof FormData;
+    const headers = isFormData ? {} : { 'Content-Type': 'application/json' };
+    const body = isFormData ? payload : JSON.stringify(payload);
+
+    const res = await fetchAdminWithFallback('/admin/team-members', token, {
+      method: 'POST',
+      headers,
+      body,
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        data: json.data || null,
+        message: json.message || (res.ok ? 'Team member created successfully.' : 'Failed to create team member.'),
+        errors: json.errors || null,
+      };
+    }
+  } catch (err) {
+    console.log('Admin create team member error:', err);
+  }
+  return { ok: false, message: 'Could not connect to server.' };
+}
+
+/**
+ * Update team member via POST /api/admin/team-members/{id}
+ */
+export async function updateAdminTeamMember(token, id, payload) {
+  try {
+    const isFormData = typeof FormData !== 'undefined' && payload instanceof FormData;
+    const headers = isFormData ? {} : { 'Content-Type': 'application/json' };
+    const body = isFormData ? payload : JSON.stringify(payload);
+
+    const res = await fetchAdminWithFallback(`/admin/team-members/${id}`, token, {
+      method: 'POST',
+      headers,
+      body,
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        data: json.data || null,
+        message: json.message || (res.ok ? 'Team member updated successfully.' : 'Failed to update team member.'),
+        errors: json.errors || null,
+      };
+    }
+  } catch (err) {
+    console.log('Admin update team member error:', err);
+  }
+  return { ok: false, message: 'Could not connect to server.' };
+}
+
+/**
+ * Reorder team members via POST /api/admin/team-members/reorder
+ */
+export async function reorderAdminTeamMembers(token, orderIds) {
+  try {
+    const res = await fetchAdminWithFallback('/admin/team-members/reorder', token, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ order: orderIds }),
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        message: json.message || 'Team members reordered successfully.',
+      };
+    }
+  } catch (err) {
+    console.log('Admin reorder team members error:', err);
+  }
+  return { ok: false, message: 'Could not connect to server.' };
+}
+
+/**
+ * Delete team member via DELETE /api/admin/team-members/{id}
+ */
+export async function deleteAdminTeamMember(token, id) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/team-members/${id}`, token, {
+      method: 'DELETE',
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        message: json.message || 'Team member deleted successfully.',
+      };
+    }
+  } catch (err) {
+    console.log('Admin delete team member error:', err);
+  }
+  return { ok: false, message: 'Could not delete team member.' };
+}
+
 
 // Embedded fallback data directly from live Laravel backend for 100% resilient rendering
 export const FALLBACK_HOME_DATA = {
