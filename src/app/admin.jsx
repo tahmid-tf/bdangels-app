@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -54,6 +54,8 @@ import {
   deleteAdminPublication,
   fetchPublicationsPageData,
   fetchTeamPageData,
+  fetchAdminLandingPageStats,
+  updateAdminLandingPageStats,
 } from '../services/api';
 
 export function getViewDisplayName(key) {
@@ -343,6 +345,20 @@ export default function AdminScreen() {
   const [selectedPublicationForDelete, setSelectedPublicationForDelete] = useState(null);
   const [isDeletingPublication, setIsDeletingPublication] = useState(false);
   const [updatingPublicationStatusId, setUpdatingPublicationStatusId] = useState(null);
+
+  // Homepage Statistics State
+  const [landingPageStats, setLandingPageStats] = useState([
+    { id: 1, value: '500+', label: 'Angel\ninvestors', sort_order: 1 },
+    { id: 2, value: '$12M+', label: 'Capital facilitated', sort_order: 2 },
+    { id: 3, value: '51', label: 'Portfolio companies', sort_order: 3 },
+  ]);
+  const [originalLandingPageStats, setOriginalLandingPageStats] = useState([
+    { id: 1, value: '500+', label: 'Angel\ninvestors', sort_order: 1 },
+    { id: 2, value: '$12M+', label: 'Capital facilitated', sort_order: 2 },
+    { id: 3, value: '51', label: 'Portfolio companies', sort_order: 3 },
+  ]);
+  const [landingPageStatsLoading, setLandingPageStatsLoading] = useState(false);
+  const [landingPageStatsSaving, setLandingPageStatsSaving] = useState(false);
 
   // Fetch Dashboard summary data
   const loadDashboard = useCallback(async (token = authToken) => {
@@ -706,6 +722,33 @@ export default function AdminScreen() {
     [authToken, publicationSearch, publicationStatusFilter]
   );
 
+  // Fetch Landing Page Stats
+  const loadLandingPageStats = useCallback(
+    async (token = authToken, options = {}) => {
+      if (!token) return;
+      const { silent = false } = options;
+      if (!silent) setLandingPageStatsLoading(true);
+      try {
+        const res = await fetchAdminLandingPageStats(token);
+        if (res && Array.isArray(res) && res.length > 0) {
+          const formatted = res.map((item, idx) => ({
+            id: item.id ?? idx + 1,
+            value: item.value ?? item.stat_value ?? '',
+            label: item.label ?? item.stat_label ?? '',
+            sort_order: item.sort_order ?? idx + 1,
+          }));
+          setLandingPageStats(formatted);
+          setOriginalLandingPageStats(JSON.parse(JSON.stringify(formatted)));
+        }
+      } catch (err) {
+        console.log('Error loading landing page stats:', err);
+      } finally {
+        if (!silent) setLandingPageStatsLoading(false);
+      }
+    },
+    [authToken]
+  );
+
   // Handle Tab / Sidebar View Selection
   const handleTabChange = (tab) => {
     setActiveTab(tab);
@@ -717,6 +760,8 @@ export default function AdminScreen() {
       if (blogs.length === 0) loadBlogs(authToken);
     } else if (tab === 'publications') {
       if (publications.length === 0) loadPublications(authToken);
+    } else if (tab === 'landing-stats') {
+      loadLandingPageStats(authToken);
     } else if (tab === 'deals') {
       if (deals.length === 0) loadDeals(authToken);
     } else if (tab === 'founder-pitches') {
@@ -735,7 +780,6 @@ export default function AdminScreen() {
       if (banWealthOrders.length === 0) loadBanWealthOrders(authToken);
     } else if (
       [
-        'landing-stats',
         'landing-programs',
         'homepage-portfolios',
         'team-about',
@@ -756,6 +800,7 @@ export default function AdminScreen() {
     if (activeTab === 'members') await loadMembers(authToken);
     if (activeTab === 'blogs') await loadBlogs(authToken);
     if (activeTab === 'publications') await loadPublications(authToken);
+    if (activeTab === 'landing-stats') await loadLandingPageStats(authToken);
     if (activeTab === 'deals') await loadDeals(authToken);
     if (activeTab === 'submissions' || activeTab === 'founder-pitches' || activeTab === 'angel-academy') {
       await loadSubmissions(authToken);
@@ -767,7 +812,6 @@ export default function AdminScreen() {
     if (activeTab === 'ban-wealth-orders') await loadBanWealthOrders(authToken);
     if (
       [
-        'landing-stats',
         'landing-programs',
         'homepage-portfolios',
         'team-about',
@@ -1941,6 +1985,113 @@ export default function AdminScreen() {
     } finally {
       setIsDeletingPublication(false);
       setSelectedPublicationForDelete(null);
+    }
+  };
+
+  // Homepage Statistics Handlers
+  const hasUnsavedStatsChanges = useMemo(() => {
+    if (!landingPageStats || !originalLandingPageStats) return false;
+    if (landingPageStats.length !== originalLandingPageStats.length) return true;
+    return landingPageStats.some((stat, idx) => {
+      const orig = originalLandingPageStats[idx];
+      if (!orig) return true;
+      return (
+        String(stat.value ?? '').trim() !== String(orig.value ?? '').trim() ||
+        String(stat.label ?? '').trim() !== String(orig.label ?? '').trim()
+      );
+    });
+  }, [landingPageStats, originalLandingPageStats]);
+
+  const handleUpdateStatField = (id, field, value) => {
+    setLandingPageStats((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, [field]: value } : item))
+    );
+  };
+
+  const handleResetLandingPageStats = () => {
+    if (!hasUnsavedStatsChanges) return;
+    Alert.alert(
+      'Discard Changes',
+      'Are you sure you want to revert all unsaved edits to original figures and labels?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Discard Changes',
+          style: 'destructive',
+          onPress: () => {
+            setLandingPageStats(JSON.parse(JSON.stringify(originalLandingPageStats)));
+          },
+        },
+      ]
+    );
+  };
+
+  const handleSaveLandingPageStats = async () => {
+    if (!authToken) return;
+
+    // Validation
+    for (let i = 0; i < landingPageStats.length; i++) {
+      const stat = landingPageStats[i];
+      if (!stat.value || !stat.value.trim()) {
+        Alert.alert('Validation Error', `Statistic #${i + 1} Figure cannot be empty.`);
+        return;
+      }
+      if (!stat.label || !stat.label.trim()) {
+        Alert.alert('Validation Error', `Statistic #${i + 1} Label cannot be empty.`);
+        return;
+      }
+      if (stat.value.trim().length > 40) {
+        Alert.alert(
+          'Character Limit Exceeded',
+          `Statistic #${i + 1} Figure cannot exceed 40 characters.`
+        );
+        return;
+      }
+      if (stat.label.trim().length > 120) {
+        Alert.alert(
+          'Character Limit Exceeded',
+          `Statistic #${i + 1} Label cannot exceed 120 characters.`
+        );
+        return;
+      }
+    }
+
+    setLandingPageStatsSaving(true);
+    try {
+      const payload = landingPageStats.map((item, idx) => ({
+        id: item.id,
+        value: item.value.trim(),
+        label: item.label.trim(),
+        sort_order: item.sort_order ?? idx + 1,
+      }));
+
+      const res = await updateAdminLandingPageStats(authToken, payload);
+      if (res.ok) {
+        const updatedList =
+          Array.isArray(res.data) && res.data.length > 0 ? res.data : payload;
+        const formatted = updatedList.map((item, idx) => ({
+          id: item.id ?? idx + 1,
+          value: item.value ?? item.stat_value ?? '',
+          label: item.label ?? item.stat_label ?? '',
+          sort_order: item.sort_order ?? idx + 1,
+        }));
+        setLandingPageStats(formatted);
+        setOriginalLandingPageStats(JSON.parse(JSON.stringify(formatted)));
+        Alert.alert(
+          'Saved Successfully',
+          'Homepage statistics have been updated and are now live on the landing page.'
+        );
+      } else {
+        const errMsg = res.errors
+          ? Object.values(res.errors).flat().join('\n')
+          : res.message || 'Could not update homepage statistics.';
+        Alert.alert('Save Failed', errMsg);
+      }
+    } catch (err) {
+      console.log('Error saving landing page stats:', err);
+      Alert.alert('Error', 'An unexpected error occurred while saving statistics.');
+    } finally {
+      setLandingPageStatsSaving(false);
     }
   };
 
@@ -4217,19 +4368,11 @@ export default function AdminScreen() {
 
                           {/* Delete */}
                           <TouchableOpacity
-                            style={[styles.blogActionBtn, styles.blogActionBtnDelete]}
+                            style={styles.blogActionDeleteBtn}
                             onPress={() => handleOpenDeletePublicationModal(pub)}
                             activeOpacity={0.7}
                           >
-                            <Ionicons name="trash-outline" size={15} color="#DC2626" />
-                            <Text
-                              style={[
-                                styles.blogActionBtnText,
-                                styles.blogActionBtnTextDelete,
-                              ]}
-                            >
-                              Delete
-                            </Text>
+                            <Ionicons name="trash-outline" size={16} color="#DC2626" />
                           </TouchableOpacity>
                         </View>
                       </View>
@@ -4326,36 +4469,249 @@ export default function AdminScreen() {
           {activeTab === 'landing-stats' && (
             <View style={styles.tabContent}>
               <View style={styles.sectionHeaderRow}>
-                <View>
+                <View style={{ flex: 1, marginRight: 8 }}>
                   <Text style={styles.sectionHeading}>Homepage Statistics</Text>
-                  <Text style={styles.sectionSubheading}>Key ecosystem numbers shown on landing screen</Text>
+                  <Text style={styles.sectionSubheading}>
+                    Update the three figures shown below the main landing-page introduction
+                  </Text>
                 </View>
                 <TouchableOpacity
                   style={styles.refreshIconBtn}
-                  onPress={loadCmsData}
-                  disabled={cmsLoading}
+                  onPress={() => loadLandingPageStats(authToken)}
+                  disabled={landingPageStatsLoading}
+                  accessibilityLabel="Refresh statistics"
                 >
-                  <Ionicons
-                    name="refresh"
-                    size={18}
-                    color={Colors.forest}
-                    style={cmsLoading ? { opacity: 0.5 } : {}}
-                  />
+                  {landingPageStatsLoading ? (
+                    <ActivityIndicator size="small" color={Colors.forest} />
+                  ) : (
+                    <Ionicons name="refresh" size={18} color={Colors.forest} />
+                  )}
                 </TouchableOpacity>
               </View>
 
-              <View style={styles.statsGrid}>
-                {[
-                  { value: '500+', label: 'Angel Investors in Community' },
-                  { value: '$11.5M+', label: 'Capital Facilitated & Invested' },
-                  { value: '54+', label: 'Active Portfolio Startups' },
-                ].map((stat, idx) => (
-                  <View key={`stat-${idx}`} style={styles.statBox}>
-                    <Text style={styles.statBoxVal}>{stat.value}</Text>
-                    <Text style={styles.statBoxLbl}>{stat.label}</Text>
+              {/* Unsaved Draft Changes Pill */}
+              {hasUnsavedStatsChanges && (
+                <View style={styles.statsUnsavedBanner}>
+                  <Ionicons name="alert-circle" size={18} color="#D97706" />
+                  <Text style={styles.statsUnsavedBannerText}>
+                    {"You have unsaved changes. Tap 'Save Changes' below to apply to the live site."}
+                  </Text>
+                </View>
+              )}
+
+              {/* Hero Live Preview Card */}
+              <View style={styles.statsPreviewContainer}>
+                <View style={styles.statsPreviewHeader}>
+                  <View style={styles.statsPreviewHeaderTitleRow}>
+                    <Ionicons name="eye-outline" size={16} color="#0A5554" />
+                    <Text style={styles.statsPreviewHeaderTitle}>LIVE LANDING-PAGE PREVIEW</Text>
                   </View>
-                ))}
+                  <View style={styles.statsPreviewLiveBadge}>
+                    <View style={styles.statsPreviewLiveDot} />
+                    <Text style={styles.statsPreviewLiveBadgeText}>Live Preview</Text>
+                  </View>
+                </View>
+
+                {/* Dark Hero Strip Banner */}
+                <View style={styles.heroStripBanner}>
+                  <View style={styles.heroStripTopline}>
+                    <View style={styles.heroStripDot} />
+                    <Text style={styles.heroStripNetworkText}>BAN AT A GLANCE</Text>
+                    <Text style={styles.heroStripSiteText}>bdangels.co</Text>
+                  </View>
+
+                  <View style={styles.heroProofRow}>
+                    {landingPageStats.map((item, idx) => {
+                      const isLast = idx === landingPageStats.length - 1;
+                      return (
+                        <View
+                          key={`preview-${item.id || idx}`}
+                          style={[
+                            styles.heroProofItem,
+                            !isLast && styles.heroProofItemBorder,
+                          ]}
+                        >
+                          <Text style={styles.heroProofVal} numberOfLines={1}>
+                            {item.value || '—'}
+                          </Text>
+                          <Text style={styles.heroProofLbl} numberOfLines={2}>
+                            {item.label ? item.label : 'Label text'}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+                </View>
               </View>
+
+              {/* Editable Stat Cards */}
+              <View style={styles.statsEditorSection}>
+                <View style={styles.statsEditorHeadingRow}>
+                  <Text style={styles.statsEditorHeading}>STATISTIC CARDS</Text>
+                  <Text style={styles.statsEditorSubheading}>
+                    {landingPageStats.length} metrics configured
+                  </Text>
+                </View>
+
+                {landingPageStatsLoading && landingPageStats.length === 0 ? (
+                  <View style={styles.emptyContainer}>
+                    <ActivityIndicator size="large" color="#0A5554" />
+                    <Text style={styles.emptyText}>Loading statistics...</Text>
+                  </View>
+                ) : (
+                  landingPageStats.map((stat, idx) => {
+                    const original = originalLandingPageStats[idx];
+                    const isModified =
+                      original &&
+                      (stat.value !== original.value || stat.label !== original.label);
+
+                    return (
+                      <View key={`stat-card-${stat.id || idx}`} style={styles.statEditCard}>
+                        {/* Card Top Row */}
+                        <View style={styles.statEditCardHeader}>
+                          <View style={styles.statEditCardBadge}>
+                            <Ionicons name="stats-chart" size={14} color="#0A5554" />
+                            <Text style={styles.statEditCardBadgeText}>
+                              STATISTIC #{idx + 1}
+                            </Text>
+                          </View>
+                          <View style={styles.statEditCardRightTags}>
+                            {isModified && (
+                              <View style={styles.statModifiedBadge}>
+                                <Text style={styles.statModifiedBadgeText}>Modified</Text>
+                              </View>
+                            )}
+                            <View style={styles.statOrderPill}>
+                              <Text style={styles.statOrderPillText}>
+                                Order {stat.sort_order || idx + 1}
+                              </Text>
+                            </View>
+                          </View>
+                        </View>
+
+                        {/* Figure Input */}
+                        <View style={styles.statFieldGroup}>
+                          <View style={styles.statFieldLabelRow}>
+                            <Text style={styles.statFieldLabel}>Figure / Value *</Text>
+                            <Text style={styles.statCharCount}>
+                              {(stat.value || '').length}/40
+                            </Text>
+                          </View>
+                          <TextInput
+                            style={styles.statInput}
+                            value={stat.value}
+                            onChangeText={(val) => handleUpdateStatField(stat.id, 'value', val)}
+                            placeholder="e.g. 500+, $12M+, 51"
+                            placeholderTextColor="#94A3B8"
+                            maxLength={40}
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                          />
+                          <Text style={styles.statFieldHint}>
+                            Shown in large bold numbers on the landing hero.
+                          </Text>
+                        </View>
+
+                        {/* Label Input */}
+                        <View style={[styles.statFieldGroup, { marginBottom: 0 }]}>
+                          <View style={styles.statFieldLabelRow}>
+                            <Text style={styles.statFieldLabel}>Label *</Text>
+                            <Text style={styles.statCharCount}>
+                              {(stat.label || '').length}/120
+                            </Text>
+                          </View>
+                          <TextInput
+                            style={styles.statTextarea}
+                            value={stat.label}
+                            onChangeText={(val) => handleUpdateStatField(stat.id, 'label', val)}
+                            placeholder={'e.g. Angel\ninvestors'}
+                            placeholderTextColor="#94A3B8"
+                            multiline
+                            numberOfLines={3}
+                            maxLength={120}
+                            textAlignVertical="top"
+                          />
+                          <View style={styles.statTextareaHintRow}>
+                            <Ionicons name="bulb-outline" size={13} color="#64748B" />
+                            <Text style={styles.statFieldHintLine}>
+                              Add a line break (Enter) where you want the label to wrap.
+                            </Text>
+                          </View>
+                        </View>
+                      </View>
+                    );
+                  })
+                )}
+              </View>
+
+              {/* Action Buttons Bar */}
+              <View style={styles.statActionButtonsBar}>
+                <TouchableOpacity
+                  style={[
+                    styles.statDiscardBtn,
+                    (!hasUnsavedStatsChanges || landingPageStatsSaving) && styles.statBtnDisabled,
+                  ]}
+                  onPress={handleResetLandingPageStats}
+                  disabled={!hasUnsavedStatsChanges || landingPageStatsSaving}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons
+                    name="arrow-undo-outline"
+                    size={17}
+                    color={hasUnsavedStatsChanges ? '#64748B' : '#94A3B8'}
+                  />
+                  <Text
+                    style={[
+                      styles.statDiscardBtnText,
+                      (!hasUnsavedStatsChanges || landingPageStatsSaving) && { color: '#94A3B8' },
+                    ]}
+                  >
+                    Discard
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.statSaveBtn,
+                    (!hasUnsavedStatsChanges || landingPageStatsSaving) && styles.statSaveBtnDisabled,
+                  ]}
+                  onPress={handleSaveLandingPageStats}
+                  disabled={!hasUnsavedStatsChanges || landingPageStatsSaving}
+                  activeOpacity={0.85}
+                >
+                  {landingPageStatsSaving ? (
+                    <>
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                      <Text style={styles.statSaveBtnText}>Saving changes...</Text>
+                    </>
+                  ) : (
+                    <>
+                      <Ionicons name="checkmark-circle-outline" size={18} color="#FFFFFF" />
+                      <Text style={styles.statSaveBtnText}>Save changes</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </View>
+
+              {/* View on website link card */}
+              <TouchableOpacity
+                style={styles.statsExternalLinkCard}
+                onPress={() => {
+                  Linking.openURL('https://bdangels.co').catch(() => {
+                    Alert.alert('Notice', 'Could not open https://bdangels.co');
+                  });
+                }}
+                activeOpacity={0.8}
+              >
+                <View style={styles.statsExternalLinkLeft}>
+                  <Ionicons name="globe-outline" size={20} color="#0A5554" />
+                  <View>
+                    <Text style={styles.statsExternalLinkTitle}>View section on live site</Text>
+                    <Text style={styles.statsExternalLinkDesc}>bdangels.co hero landing banner</Text>
+                  </View>
+                </View>
+                <Ionicons name="open-outline" size={18} color="#0A5554" />
+              </TouchableOpacity>
             </View>
           )}
 
@@ -8264,6 +8620,353 @@ const styles = StyleSheet.create({
     color: Colors.muted,
     textAlign: 'center',
   },
+
+  // Homepage Statistics Editor & Live Preview Styles
+  statsUnsavedBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+    borderRadius: Radii.md,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 14,
+  },
+  statsUnsavedBannerText: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#92400E',
+    lineHeight: 16,
+  },
+  statsPreviewContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: Radii.lg,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 14,
+    marginBottom: 16,
+    ...Shadows.card,
+  },
+  statsPreviewHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  statsPreviewHeaderTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  statsPreviewHeaderTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#0A5554',
+    letterSpacing: 0.8,
+  },
+  statsPreviewLiveBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#E6F4F1',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: Radii.pill,
+  },
+  statsPreviewLiveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10B981',
+  },
+  statsPreviewLiveBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#0A5554',
+  },
+  heroStripBanner: {
+    backgroundColor: '#022B27',
+    borderRadius: Radii.md,
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.25)',
+    padding: 14,
+  },
+  heroStripTopline: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.1)',
+    marginBottom: 12,
+  },
+  heroStripDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10B981',
+  },
+  heroStripNetworkText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#10B981',
+    letterSpacing: 1,
+  },
+  heroStripSiteText: {
+    marginLeft: 'auto',
+    fontSize: 10,
+    fontWeight: '600',
+    color: 'rgba(255, 255, 255, 0.5)',
+  },
+  heroProofRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+  },
+  heroProofItem: {
+    flex: 1,
+    alignItems: 'center',
+    paddingHorizontal: 4,
+  },
+  heroProofItemBorder: {
+    borderRightWidth: 1,
+    borderRightColor: 'rgba(255, 255, 255, 0.12)',
+  },
+  heroProofVal: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#FFFFFF',
+    letterSpacing: -0.5,
+    marginBottom: 4,
+    textAlign: 'center',
+  },
+  heroProofLbl: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#94A3B8',
+    textAlign: 'center',
+    lineHeight: 14,
+  },
+  statsEditorSection: {
+    marginBottom: 6,
+  },
+  statsEditorHeadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+    paddingHorizontal: 2,
+  },
+  statsEditorHeading: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#475569',
+    letterSpacing: 0.8,
+  },
+  statsEditorSubheading: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: Colors.muted,
+  },
+  statEditCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: Radii.lg,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 16,
+    marginBottom: 14,
+    ...Shadows.card,
+  },
+  statEditCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+    marginBottom: 14,
+  },
+  statEditCardBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#E6F4F1',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: Radii.pill,
+  },
+  statEditCardBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#0A5554',
+    letterSpacing: 0.5,
+  },
+  statEditCardRightTags: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  statModifiedBadge: {
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: Radii.pill,
+  },
+  statModifiedBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#B45309',
+  },
+  statOrderPill: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: Radii.pill,
+  },
+  statOrderPillText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  statFieldGroup: {
+    marginBottom: 14,
+  },
+  statFieldLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  statFieldLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.ink,
+  },
+  statCharCount: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: Colors.muted,
+  },
+  statInput: {
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: Radii.md,
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    fontWeight: '700',
+    color: Colors.ink,
+  },
+  statFieldHint: {
+    fontSize: 11,
+    color: Colors.muted,
+    marginTop: 4,
+  },
+  statTextarea: {
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: Radii.md,
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    fontWeight: '500',
+    color: Colors.ink,
+    minHeight: 74,
+  },
+  statTextareaHintRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: 5,
+  },
+  statFieldHintLine: {
+    flex: 1,
+    fontSize: 11,
+    color: '#64748B',
+    lineHeight: 15,
+  },
+  statActionButtonsBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 4,
+    marginBottom: 14,
+  },
+  statDiscardBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 13,
+    borderRadius: Radii.md,
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+  },
+  statDiscardBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  statSaveBtn: {
+    flex: 1.6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 13,
+    borderRadius: Radii.md,
+    backgroundColor: '#0A5554',
+    ...Shadows.sm,
+  },
+  statSaveBtnDisabled: {
+    opacity: 0.5,
+  },
+  statSaveBtnText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  statBtnDisabled: {
+    opacity: 0.5,
+  },
+  statsExternalLinkCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    borderRadius: Radii.md,
+    padding: 12,
+    marginBottom: 20,
+  },
+  statsExternalLinkLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  statsExternalLinkTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0A5554',
+  },
+  statsExternalLinkDesc: {
+    fontSize: 11,
+    color: '#15803D',
+    marginTop: 1,
+  },
   dealDateText: {
     fontSize: 11,
     color: Colors.muted,
@@ -9239,6 +9942,7 @@ const styles = StyleSheet.create({
   blogActionsToolbar: {
     flexDirection: 'row',
     alignItems: 'center',
+    flexWrap: 'wrap',
     gap: 8,
     paddingTop: 10,
     borderTopWidth: 1,

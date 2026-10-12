@@ -937,6 +937,55 @@ export async function deleteAdminPublication(token, publicationId) {
   return { ok: false, message: 'Could not delete publication.' };
 }
 
+/**
+ * Fetch Landing Page Stats from GET /api/admin/landing-page-stats
+ */
+export async function fetchAdminLandingPageStats(token) {
+  try {
+    const res = await fetchAdminWithFallback('/admin/landing-page-stats', token);
+    if (res && res.ok) {
+      const json = await res.json();
+      const list = json.data || json;
+      if (Array.isArray(list) && list.length > 0) {
+        return list;
+      }
+    }
+  } catch (err) {
+    console.log('Admin landing page stats fetch error:', err);
+  }
+  // Curated default fallback if server is unreachable
+  return [
+    { id: 1, value: '500+', label: 'Angel\ninvestors', sort_order: 1 },
+    { id: 2, value: '$12M+', label: 'Capital facilitated', sort_order: 2 },
+    { id: 3, value: '51', label: 'Portfolio companies', sort_order: 3 },
+  ];
+}
+
+/**
+ * Update Landing Page Stats via PUT/POST /api/admin/landing-page-stats
+ */
+export async function updateAdminLandingPageStats(token, statsArray) {
+  try {
+    const res = await fetchAdminWithFallback('/admin/landing-page-stats', token, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stats: statsArray }),
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        data: json.data || null,
+        message: json.message || '',
+        errors: json.errors || null,
+      };
+    }
+  } catch (err) {
+    console.log('Admin update landing page stats error:', err);
+  }
+  return { ok: false, message: 'Could not update landing page stats.' };
+}
+
 
 // Embedded fallback data directly from live Laravel backend for 100% resilient rendering
 export const FALLBACK_HOME_DATA = {
