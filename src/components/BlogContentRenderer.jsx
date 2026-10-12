@@ -63,43 +63,170 @@ function parseInlineSegments(html) {
   return segments;
 }
 
+function parseHtmlBlocks(content) {
+  if (!content) return [];
+  const normalized = content
+    .replace(/\r\n/g, '\n')
+    .replace(/<br\s*\/?>/gi, '\n');
+
+  const blockRegex = /<(h[1-6]|ul|ol|p|div|blockquote)[^>]*>([\s\S]*?)<\/\1>/gi;
+  const blocks = [];
+  let lastIndex = 0;
+  let match;
+
+  while ((match = blockRegex.exec(normalized)) !== null) {
+    if (match.index > lastIndex) {
+      const intermediate = normalized.substring(lastIndex, match.index).trim();
+      if (intermediate) {
+        intermediate.split(/\n\s*\n/).forEach((chunk) => {
+          const clean = chunk.trim();
+          if (clean) {
+            blocks.push({ type: 'p', raw: clean });
+          }
+        });
+      }
+    }
+
+    const tag = match[1].toLowerCase();
+    const inner = match[2].trim();
+
+    if (tag === 'ul' || tag === 'ol') {
+      const items = [];
+      const liRegex = /<li[^>]*>([\s\S]*?)<\/li>/gi;
+      let liMatch;
+      while ((liMatch = liRegex.exec(inner)) !== null) {
+        const liText = liMatch[1].trim();
+        if (liText) items.push(liText);
+      }
+      if (items.length === 0) {
+        inner.split('\n').map((l) => l.trim()).filter(Boolean).forEach((l) => items.push(l));
+      }
+      blocks.push({ type: tag, items });
+    } else if (tag.startsWith('h')) {
+      blocks.push({ type: tag, raw: inner });
+    } else if (tag === 'blockquote') {
+      blocks.push({ type: 'blockquote', raw: inner });
+    } else {
+      blocks.push({ type: 'p', raw: inner });
+    }
+
+    lastIndex = blockRegex.lastIndex;
+  }
+
+  if (lastIndex < normalized.length) {
+    const trailing = normalized.substring(lastIndex).trim();
+    if (trailing) {
+      trailing.split(/\n\s*\n/).forEach((chunk) => {
+        const clean = chunk.trim();
+        if (clean) {
+          blocks.push({ type: 'p', raw: clean });
+        }
+      });
+    }
+  }
+
+  if (blocks.length === 0 && content.trim()) {
+    content
+      .split(/\n\s*\n/)
+      .map((t) => t.trim())
+      .filter(Boolean)
+      .forEach((t) => blocks.push({ type: 'p', raw: t }));
+  }
+
+  return blocks;
+}
+
 export default function BlogContentRenderer({ content }) {
   if (!content) return null;
-
-  // Split content by paragraphs or block tags
-  const rawBlocks = content
-    .split(/<\/p>|<br\s*\/?>\s*<br\s*\/?>|<\/h[1-6]>|<\/div>/i)
-    .map((b) =>
-      b
-        .replace(/^<p[^>]*>/i, '')
-        .replace(/^<div[^>]*>/i, '')
-        .replace(/^<h[1-6][^>]*>/i, '')
-        .trim()
-    )
-    .filter(Boolean);
+  const blocks = parseHtmlBlocks(content);
 
   return (
     <View style={styles.container}>
-      {rawBlocks.map((blockHtml, blockIdx) => {
-        // Detect pure headings: starts and ends with <b> or <strong>
-        const headingMatch = blockHtml.match(/^<(?:b|strong)>(.*?)<\/(?:b|strong)>$/i);
-        if (headingMatch && headingMatch[1].length < 120) {
-          const headingText = decodeHtmlEntities(headingMatch[1].replace(/<[^>]*>/g, ''));
+      {blocks.map((block, idx) => {
+        if (block.type === 'h1' || block.type === 'h2') {
           return (
-            <Text key={blockIdx} style={styles.sectionHeading}>
-              {headingText}
+            <Text key={`h2-${idx}`} style={styles.heading2}>
+              {decodeHtmlEntities(block.raw.replace(/<[^>]*>/g, ''))}
             </Text>
           );
         }
 
-        const segments = parseInlineSegments(blockHtml);
-        if (segments.length === 0) return null;
+        if (block.type === 'h3' || block.type === 'h4') {
+          return (
+            <Text key={`h3-${idx}`} style={styles.heading3}>
+              {decodeHtmlEntities(block.raw.replace(/<[^>]*>/g, ''))}
+            </Text>
+          );
+        }
+
+        if (block.type === 'ul' || block.type === 'ol') {
+          const isOrdered = block.type === 'ol';
+          return (
+            <View key={`list-${idx}`} style={styles.listContainer}>
+              {block.items.map((itemHtml, itemIdx) => {
+                const segs = parseInlineSegments(itemHtml);
+                return (
+                  <View key={`item-${itemIdx}`} style={styles.listItemRow}>
+                    <Text style={isOrdered ? styles.listNumber : styles.bullet}>
+                      {isOrdered ? `${itemIdx + 1}.` : '•'}
+                    </Text>
+                    <Text style={styles.listItemText}>
+                      {segs.map((seg, sIdx) => (
+                        <Text
+                          key={sIdx}
+                          style={[
+                            seg.bold && styles.bold,
+                            seg.italic && styles.italic,
+                            seg.href && styles.link,
+                          ]}
+                          onPress={
+                            seg.href
+                              ? () => Linking.openURL(seg.href).catch((err) => console.log('Link err:', err))
+                              : undefined
+                          }
+                        >
+                          {seg.text}
+                        </Text>
+                      ))}
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
+          );
+        }
+
+        if (block.type === 'blockquote') {
+          const segs = parseInlineSegments(block.raw);
+          return (
+            <View key={`quote-${idx}`} style={styles.blockquoteBox}>
+              <Text style={styles.blockquoteText}>
+                {segs.map((seg, sIdx) => (
+                  <Text
+                    key={sIdx}
+                    style={[
+                      seg.bold && styles.bold,
+                      seg.italic && styles.italic,
+                      seg.href && styles.link,
+                    ]}
+                  >
+                    {seg.text}
+                  </Text>
+                ))}
+              </Text>
+            </View>
+          );
+        }
+
+        // Paragraph
+        const segs = parseInlineSegments(block.raw);
+        if (segs.length === 0) return null;
 
         return (
-          <Text key={blockIdx} style={styles.paragraph}>
-            {segments.map((seg, segIdx) => (
+          <Text key={`p-${idx}`} style={styles.paragraph}>
+            {segs.map((seg, sIdx) => (
               <Text
-                key={segIdx}
+                key={sIdx}
                 style={[
                   seg.bold && styles.bold,
                   seg.italic && styles.italic,
@@ -107,7 +234,7 @@ export default function BlogContentRenderer({ content }) {
                 ]}
                 onPress={
                   seg.href
-                    ? () => Linking.openURL(seg.href).catch((err) => console.log('Link open err:', err))
+                    ? () => Linking.openURL(seg.href).catch((err) => console.log('Link err:', err))
                     : undefined
                 }
               >
@@ -123,22 +250,84 @@ export default function BlogContentRenderer({ content }) {
 
 const styles = StyleSheet.create({
   container: {
-    paddingVertical: 10,
+    paddingVertical: 6,
+  },
+  heading2: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: Colors.ink,
+    marginTop: 20,
+    marginBottom: 8,
+    letterSpacing: -0.3,
+    lineHeight: 25,
+  },
+  heading3: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#1E293B',
+    marginTop: 16,
+    marginBottom: 6,
+    lineHeight: 22,
   },
   sectionHeading: {
     fontSize: 18,
     fontWeight: '800',
     color: Colors.ink,
-    marginTop: 24,
-    marginBottom: 10,
+    marginTop: 20,
+    marginBottom: 8,
     letterSpacing: -0.3,
     lineHeight: 25,
   },
   paragraph: {
-    fontSize: 15.5,
-    color: '#374151',
-    lineHeight: 25,
-    marginBottom: 16,
+    fontSize: 15,
+    color: '#334155',
+    lineHeight: 24,
+    marginBottom: 14,
+  },
+  listContainer: {
+    marginVertical: 8,
+    paddingLeft: 4,
+    gap: 4,
+  },
+  listItemRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 6,
+  },
+  bullet: {
+    fontSize: 16,
+    color: '#0A5554',
+    fontWeight: '900',
+    width: 18,
+    marginTop: 1,
+  },
+  listNumber: {
+    fontSize: 14,
+    color: '#0A5554',
+    fontWeight: '700',
+    width: 22,
+    marginTop: 2,
+  },
+  listItemText: {
+    flex: 1,
+    fontSize: 15,
+    color: '#334155',
+    lineHeight: 23,
+  },
+  blockquoteBox: {
+    backgroundColor: '#F0FDFA',
+    borderLeftWidth: 3,
+    borderLeftColor: '#0A5554',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 8,
+    marginVertical: 12,
+  },
+  blockquoteText: {
+    fontSize: 14,
+    fontStyle: 'italic',
+    color: '#134E4A',
+    lineHeight: 22,
   },
   bold: {
     fontWeight: '700',
@@ -148,7 +337,7 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
   link: {
-    color: Colors.green,
+    color: '#0A5554',
     fontWeight: '600',
     textDecorationLine: 'underline',
   },

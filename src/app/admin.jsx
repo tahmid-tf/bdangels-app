@@ -19,6 +19,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Radii, Shadows } from '../constants/theme';
 import { initAuth, logoutUser } from '../services/auth';
 import AdminSidebar from '../components/admin/AdminSidebar';
+import BlogContentRenderer from '../components/BlogContentRenderer';
 import {
   fetchAdminDashboard,
   fetchAdminMembers,
@@ -281,6 +282,12 @@ export default function AdminScreen() {
   const [selectedBlogForDelete, setSelectedBlogForDelete] = useState(null);
   const [isDeletingBlog, setIsDeletingBlog] = useState(false);
   const [updatingBlogStatusId, setUpdatingBlogStatusId] = useState(null);
+
+  // Blog Rich Content Editor States
+  const [blogEditorMode, setBlogEditorMode] = useState('editor'); // 'editor' | 'preview'
+  const [editorSelection, setEditorSelection] = useState({ start: 0, end: 0 });
+  const [linkModalVisible, setLinkModalVisible] = useState(false);
+  const [linkFormData, setLinkFormData] = useState({ url: 'https://', text: '' });
 
   // Fetch Dashboard summary data
   const loadDashboard = useCallback(async (token = authToken) => {
@@ -1106,6 +1113,8 @@ export default function AdminScreen() {
   };
 
   const handleOpenCreateBlog = () => {
+    setBlogEditorMode('editor');
+    setEditorSelection({ start: 0, end: 0 });
     setBlogFormData({
       title: '',
       slug: '',
@@ -1119,6 +1128,122 @@ export default function AdminScreen() {
       published_at: new Date().toISOString().slice(0, 16),
     });
     setCreateBlogModalVisible(true);
+  };
+
+  // Blog Editor Formatting Toolbar Handler (Parity with Web Blade toolbar)
+  const handleEditorFormat = (command, value = null) => {
+    const content = blogFormData.content || '';
+    const { start = 0, end = 0 } = editorSelection || {};
+    const selStart = Math.min(start, end);
+    const selEnd = Math.max(start, end);
+    const hasSelection = selStart !== selEnd;
+    const selectedText = hasSelection ? content.substring(selStart, selEnd) : '';
+
+    let formattedInsertion = '';
+
+    switch (command) {
+      case 'formatBlock':
+        if (value === 'p') {
+          formattedInsertion = selectedText
+            ? `<p>${selectedText}</p>`
+            : `<p>New paragraph text goes here...</p>\n`;
+        } else if (value === 'h2') {
+          formattedInsertion = selectedText
+            ? `<h2>${selectedText}</h2>`
+            : `<h2>Section Headline</h2>\n`;
+        } else if (value === 'h3') {
+          formattedInsertion = selectedText
+            ? `<h3>${selectedText}</h3>`
+            : `<h3>Sub-section Headline</h3>\n`;
+        }
+        break;
+
+      case 'bold':
+        formattedInsertion = selectedText
+          ? `<strong>${selectedText}</strong>`
+          : `<strong>bold text</strong>`;
+        break;
+
+      case 'italic':
+        formattedInsertion = selectedText
+          ? `<em>${selectedText}</em>`
+          : `<em>italicized text</em>`;
+        break;
+
+      case 'insertUnorderedList':
+        if (selectedText) {
+          const lines = selectedText.split('\n').map((l) => l.trim()).filter(Boolean);
+          const listItems = lines.map((l) => `  <li>${l.replace(/<[^>]*>/g, '')}</li>`).join('\n');
+          formattedInsertion = `<ul>\n${listItems || '  <li>List item</li>'}\n</ul>\n`;
+        } else {
+          formattedInsertion = `<ul>\n  <li>Key takeaway item 1</li>\n  <li>Key takeaway item 2</li>\n  <li>Key takeaway item 3</li>\n</ul>\n`;
+        }
+        break;
+
+      case 'insertOrderedList':
+        if (selectedText) {
+          const lines = selectedText.split('\n').map((l) => l.trim()).filter(Boolean);
+          const listItems = lines.map((l) => `  <li>${l.replace(/<[^>]*>/g, '')}</li>`).join('\n');
+          formattedInsertion = `<ol>\n${listItems || '  <li>List item</li>'}\n</ol>\n`;
+        } else {
+          formattedInsertion = `<ol>\n  <li>First step or point</li>\n  <li>Second step or point</li>\n  <li>Third step or point</li>\n</ol>\n`;
+        }
+        break;
+
+      case 'insertListItem':
+        formattedInsertion = selectedText
+          ? `<li>${selectedText}</li>`
+          : `<li>Single list bullet</li>\n`;
+        break;
+
+      case 'link':
+        setLinkFormData({
+          url: 'https://',
+          text: selectedText || '',
+        });
+        setLinkModalVisible(true);
+        return;
+
+      case 'removeFormat':
+        if (selectedText) {
+          formattedInsertion = selectedText.replace(/<[^>]*>/g, '');
+        } else {
+          const cleanedAll = content.replace(/<[^>]*>/g, '');
+          setBlogFormData((prev) => ({ ...prev, content: cleanedAll }));
+          return;
+        }
+        break;
+
+      default:
+        return;
+    }
+
+    const before = content.substring(0, selStart);
+    const after = content.substring(selEnd);
+    const newContent = before + formattedInsertion + after;
+    setBlogFormData((prev) => ({ ...prev, content: newContent }));
+  };
+
+  const handleConfirmInsertLink = () => {
+    const url = linkFormData.url.trim();
+    if (!url || url === 'https://') {
+      Alert.alert('Invalid URL', 'Please enter a valid link URL (e.g. https://bdangels.co).');
+      return;
+    }
+    const text = linkFormData.text.trim() || url;
+    const linkHtml = `<a href="${url}">${text}</a>`;
+
+    const content = blogFormData.content || '';
+    const { start = 0, end = 0 } = editorSelection || {};
+    const selStart = Math.min(start, end);
+    const selEnd = Math.max(start, end);
+
+    const before = content.substring(0, selStart);
+    const after = content.substring(selEnd);
+    const newContent = before + linkHtml + after;
+
+    setBlogFormData((prev) => ({ ...prev, content: newContent }));
+    setLinkModalVisible(false);
   };
 
   const handleSaveCreateBlog = async () => {
@@ -1190,6 +1315,8 @@ export default function AdminScreen() {
 
   const handleOpenEditBlog = (blog) => {
     setEditingBlog(blog);
+    setBlogEditorMode('editor');
+    setEditorSelection({ start: 0, end: 0 });
     setBlogFormData({
       title: blog.title || '',
       slug: blog.slug || '',
@@ -4880,22 +5007,7 @@ export default function AdminScreen() {
 
               {/* Content Body */}
               <View style={styles.blogReaderBodyBox}>
-                {(selectedBlogForView?.content || '')
-                  .replace(/<br\s*\/?>/gi, '\n')
-                  .replace(/<\/p>/gi, '\n\n')
-                  .replace(/<\/h[1-6]>/gi, '\n\n')
-                  .replace(/<\/li>/gi, '\n')
-                  .replace(/<[^>]*>/g, '')
-                  .split('\n\n')
-                  .map((para, pIdx) => {
-                    const cleanPara = para.trim();
-                    if (!cleanPara) return null;
-                    return (
-                      <Text key={`reader-para-${pIdx}`} style={styles.blogReaderParagraph}>
-                        {cleanPara}
-                      </Text>
-                    );
-                  })}
+                <BlogContentRenderer content={selectedBlogForView?.content} />
               </View>
             </ScrollView>
 
@@ -5086,18 +5198,188 @@ export default function AdminScreen() {
                 />
               </View>
 
-              <View style={styles.formField}>
-                <Text style={styles.fieldLabel}>
-                  Article Content <Text style={styles.requiredStar}>*</Text>
+              {/* Rich HTML Content Editor with Web-parity Formatting Toolbar */}
+              <View style={styles.editorContainerBox}>
+                <View style={styles.editorHeaderRow}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+                    <Ionicons name="document-text-outline" size={15} color="#0A5554" />
+                    <Text style={styles.fieldLabel}>
+                      Article Content <Text style={styles.requiredStar}>*</Text>
+                    </Text>
+                  </View>
+
+                  {/* Mode Switcher: Code Editor vs Live Preview */}
+                  <View style={styles.editorModeSwitchGroup}>
+                    <TouchableOpacity
+                      style={[
+                        styles.editorModeSwitchBtn,
+                        blogEditorMode === 'editor' && styles.editorModeSwitchBtnActive,
+                      ]}
+                      onPress={() => setBlogEditorMode('editor')}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons
+                        name="code-slash"
+                        size={12}
+                        color={blogEditorMode === 'editor' ? '#FFFFFF' : '#475569'}
+                      />
+                      <Text
+                        style={[
+                          styles.editorModeSwitchText,
+                          blogEditorMode === 'editor' && styles.editorModeSwitchTextActive,
+                        ]}
+                      >
+                        Editor
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[
+                        styles.editorModeSwitchBtn,
+                        blogEditorMode === 'preview' && styles.editorModeSwitchBtnActive,
+                      ]}
+                      onPress={() => setBlogEditorMode('preview')}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons
+                        name="eye-outline"
+                        size={12}
+                        color={blogEditorMode === 'preview' ? '#FFFFFF' : '#475569'}
+                      />
+                      <Text
+                        style={[
+                          styles.editorModeSwitchText,
+                          blogEditorMode === 'preview' && styles.editorModeSwitchTextActive,
+                        ]}
+                      >
+                        Live Preview
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {blogEditorMode === 'editor' ? (
+                  <View style={styles.editorContentWrapper}>
+                    {/* Formatting Toolbar (Matches web blade buttons) */}
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={styles.editorToolbarContent}
+                      style={styles.editorToolbarBar}
+                    >
+                      <TouchableOpacity
+                        style={styles.editorToolBtn}
+                        onPress={() => handleEditorFormat('formatBlock', 'p')}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.editorToolBtnText}>Paragraph</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.editorToolBtn}
+                        onPress={() => handleEditorFormat('formatBlock', 'h2')}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.editorToolBtnText}>Heading 2</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.editorToolBtn}
+                        onPress={() => handleEditorFormat('formatBlock', 'h3')}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.editorToolBtnText}>Heading 3</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.editorToolBtn}
+                        onPress={() => handleEditorFormat('bold')}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={[styles.editorToolBtnText, { fontWeight: '900' }]}>Bold</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.editorToolBtn}
+                        onPress={() => handleEditorFormat('italic')}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={[styles.editorToolBtnText, { fontStyle: 'italic' }]}>Italic</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.editorToolBtn}
+                        onPress={() => handleEditorFormat('insertUnorderedList')}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.editorToolBtnText}>• List</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.editorToolBtn}
+                        onPress={() => handleEditorFormat('insertOrderedList')}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.editorToolBtnText}>1. List</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.editorToolBtn}
+                        onPress={() => handleEditorFormat('insertListItem')}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.editorToolBtnText}>+ Item</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.editorToolBtn}
+                        onPress={() => handleEditorFormat('link')}
+                        activeOpacity={0.7}
+                      >
+                        <Ionicons name="link-outline" size={12} color="#0A5554" />
+                        <Text style={styles.editorToolBtnText}>Link</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[styles.editorToolBtn, styles.editorToolBtnClear]}
+                        onPress={() => handleEditorFormat('removeFormat')}
+                        activeOpacity={0.7}
+                      >
+                        <Ionicons name="backspace-outline" size={12} color="#64748B" />
+                        <Text style={[styles.editorToolBtnText, { color: '#64748B' }]}>Clear</Text>
+                      </TouchableOpacity>
+                    </ScrollView>
+
+                    {/* Text Input */}
+                    <TextInput
+                      style={styles.editorTextInput}
+                      value={blogFormData.content}
+                      onChangeText={(val) => setBlogFormData((prev) => ({ ...prev, content: val }))}
+                      onSelectionChange={(e) => setEditorSelection(e.nativeEvent.selection)}
+                      placeholder="Write the full article content. Use the formatting toolbar above for headings, paragraphs, lists, and links..."
+                      placeholderTextColor="#94A3B8"
+                      multiline
+                    />
+                  </View>
+                ) : (
+                  /* Live Preview Box */
+                  <View style={styles.editorPreviewContainer}>
+                    {blogFormData.content?.trim() ? (
+                      <BlogContentRenderer content={blogFormData.content} />
+                    ) : (
+                      <View style={styles.editorPreviewEmpty}>
+                        <Ionicons name="document-text-outline" size={30} color="#CBD5E1" />
+                        <Text style={styles.editorPreviewEmptyText}>
+                          Nothing to preview yet. Switch back to Editor and write content or tap formatting tools.
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                )}
+
+                <Text style={styles.editorHelperText}>
+                  Designed for long-form writing. Use headings, short paragraphs, bold text, links, and lists for readability.
                 </Text>
-                <TextInput
-                  style={[styles.fieldInput, { height: 180, textAlignVertical: 'top', paddingTop: 8 }]}
-                  value={blogFormData.content}
-                  onChangeText={(val) => setBlogFormData((prev) => ({ ...prev, content: val }))}
-                  placeholder="Write the full article body..."
-                  placeholderTextColor="#94A3B8"
-                  multiline
-                />
               </View>
 
               {/* Section 2: Author & Attribution */}
@@ -5239,6 +5521,80 @@ export default function AdminScreen() {
             </View>
           </View>
         </View>
+      </Modal>
+
+      {/* 5. INSERT LINK MODAL */}
+      <Modal
+        visible={linkModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setLinkModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setLinkModalVisible(false)}
+        >
+          <View style={styles.modalCardCenter} onStartShouldSetResponder={() => true}>
+            <View style={styles.modalTopBarTeal} />
+            <View style={styles.modalHeaderRow}>
+              <View>
+                <Text style={styles.modalHeaderTitle}>Insert Hyperlink</Text>
+                <Text style={styles.modalHeaderSubtitle}>Web link for article text</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setLinkModalVisible(false)}
+                style={styles.modalCloseBtn}
+              >
+                <Ionicons name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={{ paddingHorizontal: 16, paddingBottom: 16, gap: 12 }}>
+              <View style={{ gap: 4 }}>
+                <Text style={styles.fieldLabel}>Display Text</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={linkFormData.text}
+                  onChangeText={(val) => setLinkFormData((prev) => ({ ...prev, text: val }))}
+                  placeholder="e.g. Visit Bangladesh Angels"
+                  placeholderTextColor="#94A3B8"
+                />
+              </View>
+
+              <View style={{ gap: 4 }}>
+                <Text style={styles.fieldLabel}>
+                  Destination URL <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={linkFormData.url}
+                  onChangeText={(val) => setLinkFormData((prev) => ({ ...prev, url: val }))}
+                  placeholder="https://bdangels.co"
+                  placeholderTextColor="#94A3B8"
+                  autoCapitalize="none"
+                  keyboardType="url"
+                />
+              </View>
+
+              <View style={[styles.modalFooterActionsRow, { marginHorizontal: -16, marginBottom: -16 }]}>
+                <TouchableOpacity
+                  style={styles.modalSecondaryBtn}
+                  onPress={() => setLinkModalVisible(false)}
+                >
+                  <Text style={styles.modalSecondaryBtnText}>Cancel</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.modalPrimaryBtn}
+                  onPress={handleConfirmInsertLink}
+                >
+                  <Text style={styles.modalPrimaryBtnText}>Insert Link</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </TouchableOpacity>
       </Modal>
     </SafeAreaView>
   );
@@ -7634,5 +7990,125 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+
+  // ----------------------------------------------------
+  // Blog Rich HTML Editor Styles (Web Blade parity)
+  // ----------------------------------------------------
+  editorContainerBox: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 12,
+    gap: 8,
+  },
+  editorHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  editorModeSwitchGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 8,
+    padding: 2,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  editorModeSwitchBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  editorModeSwitchBtnActive: {
+    backgroundColor: '#0A5554',
+  },
+  editorModeSwitchText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  editorModeSwitchTextActive: {
+    color: '#FFFFFF',
+  },
+  editorContentWrapper: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+    overflow: 'hidden',
+  },
+  editorToolbarBar: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+  },
+  editorToolbarContent: {
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    gap: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  editorToolBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+  },
+  editorToolBtnClear: {
+    backgroundColor: '#F1F5F9',
+    borderColor: '#E2E8F0',
+  },
+  editorToolBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#374151',
+  },
+  editorTextInput: {
+    minHeight: 180,
+    padding: 12,
+    fontSize: 13,
+    color: '#0F172A',
+    lineHeight: 20,
+    textAlignVertical: 'top',
+  },
+  editorPreviewContainer: {
+    minHeight: 180,
+    padding: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#F8FAFC',
+  },
+  editorPreviewEmpty: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 36,
+    gap: 8,
+  },
+  editorPreviewEmptyText: {
+    fontSize: 12,
+    color: '#94A3B8',
+    textAlign: 'center',
+    maxWidth: 240,
+    lineHeight: 18,
+  },
+  editorHelperText: {
+    fontSize: 10,
+    color: '#64748B',
+    lineHeight: 14,
+    marginTop: 2,
   },
 });
