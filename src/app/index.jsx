@@ -26,7 +26,7 @@ import DealDetailModal from '../components/modals/DealDetailModal';
 import EventDetailModal from '../components/modals/EventDetailModal';
 import ProgramDetailModal from '../components/modals/ProgramDetailModal';
 
-import { fetchHomePageData, FALLBACK_HOME_DATA } from '../services/api';
+import { fetchHomePageData, FALLBACK_HOME_DATA, openCheckoutPage } from '../services/api';
 import { Colors } from '../constants/theme';
 
 export default function HomeScreen() {
@@ -161,7 +161,7 @@ export default function HomeScreen() {
         <View onLayout={(e) => handleLayoutSection('plans', e)}>
           <MembershipPlansSection
             tiers={homeData.membershipTiers}
-            onSelectTier={(tier) => handleScrollToSection('pitch')}
+            onSelectTier={(tier) => openCheckoutPage(tier?.slug || 'core')}
           />
         </View>
 

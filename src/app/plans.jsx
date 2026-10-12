@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
+  Image,
   ScrollView,
   TouchableOpacity,
   RefreshControl,
@@ -9,13 +10,12 @@ import {
   SafeAreaView,
   StatusBar,
   Linking,
-  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import SubpageHeader from '../components/SubpageHeader';
 import MobileMenuModal from '../components/MobileMenuModal';
 import FooterSection from '../components/home/FooterSection';
-import { fetchPlansPageData } from '../services/api';
+import { fetchPlansPageData, openCheckoutPage } from '../services/api';
 import { Colors, Radii, Shadows } from '../constants/theme';
 
 export default function PlansScreen() {
@@ -53,24 +53,21 @@ export default function PlansScreen() {
     loadData();
   }, [loadData]);
 
-  const handleSelectTier = (tier) => {
-    Alert.alert(
-      `${tier.name} Membership`,
-      `Would you like to subscribe to the ${tier.name} plan at ${tier.price_formatted || '$' + tier.price_yearly + '/yr'}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Proceed to Checkout',
-          onPress: () => {
-            Linking.openURL(
-              `mailto:hello@bdangels.co?subject=Membership%20Application%20for%20${encodeURIComponent(
-                tier.name
-              )}%20Tier`
-            ).catch((err) => console.log('Mail link error:', err));
-          },
-        },
-      ]
-    );
+  const getTierIcon = (slug) => {
+    switch (slug?.toLowerCase()) {
+      case 'core':
+        return require('../../assets/images/plan_core.webp');
+      case 'advanced':
+        return require('../../assets/images/plan_advanced.webp');
+      case 'institutional':
+        return require('../../assets/images/plan_institutional.webp');
+      default:
+        return require('../../assets/images/icon.webp');
+    }
+  };
+
+  const handleSelectTier = async (tier) => {
+    await openCheckoutPage(tier?.slug || 'core');
   };
 
   return (
@@ -124,12 +121,21 @@ export default function PlansScreen() {
                     </View>
                   )}
 
-                  <Text style={styles.tierName}>{tier.name}</Text>
+                  <Text style={styles.tierName}>{tier.name.toUpperCase()}</Text>
                   <View style={styles.priceRow}>
-                    <Text style={styles.priceVal}>{tier.price_formatted || `$${tier.price_yearly}`}</Text>
+                    <Text style={styles.priceVal}>{tier.price_formatted || `$${Math.round(tier.price_yearly || 0)}`}</Text>
                     <Text style={styles.pricePeriod}>/ year</Text>
                   </View>
                   <Text style={styles.tierBilling}>Billed annually • USD settlement</Text>
+
+                  {/* Plan Icon */}
+                  <View style={styles.iconContainer}>
+                    <Image
+                      source={getTierIcon(tier.slug)}
+                      style={styles.tierIcon}
+                      resizeMode="contain"
+                    />
+                  </View>
 
                   {/* Included features */}
                   <View style={styles.featuresList}>
@@ -156,7 +162,7 @@ export default function PlansScreen() {
                     activeOpacity={0.85}
                   >
                     <Text style={[styles.selectBtnText, isHighlight && styles.selectBtnTextHighlight]}>
-                      Select {tier.name}
+                      Choose {tier.name}
                     </Text>
                     <Ionicons
                       name="arrow-forward"
@@ -287,31 +293,46 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
   },
   tierName: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '800',
-    color: Colors.ink,
+    color: Colors.green,
+    letterSpacing: 1.2,
     marginBottom: 6,
+    textAlign: 'center',
   },
   priceRow: {
     flexDirection: 'row',
     alignItems: 'baseline',
+    justifyContent: 'center',
     gap: 4,
-    marginBottom: 2,
+    marginBottom: 4,
   },
   priceVal: {
-    fontSize: 32,
+    fontSize: 38,
     fontWeight: '900',
     color: Colors.ink,
+    textAlign: 'center',
   },
   pricePeriod: {
-    fontSize: 14,
+    fontSize: 15,
     color: Colors.muted,
     fontWeight: '600',
   },
   tierBilling: {
     fontSize: 12,
     color: Colors.muted,
-    marginBottom: 18,
+    marginBottom: 14,
+    textAlign: 'center',
+  },
+  iconContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 10,
+    height: 80,
+  },
+  tierIcon: {
+    width: 76,
+    height: 76,
   },
   featuresList: {
     gap: 10,

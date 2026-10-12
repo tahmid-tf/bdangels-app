@@ -1,7 +1,8 @@
 import React from 'react';
-import { View, Text, Image, TouchableOpacity, StyleSheet, Alert } from 'react-native';
+import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Radii, Shadows, Spacing } from '../../constants/theme';
+import { openCheckoutPage } from '../../services/api';
 
 export default function MembershipPlansSection({ tiers, onSelectTier }) {
   const displayTiers = tiers && tiers.length > 0 ? tiers : [
@@ -78,11 +79,7 @@ export default function MembershipPlansSection({ tiers, onSelectTier }) {
     if (onSelectTier) {
       onSelectTier(tier);
     } else {
-      Alert.alert(
-        `${tier.name} Membership`,
-        `You selected the ${tier.name} plan ($${tier.price_yearly}/yr). Membership checkout and onboarding is available for verified investor accounts.`,
-        [{ text: 'OK' }]
-      );
+      openCheckoutPage(tier?.slug || 'core');
     }
   };
 
@@ -168,7 +165,7 @@ export default function MembershipPlansSection({ tiers, onSelectTier }) {
                       isPopular ? styles.joinButtonTextHighlighted : styles.joinButtonTextStandard,
                     ]}
                   >
-                    Get Started with {tier.name}
+                    Choose {tier.name}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -256,15 +253,17 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
   },
   tierName: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '800',
     color: Colors.green,
     letterSpacing: 1.5,
     marginBottom: 8,
+    textAlign: 'center',
   },
   priceRow: {
     flexDirection: 'row',
     alignItems: 'baseline',
+    justifyContent: 'center',
     marginBottom: 16,
   },
   priceText: {
@@ -272,6 +271,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: Colors.ink,
     letterSpacing: -1,
+    textAlign: 'center',
   },
   periodText: {
     fontSize: 16,

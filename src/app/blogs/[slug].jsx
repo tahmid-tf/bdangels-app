@@ -8,25 +8,31 @@ import {
   SafeAreaView,
   StatusBar,
   Share,
+  ActivityIndicator,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import SubpageHeader from '../../components/SubpageHeader';
 import MobileMenuModal from '../../components/MobileMenuModal';
 import FooterSection from '../../components/home/FooterSection';
-import { fetchBlogBySlug } from '../../services/api';
+import BlogContentRenderer from '../../components/BlogContentRenderer';
+import { fetchBlogBySlug, calculateReadingTime } from '../../services/api';
 import { Colors, Radii } from '../../constants/theme';
 
 export default function BlogDetailScreen() {
   const { slug } = useLocalSearchParams();
   const [blog, setBlog] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [menuVisible, setMenuVisible] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
     if (slug) {
       fetchBlogBySlug(slug).then((data) => {
-        if (isMounted && data) setBlog(data);
+        if (isMounted) {
+          setBlog(data);
+          setLoading(false);
+        }
       });
     }
     return () => {
@@ -56,23 +62,28 @@ export default function BlogDetailScreen() {
     }
   };
 
-  if (!blog) {
+  if (loading || !blog) {
     return (
       <SafeAreaView style={styles.safeArea}>
-        <SubpageHeader title="ARTICLE" onOpenMenu={() => setMenuVisible(true)} />
+        <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+        <SubpageHeader onOpenMenu={() => setMenuVisible(true)} />
         <View style={styles.centerContainer}>
+          <ActivityIndicator size="large" color={Colors.green} />
           <Text style={styles.loadingText}>Loading article...</Text>
         </View>
       </SafeAreaView>
     );
   }
 
+  const authorName = blog.author_name || blog.author || 'Bangladesh Angels Network';
+  const readingTime = calculateReadingTime(blog.content, blog.excerpt);
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
+      {/* Clean Header without redundant sub-bar */}
       <SubpageHeader
-        title="BAN INSIGHTS"
         onOpenMenu={() => setMenuVisible(true)}
       />
 
@@ -81,99 +92,103 @@ export default function BlogDetailScreen() {
         contentContainerStyle={styles.contentContainer}
         showsVerticalScrollIndicator={false}
       >
-        {/* Article Header */}
-        <View style={styles.articleHeader}>
-          <View style={styles.metaRow}>
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>{blog.category || 'Ecosystem'}</Text>
+        <View style={styles.articleContainer}>
+          {/* Back button link */}
+          <TouchableOpacity
+            style={styles.backRow}
+            onPress={() => router.back()}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="arrow-back" size={15} color={Colors.green} />
+            <Text style={styles.backText}>All articles</Text>
+          </TouchableOpacity>
+
+          {/* Article Header */}
+          <View style={styles.articleHeader}>
+            <View style={styles.metaRow}>
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{blog.category || 'Educational'}</Text>
+              </View>
+              <Text style={styles.readTime}>{readingTime}</Text>
             </View>
-            <Text style={styles.readTime}>{blog.reading_time || '5 min read'}</Text>
+
+            <Text style={styles.title}>{blog.title}</Text>
+
+            {/* Byline with Full Author Role & Org */}
+            <View style={styles.authorRow}>
+              <View style={styles.authorAvatar}>
+                <Text style={styles.avatarLetter}>
+                  {authorName.charAt(0).toUpperCase()}
+                </Text>
+              </View>
+              <View style={styles.authorInfo}>
+                <Text style={styles.authorName}>{authorName}</Text>
+                {blog.author_role ? (
+                  <Text style={styles.authorRole}>
+                    {blog.author_role}
+                    {blog.author_organization ? ` · ${blog.author_organization}` : ''}
+                  </Text>
+                ) : null}
+                <Text style={styles.dateText}>Published {formatDate(blog.published_at)}</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.shareBtn}
+                onPress={handleShare}
+                accessibilityLabel="Share article"
+              >
+                <Ionicons name="share-social-outline" size={18} color={Colors.ink} />
+              </TouchableOpacity>
+            </View>
           </View>
 
-          <Text style={styles.title}>{blog.title}</Text>
+          {/* Lead Excerpt */}
+          {blog.excerpt ? (
+            <View style={styles.excerptBox}>
+              <Text style={styles.excerptText}>{blog.excerpt}</Text>
+            </View>
+          ) : null}
 
-          <View style={styles.authorRow}>
-            <View style={styles.authorAvatar}>
-              <Text style={styles.avatarLetter}>
-                {(blog.author || 'BAN').charAt(0).toUpperCase()}
-              </Text>
+          {/* Rich HTML Content Body */}
+          <View style={styles.bodySection}>
+            <BlogContentRenderer content={blog.content} />
+          </View>
+
+          {/* Article Footer */}
+          <View style={styles.articleFooter}>
+            <View style={styles.footerCategoryBadge}>
+              <Text style={styles.footerCategoryText}>{blog.category || 'Educational'}</Text>
             </View>
-            <View>
-              <Text style={styles.authorName}>{blog.author || 'Bangladesh Angels Team'}</Text>
-              <Text style={styles.dateText}>{formatDate(blog.published_at)}</Text>
-            </View>
-            <TouchableOpacity style={styles.shareBtn} onPress={handleShare}>
-              <Ionicons name="share-social-outline" size={18} color={Colors.ink} />
+            <TouchableOpacity
+              style={styles.footerLink}
+              onPress={() => router.push('/blogs')}
+            >
+              <Text style={styles.footerLinkText}>Explore more insights</Text>
+              <Ionicons name="arrow-forward" size={14} color={Colors.green} />
             </TouchableOpacity>
           </View>
-        </View>
 
-        {/* Lead Excerpt */}
-        <View style={styles.excerptBox}>
-          <Text style={styles.excerptText}>{blog.excerpt}</Text>
-        </View>
-
-        {/* Article Body Content */}
-        <View style={styles.bodySection}>
-          <Text style={styles.paragraph}>
-            Early-stage venture capital in frontier ecosystems is defined by hands-on conviction, local market
-            insight, and patient capital. Over the past five years, Bangladesh Angels Network has witnessed a
-            profound transition from ad-hoc investing to institutional syndicate discipline.
-          </Text>
-
-          <Text style={styles.subheading}>1. The Role of Co-Investing Syndicates</Text>
-          <Text style={styles.paragraph}>
-            In markets where initial check sizes typically range from $10,000 to $50,000 per angel, forming
-            syndicates allows founders to raise clean rounds ($100k–$300k) with a single cap table entry via
-            special-purpose vehicles (SPVs) or representative proxies.
-          </Text>
-
-          <View style={styles.quoteBox}>
-            <Text style={styles.quoteText}>
-              {"“The best early-stage investors aren't just writing checks—they are actively opening regulatory doors, unblocking distribution partnerships, and recruiting core executives.”"}
-            </Text>
-          </View>
-
-          <Text style={styles.subheading}>2. Sourcing Rigor & Diligence Hygiene</Text>
-          <Text style={styles.paragraph}>
-            Evaluating early-stage startups in South Asia requires assessing unit economics through an emerging-market
-            lens. CAC/LTV benchmarks differ substantially from developed ecosystems, making customer retention,
-            repeat purchase frequencies, and sustainable gross margins far more predictive of long-term survival.
-          </Text>
-
-          <Text style={styles.subheading}>3. Key Takeaways for Founders & Angels</Text>
-          <View style={styles.bulletList}>
-            <View style={styles.bulletItem}>
-              <Ionicons name="checkmark-circle" size={18} color={Colors.green} />
-              <Text style={styles.bulletText}>
-                Prioritize clean corporate governance and early RJSC compliance.
-              </Text>
+          {/* Recent / Related Articles */}
+          {blog.recent_blogs && blog.recent_blogs.length > 0 ? (
+            <View style={styles.recentSection}>
+              <Text style={styles.recentHeading}>Recent Posts</Text>
+              <View style={styles.recentList}>
+                {blog.recent_blogs.map((item) => (
+                  <TouchableOpacity
+                    key={item.id}
+                    style={styles.recentCard}
+                    activeOpacity={0.8}
+                    onPress={() => router.push(`/blogs/${item.slug || item.id}`)}
+                  >
+                    <Text style={styles.recentTitle}>{item.title}</Text>
+                    <View style={styles.recentMeta}>
+                      <Text style={styles.recentCat}>{item.category || 'Article'}</Text>
+                      <Text style={styles.recentDate}>{formatDate(item.published_at)}</Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </View>
             </View>
-            <View style={styles.bulletItem}>
-              <Ionicons name="checkmark-circle" size={18} color={Colors.green} />
-              <Text style={styles.bulletText}>
-                Use standardized term sheets (SAFE / Convertible notes) to minimize legal delays.
-              </Text>
-            </View>
-            <View style={styles.bulletItem}>
-              <Ionicons name="checkmark-circle" size={18} color={Colors.green} />
-              <Text style={styles.bulletText}>
-                Maintain consistent monthly investor reporting on revenues, burn, and milestones.
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Back to blogs */}
-        <View style={styles.backSection}>
-          <TouchableOpacity
-            style={styles.backBtn}
-            onPress={() => router.push('/blogs')}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="arrow-back" size={16} color={Colors.green} />
-            <Text style={styles.backBtnText}>Back to all insights & blogs</Text>
-          </TouchableOpacity>
+          ) : null}
         </View>
 
         {/* Footer */}
@@ -204,39 +219,55 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    padding: 24,
+    gap: 12,
   },
   loadingText: {
     fontSize: 14,
-    color: Colors.muted,
+    color: '#6B7280',
+    fontWeight: '600',
+  },
+  articleContainer: {
+    paddingHorizontal: 22,
+    paddingTop: 20,
+    paddingBottom: 28,
+  },
+  backRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 16,
+  },
+  backText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.green,
   },
   articleHeader: {
-    paddingHorizontal: 20,
-    paddingTop: 28,
-    paddingBottom: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.line,
+    marginBottom: 20,
   },
   metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 14,
+    gap: 10,
+    marginBottom: 12,
   },
   badge: {
     backgroundColor: '#ECFDF5',
-    paddingHorizontal: 12,
+    paddingHorizontal: 11,
     paddingVertical: 4,
-    borderRadius: Radii.sm,
+    borderRadius: Radii.pill,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
   },
   badgeText: {
     fontSize: 11,
     fontWeight: '800',
     color: Colors.green,
-    textTransform: 'uppercase',
   },
   readTime: {
     fontSize: 12,
-    color: Colors.muted,
+    color: '#6B7280',
     fontWeight: '600',
   },
   title: {
@@ -244,125 +275,143 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: Colors.ink,
     lineHeight: 34,
+    letterSpacing: -0.6,
     marginBottom: 18,
-    letterSpacing: -0.5,
   },
   authorRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
   },
   authorAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#DFF4EB',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#0F3D34',
     alignItems: 'center',
     justifyContent: 'center',
   },
   avatarLetter: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: '800',
-    color: Colors.green,
+    color: '#FFFFFF',
+  },
+  authorInfo: {
+    flex: 1,
   },
   authorName: {
-    fontSize: 14,
+    fontSize: 14.5,
     fontWeight: '800',
     color: Colors.ink,
   },
+  authorRole: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 1,
+  },
   dateText: {
-    fontSize: 11,
-    color: Colors.muted,
+    fontSize: 11.5,
+    color: '#9CA3AF',
+    marginTop: 2,
   },
   shareBtn: {
-    marginLeft: 'auto',
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     backgroundColor: '#F3F4F6',
     alignItems: 'center',
     justifyContent: 'center',
   },
   excerptBox: {
-    marginHorizontal: 20,
-    marginTop: 20,
-    backgroundColor: '#F9FAFB',
-    borderRadius: Radii.lg,
+    backgroundColor: '#F8FAF9',
+    borderRadius: 14,
     padding: 16,
     borderLeftWidth: 4,
     borderLeftColor: Colors.green,
+    marginBottom: 20,
   },
   excerptText: {
     fontSize: 15,
+    color: '#4B5563',
+    lineHeight: 23,
     fontStyle: 'italic',
-    color: '#374151',
-    lineHeight: 22,
   },
   bodySection: {
-    paddingHorizontal: 20,
-    paddingVertical: 24,
+    paddingBottom: 24,
   },
-  paragraph: {
-    fontSize: 15,
-    color: '#374151',
-    lineHeight: 25,
-    marginBottom: 18,
+  articleFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
+    marginBottom: 28,
   },
-  subheading: {
+  footerCategoryBadge: {
+    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: Radii.pill,
+  },
+  footerCategoryText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.ink,
+  },
+  footerLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  footerLinkText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.green,
+  },
+  recentSection: {
+    marginTop: 8,
+    marginBottom: 20,
+  },
+  recentHeading: {
     fontSize: 18,
     fontWeight: '800',
     color: Colors.ink,
-    marginTop: 10,
-    marginBottom: 10,
+    marginBottom: 12,
+    letterSpacing: -0.3,
   },
-  quoteBox: {
-    backgroundColor: '#F0FDF4',
-    padding: 18,
-    borderRadius: Radii.lg,
-    marginVertical: 14,
-    borderLeftWidth: 3,
-    borderLeftColor: Colors.green,
+  recentList: {
+    gap: 10,
   },
-  quoteText: {
+  recentCard: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 14,
+    padding: 14,
+  },
+  recentTitle: {
     fontSize: 14,
-    fontStyle: 'italic',
+    fontWeight: '700',
     color: Colors.ink,
-    lineHeight: 22,
-    fontWeight: '600',
+    lineHeight: 19,
+    marginBottom: 6,
   },
-  bulletList: {
-    gap: 10,
-    marginTop: 6,
-    marginBottom: 18,
-  },
-  bulletItem: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-  },
-  bulletText: {
-    flex: 1,
-    fontSize: 14,
-    color: '#374151',
-    lineHeight: 20,
-  },
-  backSection: {
-    paddingHorizontal: 20,
-    paddingBottom: 28,
-  },
-  backBtn: {
+  recentMeta: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#F3F4F6',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: Radii.md,
-    alignSelf: 'flex-start',
+    justifyContent: 'space-between',
   },
-  backBtnText: {
+  recentCat: {
+    fontSize: 11,
+    fontWeight: '700',
     color: Colors.green,
-    fontSize: 13,
-    fontWeight: '800',
+  },
+  recentDate: {
+    fontSize: 11,
+    color: '#9CA3AF',
   },
 });

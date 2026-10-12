@@ -1,5 +1,6 @@
-import { Platform } from 'react-native';
+import { Platform, Linking } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
+import * as WebBrowser from 'expo-web-browser';
 import { normalizeImageUrl } from '../utils/imageResolver';
 
 const getBaseUrl = () => {
@@ -14,6 +15,42 @@ const getBaseUrl = () => {
 };
 
 export const API_BASE_URL = getBaseUrl();
+
+/**
+ * Web portal base URL (defaults to https://bdangels.co)
+ */
+export const getWebBaseUrl = () => {
+  if (process.env.EXPO_PUBLIC_API_URL) {
+    return process.env.EXPO_PUBLIC_API_URL.replace(/\/api\/?$/, '');
+  }
+  return 'https://bdangels.co';
+};
+
+/**
+ * Upgrade / Checkout payment page URL
+ */
+export const getUpgradePayUrl = (planSlug = '') => {
+  const base = getWebBaseUrl();
+  return `${base}/upgrade/pay${planSlug ? `?plan=${encodeURIComponent(planSlug)}` : ''}`;
+};
+
+/**
+ * Open upgrade checkout payment flow in-app browser or native browser
+ */
+export const openCheckoutPage = async (planSlug = '') => {
+  const url = getUpgradePayUrl(planSlug);
+  try {
+    await WebBrowser.openBrowserAsync(url, {
+      toolbarColor: '#005A36',
+      controlsColor: '#FFFFFF',
+      showTitle: true,
+      presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
+    });
+  } catch (err) {
+    console.log('WebBrowser open notice, falling back to Linking:', err);
+    Linking.openURL(url).catch((linkErr) => console.log('Linking error:', linkErr));
+  }
+};
 
 // Embedded fallback data directly from live Laravel backend for 100% resilient rendering
 export const FALLBACK_HOME_DATA = {
@@ -679,65 +716,55 @@ export async function fetchServicesPageData() {
 }
 
 /**
+ * Calculate estimated reading time in minutes
+ */
+export function calculateReadingTime(content, excerpt = '') {
+  const text = (content || excerpt || '').replace(/<[^>]*>/g, ' ');
+  const words = text.trim().split(/\s+/).filter(Boolean).length;
+  const minutes = Math.max(1, Math.ceil(words / 200));
+  return `${minutes} min read`;
+}
+
+/**
  * Fetch Blogs from GET /api/blogs
  */
 export async function fetchBlogsPageData(search = '', category = '') {
   try {
     const params = new URLSearchParams();
     if (search) params.append('search', search);
-    if (category) params.append('category', category);
+    if (category && category !== 'All') params.append('category', category);
     const url = `${API_BASE_URL}/blogs${params.toString() ? '?' + params.toString() : ''}`;
-    const res = await fetch(url);
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
     if (res.ok) {
       const json = await res.json();
       const data = json.data || json;
-      if (data?.blogs?.data && data.blogs.data.length > 0) {
+      if (data && data.blogs) {
         return data;
       }
     }
   } catch (err) {
     console.log('Blogs fetch notice:', err);
   }
-  // Curated ecosystem insights fallback
+  // Curated ecosystem insights fallback (using Nadim's actual blog as primary)
   return {
     blogs: {
       data: [
         {
-          id: 1,
-          title: 'The Angel Investor Landscape in Bangladesh: 2025 and Beyond',
-          slug: 'angel-investor-landscape-bangladesh',
-          excerpt: 'How local syndicates, female angel networks, and overseas diaspora are reshaping seed capital in Dhaka.',
-          category: 'Ecosystem',
-          published_at: '2025-02-15T10:00:00Z',
-          reading_time: '5 min read',
-          author: 'Bangladesh Angels Team',
-        },
-        {
-          id: 2,
-          title: 'Understanding Term Sheets & SAFE Agreements in Frontier Markets',
-          slug: 'understanding-term-sheets-bangladesh',
-          excerpt: 'A practical guide for early-stage founders navigating equity, convertible notes, and governance.',
-          category: 'Investment',
-          published_at: '2025-01-20T10:00:00Z',
-          reading_time: '7 min read',
-          author: 'Zaaim Zakir',
-        },
-        {
-          id: 3,
-          title: 'Why We Backed Jatri, Pathao & Priyoshop: Operator Insights',
-          slug: 'why-we-backed-jatri-pathao-priyoshop',
-          excerpt: 'Key metrics, market conviction, and team resilience lessons from BAN’s fastest-scaling portfolio companies.',
-          category: 'Portfolio',
-          published_at: '2024-12-10T10:00:00Z',
-          reading_time: '6 min read',
-          author: 'Ivy Huq Russell',
+          id: 7,
+          title: 'Bangladesh Makes It Easier for Foreign Investors to Repatriate. How startups can benefit from this.',
+          slug: 'bangladesh-makes-it-easier-for-foreign-investors-to-repatriate-how-startups-can-benefit-from-this-2',
+          excerpt: 'Analysis of Bangladesh Bank FEID Circular No. 01 on transfer of shares and repatriation of sale proceeds of shares for non-residents.',
+          category: 'Educational',
+          author_name: 'Nadim Abrar',
+          author_role: 'Operations Analyst',
+          author_organization: 'Bangladesh Angels Network',
+          published_at: '2026-10-04T22:39:00.000000Z',
         },
       ],
+      total: 1,
     },
     categories: [
-      { category: 'Ecosystem', posts_count: 1 },
-      { category: 'Investment', posts_count: 1 },
-      { category: 'Portfolio', posts_count: 1 },
+      { category: 'Educational', posts_count: 1 },
     ],
   };
 }
@@ -747,16 +774,28 @@ export async function fetchBlogsPageData(search = '', category = '') {
  */
 export async function fetchBlogBySlug(slug) {
   try {
-    const res = await fetch(`${API_BASE_URL}/blogs/${slug}`);
+    const res = await fetch(`${API_BASE_URL}/blogs/${slug}`, {
+      headers: { Accept: 'application/json' },
+    });
     if (res.ok) {
       const json = await res.json();
+      if (json.data?.blog) {
+        return {
+          ...json.data.blog,
+          recent_blogs: json.data.recent_blogs || [],
+          categories: json.data.categories || [],
+        };
+      }
       if (json.data) return json.data;
     }
   } catch (err) {
     console.log('Blog detail fetch notice:', err);
   }
   const all = await fetchBlogsPageData();
-  return all.blogs.data.find((b) => b.slug === slug) || all.blogs.data[0];
+  return (
+    all.blogs?.data?.find((b) => b.slug === slug || String(b.id) === String(slug)) ||
+    all.blogs?.data?.[0]
+  );
 }
 
 /**
