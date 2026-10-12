@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -449,6 +449,15 @@ export default function AdminScreen() {
     portfolio: 0,
     invest_portfolio: 0,
   });
+  const [dealPagination, setDealPagination] = useState({
+    currentPage: 1,
+    lastPage: 1,
+    total: 0,
+    perPage: 12,
+    from: 0,
+    to: 0,
+  });
+  const dealSearchTimeoutRef = useRef(null);
   const [selectedDealForView, setSelectedDealForView] = useState(null);
   const [viewDealModalVisible, setViewDealModalVisible] = useState(false);
   const [createDealModalVisible, setCreateDealModalVisible] = useState(false);
@@ -504,6 +513,15 @@ export default function AdminScreen() {
   const [pitchSearch, setPitchSearch] = useState('');
   const [pitchFilter, setPitchFilter] = useState('all'); // 'all' | 'with_deck' | 'no_deck'
   const [pitchCounts, setPitchCounts] = useState({ total: 0, with_deck: 0, without_deck: 0 });
+  const [pitchPagination, setPitchPagination] = useState({
+    currentPage: 1,
+    lastPage: 1,
+    total: 0,
+    perPage: 12,
+    from: 0,
+    to: 0,
+  });
+  const pitchSearchTimeoutRef = useRef(null);
   const [selectedPitchForView, setSelectedPitchForView] = useState(null);
   const [viewPitchModalVisible, setViewPitchModalVisible] = useState(false);
   const [pdfViewerModalVisible, setPdfViewerModalVisible] = useState(false);
@@ -974,6 +992,14 @@ export default function AdminScreen() {
     [authToken, memberSearch, memberStatusFilter]
   );
 
+  // Clear search debounce timers on unmount
+  useEffect(() => {
+    return () => {
+      if (dealSearchTimeoutRef.current) clearTimeout(dealSearchTimeoutRef.current);
+      if (pitchSearchTimeoutRef.current) clearTimeout(pitchSearchTimeoutRef.current);
+    };
+  }, []);
+
   // Fetch Deals
   const loadDeals = useCallback(
     async (
@@ -981,9 +1007,19 @@ export default function AdminScreen() {
       search = dealSearch,
       type = dealTypeFilter,
       status = dealStatusFilter,
-      options = {}
+      pageOrOptions = 1,
+      maybeOptions = {}
     ) => {
       if (!token) return;
+      let page = 1;
+      let options = {};
+      if (typeof pageOrOptions === 'object' && pageOrOptions !== null) {
+        options = pageOrOptions;
+        page = 1;
+      } else {
+        page = typeof pageOrOptions === 'number' ? pageOrOptions : 1;
+        options = maybeOptions || {};
+      }
       const { silent = false } = options;
       if (!silent) setDealsLoading(true);
       try {
@@ -993,12 +1029,32 @@ export default function AdminScreen() {
           search,
           type: filterType,
           status: filterStatus,
-          per_page: 50,
+          page,
+          per_page: 12,
         });
         const list = res?.data || (Array.isArray(res) ? res : []);
         setDeals(list);
         if (res?.counts) {
           setDealCounts(res.counts);
+        }
+        if (res?.meta) {
+          setDealPagination({
+            currentPage: res.meta.current_page || page,
+            lastPage: res.meta.last_page || 1,
+            total: res.meta.total || list.length,
+            perPage: res.meta.per_page || 12,
+            from: res.meta.from ?? ((res.meta.current_page - 1) * 12 + (list.length > 0 ? 1 : 0)),
+            to: res.meta.to ?? ((res.meta.current_page - 1) * 12 + list.length),
+          });
+        } else {
+          setDealPagination({
+            currentPage: 1,
+            lastPage: 1,
+            total: list.length,
+            perPage: 12,
+            from: list.length > 0 ? 1 : 0,
+            to: list.length,
+          });
         }
       } catch (err) {
         console.log('Error loading deals:', err);
@@ -1011,29 +1067,103 @@ export default function AdminScreen() {
 
   // Fetch Submissions
   const loadSubmissions = useCallback(
-    async (token = authToken, pSearch = pitchSearch, pFilter = pitchFilter) => {
+    async (
+      token = authToken,
+      pSearch = pitchSearch,
+      pFilter = pitchFilter,
+      pageOrOptions = 1,
+      maybeOptions = {}
+    ) => {
       if (!token) return;
-      setSubmissionsLoading(true);
+      let page = 1;
+      let options = {};
+      if (typeof pageOrOptions === 'object' && pageOrOptions !== null) {
+        options = pageOrOptions;
+        page = 1;
+      } else {
+        page = typeof pageOrOptions === 'number' ? pageOrOptions : 1;
+        options = maybeOptions || {};
+      }
+      const { silent = false } = options;
+      if (!silent) setSubmissionsLoading(true);
       try {
         const [pitchesRes, academyRes] = await Promise.all([
-          fetchAdminFounderPitches(token, { search: pSearch, filter: pFilter, per_page: 50 }),
-          fetchAdminAngelAcademy(token),
+          fetchAdminFounderPitches(token, { search: pSearch, filter: pFilter, page, per_page: 12 }),
+          page === 1 ? fetchAdminAngelAcademy(token) : Promise.resolve(null),
         ]);
         const pitchesList = pitchesRes?.data || [];
-        const academyList = academyRes?.data?.data || academyRes?.data || (Array.isArray(academyRes) ? academyRes : []);
         setFounderPitches(pitchesList);
         if (pitchesRes?.counts) {
           setPitchCounts(pitchesRes.counts);
         }
-        setAcademyApplications(academyList);
+        if (pitchesRes?.meta) {
+          setPitchPagination({
+            currentPage: pitchesRes.meta.current_page || page,
+            lastPage: pitchesRes.meta.last_page || 1,
+            total: pitchesRes.meta.total || pitchesList.length,
+            perPage: pitchesRes.meta.per_page || 12,
+            from: pitchesRes.meta.from ?? ((pitchesRes.meta.current_page - 1) * 12 + (pitchesList.length > 0 ? 1 : 0)),
+            to: pitchesRes.meta.to ?? ((pitchesRes.meta.current_page - 1) * 12 + pitchesList.length),
+          });
+        } else {
+          setPitchPagination({
+            currentPage: 1,
+            lastPage: 1,
+            total: pitchesList.length,
+            perPage: 12,
+            from: pitchesList.length > 0 ? 1 : 0,
+            to: pitchesList.length,
+          });
+        }
+        if (academyRes) {
+          const academyList = academyRes?.data?.data || academyRes?.data || (Array.isArray(academyRes) ? academyRes : []);
+          setAcademyApplications(academyList);
+        }
       } catch (err) {
         console.log('Error loading submissions:', err);
       } finally {
-        setSubmissionsLoading(false);
+        if (!silent) setSubmissionsLoading(false);
       }
     },
     [authToken, pitchSearch, pitchFilter]
   );
+
+  // Debounced search handlers
+  const handleDealSearchChange = (text) => {
+    setDealSearch(text);
+    if (dealSearchTimeoutRef.current) {
+      clearTimeout(dealSearchTimeoutRef.current);
+    }
+    dealSearchTimeoutRef.current = setTimeout(() => {
+      loadDeals(authToken, text, dealTypeFilter, dealStatusFilter, 1);
+    }, 400);
+  };
+
+  const handleClearDealSearch = () => {
+    if (dealSearchTimeoutRef.current) {
+      clearTimeout(dealSearchTimeoutRef.current);
+    }
+    setDealSearch('');
+    loadDeals(authToken, '', dealTypeFilter, dealStatusFilter, 1);
+  };
+
+  const handlePitchSearchChange = (text) => {
+    setPitchSearch(text);
+    if (pitchSearchTimeoutRef.current) {
+      clearTimeout(pitchSearchTimeoutRef.current);
+    }
+    pitchSearchTimeoutRef.current = setTimeout(() => {
+      loadSubmissions(authToken, text, pitchFilter, 1);
+    }, 400);
+  };
+
+  const handleClearPitchSearch = () => {
+    if (pitchSearchTimeoutRef.current) {
+      clearTimeout(pitchSearchTimeoutRef.current);
+    }
+    setPitchSearch('');
+    loadSubmissions(authToken, '', pitchFilter, 1);
+  };
 
   // Fetch Blogs
   const loadBlogs = useCallback(
@@ -1412,9 +1542,9 @@ export default function AdminScreen() {
     if (activeTab === 'events') await loadEvents(authToken, eventsSearch, eventsTypeFilter, eventsLandingFilter);
     if (activeTab === 'startup-services') await loadStartupServices(authToken);
     if (activeTab === 'team-members') await loadTeamMembers(authToken);
-    if (activeTab === 'deals') await loadDeals(authToken);
+    if (activeTab === 'deals') await loadDeals(authToken, dealSearch, dealTypeFilter, dealStatusFilter, dealPagination.currentPage);
     if (activeTab === 'submissions' || activeTab === 'founder-pitches' || activeTab === 'angel-academy') {
-      await loadSubmissions(authToken);
+      await loadSubmissions(authToken, pitchSearch, pitchFilter, pitchPagination.currentPage);
     }
     if (activeTab === 'subscriptions') await loadSubscriptions(authToken);
     if (activeTab === 'investments' || activeTab === 'investor-investments') {
@@ -4653,6 +4783,10 @@ export default function AdminScreen() {
           review: selectedDealForDelete.type === 'review' ? Math.max(0, (prev.review || 1) - 1) : prev.review,
           portfolio: selectedDealForDelete.is_portfolio || selectedDealForDelete.type === 'portfolio' ? Math.max(0, (prev.portfolio || 1) - 1) : prev.portfolio,
         }));
+        setDealPagination((prev) => ({
+          ...prev,
+          total: Math.max(0, prev.total - 1),
+        }));
         setDeleteDealModalVisible(false);
         if (selectedDealForView?.id === selectedDealForDelete.id) {
           setViewDealModalVisible(false);
@@ -4776,6 +4910,10 @@ export default function AdminScreen() {
         setPitchCounts((prev) => ({
           ...prev,
           total: Math.max(0, (prev.total || 1) - 1),
+        }));
+        setPitchPagination((prev) => ({
+          ...prev,
+          total: Math.max(0, prev.total - 1),
         }));
         Alert.alert('Deleted', 'Founder pitch submission deleted successfully.');
       } else {
@@ -5725,7 +5863,9 @@ export default function AdminScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.sectionHeading}>Deal Flow Pipeline</Text>
                   <Text style={styles.sectionSubheading}>
-                    {deals.length} {deals.length === 1 ? 'deal' : 'deals'} loaded · Curated opportunities & portfolios
+                    {dealPagination.total > 0
+                      ? `Showing ${dealPagination.from}-${dealPagination.to} of ${dealPagination.total} deals · Curated opportunities & portfolios`
+                      : `${deals.length} deals loaded · Curated opportunities & portfolios`}
                   </Text>
                 </View>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -5739,7 +5879,7 @@ export default function AdminScreen() {
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={styles.refreshIconBtn}
-                    onPress={() => loadDeals(authToken, dealSearch, dealTypeFilter, dealStatusFilter)}
+                    onPress={() => loadDeals(authToken, dealSearch, dealTypeFilter, dealStatusFilter, dealPagination.currentPage)}
                     activeOpacity={0.7}
                   >
                     <Ionicons name="refresh" size={18} color="#0A5554" />
@@ -5767,8 +5907,9 @@ export default function AdminScreen() {
                       key={`deal-type-chip-${chip.key}`}
                       style={[styles.dealTabChip, isActive && styles.dealTabChipActive]}
                       onPress={() => {
+                        if (dealSearchTimeoutRef.current) clearTimeout(dealSearchTimeoutRef.current);
                         setDealTypeFilter(chip.key);
-                        loadDeals(authToken, dealSearch, chip.key, dealStatusFilter);
+                        loadDeals(authToken, dealSearch, chip.key, dealStatusFilter, 1);
                       }}
                       activeOpacity={0.8}
                     >
@@ -5822,8 +5963,9 @@ export default function AdminScreen() {
                         backgroundColor: isCurrent ? '#0A5554' : '#F1F5F9',
                       }}
                       onPress={() => {
+                        if (dealSearchTimeoutRef.current) clearTimeout(dealSearchTimeoutRef.current);
                         setDealStatusFilter(st.key);
-                        loadDeals(authToken, dealSearch, dealTypeFilter, st.key);
+                        loadDeals(authToken, dealSearch, dealTypeFilter, st.key, 1);
                       }}
                       activeOpacity={0.8}
                     >
@@ -5849,18 +5991,19 @@ export default function AdminScreen() {
                   placeholder="Search deals by startup name or sector..."
                   placeholderTextColor="#94A3B8"
                   value={dealSearch}
-                  onChangeText={(val) => {
-                    setDealSearch(val);
-                    loadDeals(authToken, val, dealTypeFilter, dealStatusFilter);
+                  onChangeText={handleDealSearchChange}
+                  onSubmitEditing={() => {
+                    if (dealSearchTimeoutRef.current) clearTimeout(dealSearchTimeoutRef.current);
+                    loadDeals(authToken, dealSearch, dealTypeFilter, dealStatusFilter, 1);
                   }}
+                  returnKeyType="search"
                   autoCapitalize="none"
+                  autoCorrect={false}
                 />
                 {dealSearch.length > 0 && (
                   <TouchableOpacity
-                    onPress={() => {
-                      setDealSearch('');
-                      loadDeals(authToken, '', dealTypeFilter, dealStatusFilter);
-                    }}
+                    onPress={handleClearDealSearch}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   >
                     <Ionicons name="close-circle" size={18} color="#94A3B8" />
                   </TouchableOpacity>
@@ -6128,6 +6271,91 @@ export default function AdminScreen() {
                       </View>
                     );
                   })}
+
+                  {/* Deals Pagination Controls */}
+                  {dealPagination.lastPage > 1 && (
+                    <View style={styles.paginationContainer}>
+                      <TouchableOpacity
+                        style={[
+                          styles.paginationBtn,
+                          dealPagination.currentPage <= 1 && styles.paginationBtnDisabled,
+                        ]}
+                        onPress={() => {
+                          if (dealPagination.currentPage > 1) {
+                            loadDeals(
+                              authToken,
+                              dealSearch,
+                              dealTypeFilter,
+                              dealStatusFilter,
+                              dealPagination.currentPage - 1
+                            );
+                          }
+                        }}
+                        disabled={dealPagination.currentPage <= 1 || dealsLoading}
+                      >
+                        <Ionicons
+                          name="chevron-back"
+                          size={16}
+                          color={dealPagination.currentPage <= 1 ? '#9CA3AF' : '#0A5554'}
+                        />
+                        <Text
+                          style={[
+                            styles.paginationBtnText,
+                            dealPagination.currentPage <= 1 && styles.paginationBtnTextDisabled,
+                          ]}
+                        >
+                          Previous
+                        </Text>
+                      </TouchableOpacity>
+
+                      <View style={styles.paginationInfoBox}>
+                        <Text style={styles.paginationInfoText}>
+                          Page {dealPagination.currentPage} of {dealPagination.lastPage}
+                        </Text>
+                      </View>
+
+                      <TouchableOpacity
+                        style={[
+                          styles.paginationBtn,
+                          dealPagination.currentPage >= dealPagination.lastPage &&
+                            styles.paginationBtnDisabled,
+                        ]}
+                        onPress={() => {
+                          if (dealPagination.currentPage < dealPagination.lastPage) {
+                            loadDeals(
+                              authToken,
+                              dealSearch,
+                              dealTypeFilter,
+                              dealStatusFilter,
+                              dealPagination.currentPage + 1
+                            );
+                          }
+                        }}
+                        disabled={
+                          dealPagination.currentPage >= dealPagination.lastPage || dealsLoading
+                        }
+                      >
+                        <Text
+                          style={[
+                            styles.paginationBtnText,
+                            dealPagination.currentPage >= dealPagination.lastPage &&
+                              styles.paginationBtnTextDisabled,
+                          ]}
+                        >
+                          Next
+                        </Text>
+                        <Ionicons
+                          name="chevron-forward"
+                          size={16}
+                          color={
+                            dealPagination.currentPage >= dealPagination.lastPage
+                              ? '#9CA3AF'
+                              : '#0A5554'
+                          }
+                        />
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </View>
               )}
             </View>
@@ -6139,9 +6367,16 @@ export default function AdminScreen() {
               <View style={styles.sectionHeaderRow}>
                 <View>
                   <Text style={styles.sectionHeading}>Inbound Applications</Text>
-                  <Text style={styles.sectionSubheading}>Founder pitch decks and Angel Academy signups</Text>
+                  <Text style={styles.sectionSubheading}>
+                    {submissionsSubTab === 'pitches' && pitchPagination.total > 0
+                      ? `Showing ${pitchPagination.from}-${pitchPagination.to} of ${pitchPagination.total} pitches · Inbound founder decks`
+                      : 'Founder pitch decks and Angel Academy signups'}
+                  </Text>
                 </View>
-                <TouchableOpacity style={styles.refreshIconBtn} onPress={() => loadSubmissions(authToken)}>
+                <TouchableOpacity
+                  style={styles.refreshIconBtn}
+                  onPress={() => loadSubmissions(authToken, pitchSearch, pitchFilter, pitchPagination.currentPage)}
+                >
                   <Ionicons name="refresh" size={18} color={Colors.forest} />
                 </TouchableOpacity>
               </View>
@@ -6163,7 +6398,7 @@ export default function AdminScreen() {
                       submissionsSubTab === 'pitches' && styles.toggleBtnTextActive,
                     ]}
                   >
-                    Founder Pitches ({founderPitches.length})
+                    Founder Pitches ({pitchCounts.total || pitchPagination.total || founderPitches.length})
                   </Text>
                 </TouchableOpacity>
 
@@ -6187,15 +6422,10 @@ export default function AdminScreen() {
                 </TouchableOpacity>
               </View>
 
-              {submissionsLoading ? (
-                <View style={styles.listLoadingBox}>
-                  <ActivityIndicator size="small" color={Colors.forest} />
-                  <Text style={styles.loadingText}>Fetching applications...</Text>
-                </View>
-              ) : submissionsSubTab === 'pitches' ? (
+              {submissionsSubTab === 'pitches' ? (
                 /* Founder Pitches UI */
                 <View style={{ gap: 12 }}>
-                  {/* Pitch Filter Chips & Search Bar */}
+                  {/* Pitch Filter Chips & Search Bar - ALWAYS MOUNTED */}
                   <View style={{ gap: 10 }}>
                     <ScrollView
                       horizontal
@@ -6213,8 +6443,9 @@ export default function AdminScreen() {
                             key={`pitch-filter-${chip.key}`}
                             style={[styles.dealTabChip, isActive && styles.dealTabChipActive]}
                             onPress={() => {
+                              if (pitchSearchTimeoutRef.current) clearTimeout(pitchSearchTimeoutRef.current);
                               setPitchFilter(chip.key);
-                              loadSubmissions(authToken, pitchSearch, chip.key);
+                              loadSubmissions(authToken, pitchSearch, chip.key, 1);
                             }}
                             activeOpacity={0.8}
                           >
@@ -6246,7 +6477,7 @@ export default function AdminScreen() {
                       })}
                     </ScrollView>
 
-                    {/* Search Bar */}
+                    {/* Search Bar - ALWAYS MOUNTED */}
                     <View style={styles.searchBar}>
                       <Ionicons name="search" size={18} color="#94A3B8" style={styles.searchIcon} />
                       <TextInput
@@ -6254,18 +6485,18 @@ export default function AdminScreen() {
                         placeholder="Search pitches by email, description or founder..."
                         placeholderTextColor="#94A3B8"
                         value={pitchSearch}
-                        onChangeText={(text) => {
-                          setPitchSearch(text);
-                          loadSubmissions(authToken, text, pitchFilter);
+                        onChangeText={handlePitchSearchChange}
+                        onSubmitEditing={() => {
+                          if (pitchSearchTimeoutRef.current) clearTimeout(pitchSearchTimeoutRef.current);
+                          loadSubmissions(authToken, pitchSearch, pitchFilter, 1);
                         }}
                         returnKeyType="search"
+                        autoCapitalize="none"
+                        autoCorrect={false}
                       />
                       {Boolean(pitchSearch) && (
                         <TouchableOpacity
-                          onPress={() => {
-                            setPitchSearch('');
-                            loadSubmissions(authToken, '', pitchFilter);
-                          }}
+                          onPress={handleClearPitchSearch}
                           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                         >
                           <Ionicons name="close-circle" size={18} color="#94A3B8" />
@@ -6274,8 +6505,13 @@ export default function AdminScreen() {
                     </View>
                   </View>
 
-                  {/* Pitches List or Empty State */}
-                  {founderPitches.length === 0 ? (
+                  {/* Pitches List, Loading, or Empty State */}
+                  {submissionsLoading ? (
+                    <View style={styles.listLoadingBox}>
+                      <ActivityIndicator size="small" color={Colors.forest} />
+                      <Text style={styles.loadingText}>Fetching founder pitches...</Text>
+                    </View>
+                  ) : founderPitches.length === 0 ? (
                     <View style={styles.emptyState}>
                       <Ionicons name="paper-plane-outline" size={44} color="#94A3B8" />
                       <Text style={styles.emptyTitle}>No Founder Pitches found</Text>
@@ -6424,12 +6660,101 @@ export default function AdminScreen() {
                           </View>
                         );
                       })}
+
+                      {/* Pitch Pagination Controls */}
+                      {pitchPagination.lastPage > 1 && (
+                        <View style={styles.paginationContainer}>
+                          <TouchableOpacity
+                            style={[
+                              styles.paginationBtn,
+                              pitchPagination.currentPage <= 1 && styles.paginationBtnDisabled,
+                            ]}
+                            onPress={() => {
+                              if (pitchPagination.currentPage > 1) {
+                                loadSubmissions(
+                                  authToken,
+                                  pitchSearch,
+                                  pitchFilter,
+                                  pitchPagination.currentPage - 1
+                                );
+                              }
+                            }}
+                            disabled={pitchPagination.currentPage <= 1 || submissionsLoading}
+                          >
+                            <Ionicons
+                              name="chevron-back"
+                              size={16}
+                              color={pitchPagination.currentPage <= 1 ? '#9CA3AF' : '#0A5554'}
+                            />
+                            <Text
+                              style={[
+                                styles.paginationBtnText,
+                                pitchPagination.currentPage <= 1 && styles.paginationBtnTextDisabled,
+                              ]}
+                            >
+                              Previous
+                            </Text>
+                          </TouchableOpacity>
+
+                          <View style={styles.paginationInfoBox}>
+                            <Text style={styles.paginationInfoText}>
+                              Page {pitchPagination.currentPage} of {pitchPagination.lastPage}
+                            </Text>
+                          </View>
+
+                          <TouchableOpacity
+                            style={[
+                              styles.paginationBtn,
+                              pitchPagination.currentPage >= pitchPagination.lastPage &&
+                                styles.paginationBtnDisabled,
+                            ]}
+                            onPress={() => {
+                              if (pitchPagination.currentPage < pitchPagination.lastPage) {
+                                loadSubmissions(
+                                  authToken,
+                                  pitchSearch,
+                                  pitchFilter,
+                                  pitchPagination.currentPage + 1
+                                );
+                              }
+                            }}
+                            disabled={
+                              pitchPagination.currentPage >= pitchPagination.lastPage ||
+                              submissionsLoading
+                            }
+                          >
+                            <Text
+                              style={[
+                                styles.paginationBtnText,
+                                pitchPagination.currentPage >= pitchPagination.lastPage &&
+                                  styles.paginationBtnTextDisabled,
+                              ]}
+                            >
+                              Next
+                            </Text>
+                            <Ionicons
+                              name="chevron-forward"
+                              size={16}
+                              color={
+                                pitchPagination.currentPage >= pitchPagination.lastPage
+                                  ? '#9CA3AF'
+                                  : '#0A5554'
+                              }
+                            />
+                          </TouchableOpacity>
+                        </View>
+                      )}
                     </View>
                   )}
                 </View>
               ) : (
                 /* Angel Academy Applications List */
-                academyApplications.length === 0 ? (
+                submissionsLoading ? (
+                  <View style={styles.listLoadingBox}>
+                    <ActivityIndicator size="small" color={Colors.forest} />
+                    <Text style={styles.loadingText}>Fetching applications...</Text>
+                  </View>
+                ) : academyApplications.length === 0 ? (
                   <View style={styles.emptyState}>
                     <Ionicons name="school-outline" size={40} color={Colors.mutedLight} />
                     <Text style={styles.emptyTitle}>No Academy Applications</Text>

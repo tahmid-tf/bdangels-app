@@ -372,6 +372,8 @@ export async function fetchAdminDeals(token, { type = '', status = '', search = 
           last_page: rawData.last_page,
           per_page: rawData.per_page,
           total: rawData.total,
+          from: rawData.from ?? ((rawData.current_page - 1) * rawData.per_page + (dealsArray.length > 0 ? 1 : 0)),
+          to: rawData.to ?? ((rawData.current_page - 1) * rawData.per_page + dealsArray.length),
         } : null,
       };
     }
