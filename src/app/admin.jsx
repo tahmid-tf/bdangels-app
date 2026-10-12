@@ -22207,8 +22207,9 @@ export default function AdminScreen() {
 
             <ScrollView
               style={styles.editModalContent}
-              contentContainerStyle={{ paddingBottom: 40 }}
+              contentContainerStyle={{ paddingHorizontal: 18, paddingTop: 16, paddingBottom: 40 }}
               showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
             >
               {/* Investor Profile Box */}
               <View style={styles.wealthModalBox}>
@@ -22422,8 +22423,9 @@ export default function AdminScreen() {
 
             <ScrollView
               style={styles.editModalContent}
-              contentContainerStyle={{ paddingBottom: 40 }}
+              contentContainerStyle={{ paddingHorizontal: 18, paddingTop: 16, paddingBottom: 40 }}
               showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
             >
               {/* Send Mode Toggle: Live Broadcast vs Test Preview */}
               <Text style={styles.composeLabel}>Broadcast Delivery Mode</Text>
@@ -29351,8 +29353,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#CBD5E1',
     borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     fontSize: 13,
     color: '#0F172A',
   },
@@ -29361,8 +29363,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#CBD5E1',
     borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     fontSize: 13,
     color: '#0F172A',
     minHeight: 140,
@@ -29459,6 +29461,10 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#64748B',
+  },
+  editModalContent: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
   },
   // Legacy aliases for edit modals
   editInputLabel: {
