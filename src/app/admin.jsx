@@ -11,12 +11,12 @@ import {
   RefreshControl,
   TextInput,
   Alert,
-  Image,
 } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Radii, Shadows } from '../constants/theme';
 import { initAuth, logoutUser } from '../services/auth';
+import AdminSidebar from '../components/admin/AdminSidebar';
 import {
   fetchAdminDashboard,
   fetchAdminMembers,
@@ -24,17 +24,97 @@ import {
   fetchAdminDeals,
   fetchAdminFounderPitches,
   fetchAdminAngelAcademy,
+  fetchAdminNotifications,
+  markAdminNotificationsViewed,
+  fetchAdminSubscriptions,
+  fetchAdminInvestorInvestments,
+  fetchAdminBanWealthOrders,
+  fetchHomePageData,
+  fetchBlogsPageData,
+  fetchPublicationsPageData,
+  fetchTeamPageData,
 } from '../services/api';
+
+export function getViewDisplayName(key) {
+  switch (key) {
+    case 'overview':
+      return 'Platform Overview';
+    case 'notifications':
+      return 'Activity Notifications';
+    case 'members':
+      return 'Member Directory';
+    case 'deals':
+      return 'Deal Pipeline';
+    case 'founder-pitches':
+      return 'Pitch Submissions';
+    case 'angel-academy':
+      return 'Academy Applications';
+    case 'subscriptions':
+      return 'Member Subscriptions';
+    case 'investments':
+    case 'investor-investments':
+      return 'Completed Investments';
+    case 'blogs':
+      return 'Editorial Blogs';
+    case 'publications':
+      return 'Research Publications';
+    case 'landing-stats':
+      return 'Homepage Statistics';
+    case 'landing-programs':
+      return 'Homepage Programs';
+    case 'homepage-portfolios':
+      return 'Featured Portfolios';
+    case 'team-about':
+      return 'Team About Section';
+    case 'events':
+      return 'Community Events';
+    case 'startup-services':
+      return 'Startup Services';
+    case 'team-members':
+      return 'Team Directory';
+    case 'ban-wealth-orders':
+      return 'BAN Wealth Orders';
+    case 'mail-campaigns':
+      return 'Email Campaigns';
+    default:
+      return 'Admin Workspace';
+  }
+}
 
 export default function AdminScreen() {
   const [currentUser, setCurrentUser] = useState(null);
   const [authToken, setAuthToken] = useState(null);
-  const [activeTab, setActiveTab] = useState('overview'); // 'overview' | 'members' | 'deals' | 'submissions'
+  const [activeTab, setActiveTab] = useState('overview');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  // Sidebar Visibility
+  const [sidebarVisible, setSidebarVisible] = useState(false);
+
   // Dashboard Data
   const [dashboardData, setDashboardData] = useState(null);
+
+  // Notifications State
+  const [notifications, setNotifications] = useState([]);
+  const [unreadNotificationsCount, setUnreadNotificationsCount] = useState(0);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [notificationFilter, setNotificationFilter] = useState('all'); // 'all' | 'unread'
+
+  // Subscriptions State
+  const [subscriptionsData, setSubscriptionsData] = useState(null);
+  const [subscriptionsLoading, setSubscriptionsLoading] = useState(false);
+
+  // Investor Investments State
+  const [investorInvestments, setInvestorInvestments] = useState([]);
+  const [investorInvestmentsLoading, setInvestorInvestmentsLoading] = useState(false);
+
+  // BAN Wealth Orders State
+  const [banWealthOrders, setBanWealthOrders] = useState([]);
+  const [banWealthOrdersLoading, setBanWealthOrdersLoading] = useState(false);
+
+  // CMS Content State
+  const [cmsData, setCmsData] = useState(null);
+  const [cmsLoading, setCmsLoading] = useState(false);
 
   // Members Tab State
   const [members, setMembers] = useState([]);
@@ -71,6 +151,110 @@ export default function AdminScreen() {
     }
   }, [authToken]);
 
+  // Fetch Notifications
+  const loadNotifications = useCallback(async (token = authToken) => {
+    if (!token) return;
+    setNotificationsLoading(true);
+    try {
+      const res = await fetchAdminNotifications(token);
+      if (res) {
+        const list = res?.data?.data || res?.data || (Array.isArray(res) ? res : []);
+        setNotifications(list);
+        const unreadCount = res.unread_count ?? (Array.isArray(list) ? list.filter((n) => !n.viewed_at).length : 0);
+        setUnreadNotificationsCount(unreadCount);
+      }
+    } catch (err) {
+      console.log('Error loading admin notifications:', err);
+    } finally {
+      setNotificationsLoading(false);
+    }
+  }, [authToken]);
+
+  // Mark all notifications as read
+  const handleMarkAllNotificationsRead = async () => {
+    if (!authToken) return;
+    try {
+      const ok = await markAdminNotificationsViewed(authToken);
+      if (ok) {
+        setUnreadNotificationsCount(0);
+        setNotifications((prev) =>
+          prev.map((n) => ({ ...n, viewed_at: n.viewed_at || new Date().toISOString() }))
+        );
+      }
+    } catch (err) {
+      console.log('Error marking all notifications viewed:', err);
+    }
+  };
+
+  // Fetch Subscriptions
+  const loadSubscriptions = useCallback(async (token = authToken) => {
+    if (!token) return;
+    setSubscriptionsLoading(true);
+    try {
+      const res = await fetchAdminSubscriptions(token);
+      if (res) {
+        setSubscriptionsData(res);
+      }
+    } catch (err) {
+      console.log('Error loading admin subscriptions:', err);
+    } finally {
+      setSubscriptionsLoading(false);
+    }
+  }, [authToken]);
+
+  // Fetch Investor Investments
+  const loadInvestorInvestments = useCallback(async (token = authToken) => {
+    if (!token) return;
+    setInvestorInvestmentsLoading(true);
+    try {
+      const res = await fetchAdminInvestorInvestments(token);
+      const list = res?.data || (Array.isArray(res) ? res : []);
+      setInvestorInvestments(list);
+    } catch (err) {
+      console.log('Error loading investor investments:', err);
+    } finally {
+      setInvestorInvestmentsLoading(false);
+    }
+  }, [authToken]);
+
+  // Fetch BAN Wealth Orders
+  const loadBanWealthOrders = useCallback(async (token = authToken) => {
+    if (!token) return;
+    setBanWealthOrdersLoading(true);
+    try {
+      const res = await fetchAdminBanWealthOrders(token);
+      const list = res?.data || (Array.isArray(res) ? res : []);
+      setBanWealthOrders(list);
+    } catch (err) {
+      console.log('Error loading BAN wealth orders:', err);
+    } finally {
+      setBanWealthOrdersLoading(false);
+    }
+  }, [authToken]);
+
+  // Fetch CMS Content
+  const loadCmsData = useCallback(async () => {
+    setCmsLoading(true);
+    try {
+      const [homeRes, blogsRes, pubsRes, teamRes] = await Promise.allSettled([
+        fetchHomePageData(),
+        fetchBlogsPageData(),
+        fetchPublicationsPageData(),
+        fetchTeamPageData(),
+      ]);
+      setCmsData({
+        home: homeRes.status === 'fulfilled' ? homeRes.value : null,
+        blogs: blogsRes.status === 'fulfilled' ? blogsRes.value : null,
+        publications: pubsRes.status === 'fulfilled' ? pubsRes.value : null,
+        team: teamRes.status === 'fulfilled' ? teamRes.value : null,
+      });
+    } catch (err) {
+      console.log('Error loading CMS data:', err);
+    } finally {
+      setCmsLoading(false);
+    }
+  }, []);
+
   // Auth Guard
   useEffect(() => {
     async function checkAuth() {
@@ -86,9 +270,10 @@ export default function AdminScreen() {
       setCurrentUser(session.user);
       setAuthToken(session.token);
       loadDashboard(session.token);
+      loadNotifications(session.token);
     }
     checkAuth();
-  }, [loadDashboard]);
+  }, [loadDashboard, loadNotifications]);
 
   // Fetch Members
   const loadMembers = useCallback(async (token = authToken, search = memberSearch, status = memberStatusFilter) => {
@@ -142,15 +327,43 @@ export default function AdminScreen() {
     }
   }, [authToken]);
 
-  // Handle Tab Change
+  // Handle Tab / Sidebar View Selection
   const handleTabChange = (tab) => {
     setActiveTab(tab);
-    if (tab === 'members' && members.length === 0) {
-      loadMembers(authToken);
-    } else if (tab === 'deals' && deals.length === 0) {
-      loadDeals(authToken);
-    } else if (tab === 'submissions' && founderPitches.length === 0) {
-      loadSubmissions(authToken);
+    if (tab === 'notifications') {
+      loadNotifications(authToken);
+    } else if (tab === 'members') {
+      if (members.length === 0) loadMembers(authToken);
+    } else if (tab === 'deals') {
+      if (deals.length === 0) loadDeals(authToken);
+    } else if (tab === 'founder-pitches') {
+      setSubmissionsSubTab('pitches');
+      if (founderPitches.length === 0) loadSubmissions(authToken);
+    } else if (tab === 'angel-academy') {
+      setSubmissionsSubTab('academy');
+      if (academyApplications.length === 0) loadSubmissions(authToken);
+    } else if (tab === 'submissions') {
+      if (founderPitches.length === 0) loadSubmissions(authToken);
+    } else if (tab === 'subscriptions') {
+      if (!subscriptionsData) loadSubscriptions(authToken);
+    } else if (tab === 'investments' || tab === 'investor-investments') {
+      if (investorInvestments.length === 0) loadInvestorInvestments(authToken);
+    } else if (tab === 'ban-wealth-orders') {
+      if (banWealthOrders.length === 0) loadBanWealthOrders(authToken);
+    } else if (
+      [
+        'blogs',
+        'publications',
+        'landing-stats',
+        'landing-programs',
+        'homepage-portfolios',
+        'team-about',
+        'events',
+        'startup-services',
+        'team-members',
+      ].includes(tab)
+    ) {
+      if (!cmsData) loadCmsData();
     }
   };
 
@@ -158,9 +371,32 @@ export default function AdminScreen() {
   const onRefresh = async () => {
     setRefreshing(true);
     await loadDashboard(authToken);
+    await loadNotifications(authToken);
     if (activeTab === 'members') await loadMembers(authToken);
     if (activeTab === 'deals') await loadDeals(authToken);
-    if (activeTab === 'submissions') await loadSubmissions(authToken);
+    if (activeTab === 'submissions' || activeTab === 'founder-pitches' || activeTab === 'angel-academy') {
+      await loadSubmissions(authToken);
+    }
+    if (activeTab === 'subscriptions') await loadSubscriptions(authToken);
+    if (activeTab === 'investments' || activeTab === 'investor-investments') {
+      await loadInvestorInvestments(authToken);
+    }
+    if (activeTab === 'ban-wealth-orders') await loadBanWealthOrders(authToken);
+    if (
+      [
+        'blogs',
+        'publications',
+        'landing-stats',
+        'landing-programs',
+        'homepage-portfolios',
+        'team-about',
+        'events',
+        'startup-services',
+        'team-members',
+      ].includes(activeTab)
+    ) {
+      await loadCmsData();
+    }
     setRefreshing(false);
   };
 
@@ -233,94 +469,125 @@ export default function AdminScreen() {
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
-      {/* Admin Top Bar */}
+      {/* Admin Sidebar Navigation Drawer */}
+      <AdminSidebar
+        visible={sidebarVisible}
+        onClose={() => setSidebarVisible(false)}
+        activeView={activeTab}
+        onSelectView={handleTabChange}
+        unreadNotificationsCount={unreadNotificationsCount}
+        currentUser={currentUser}
+        onLogout={handleLogout}
+      />
+
+      {/* Admin Top Bar (matches web admin topbar & mobile hamburger menu) */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
+          {/* Web-style mobile menu button (#0A5554) */}
           <TouchableOpacity
-            style={styles.backButton}
-            onPress={() => router.replace('/')}
-            accessibilityLabel="Return to public app"
+            style={styles.sidebarToggleBtn}
+            onPress={() => setSidebarVisible(true)}
+            accessibilityLabel="Open Admin Navigation Menu"
+            activeOpacity={0.85}
           >
-            <Ionicons name="arrow-back" size={20} color={Colors.ink} />
+            <Ionicons name="menu" size={22} color="#FFFFFF" />
           </TouchableOpacity>
-          <Image
-            source={require('../../assets/images/logo.png')}
-            style={styles.logo}
-            resizeMode="contain"
-          />
-          <View style={styles.adminBadge}>
-            <Text style={styles.adminBadgeText}>ADMIN</Text>
+
+          <View style={styles.headerGreetingWrap}>
+            <Text style={styles.greetingTitle} numberOfLines={1}>
+              Hi {currentUser?.name ? currentUser.name.split(' ')[0] : 'Admin'},
+            </Text>
+            <Text style={styles.greetingSubtitle} numberOfLines={1}>
+              {getViewDisplayName(activeTab)}
+            </Text>
           </View>
         </View>
 
         <View style={styles.headerRight}>
+          {/* Notifications Bell with unread badge */}
+          <TouchableOpacity
+            style={styles.notificationBellBtn}
+            onPress={() => handleTabChange('notifications')}
+            accessibilityLabel="View Activity Notifications"
+            activeOpacity={0.8}
+          >
+            <Ionicons
+              name={unreadNotificationsCount > 0 ? 'notifications' : 'notifications-outline'}
+              size={21}
+              color={unreadNotificationsCount > 0 ? '#0A5554' : Colors.ink}
+            />
+            {unreadNotificationsCount > 0 && (
+              <View style={styles.headerUnreadBadge}>
+                <Text style={styles.headerUnreadBadgeText}>
+                  {unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount}
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
+
           <TouchableOpacity
             style={styles.headerIconBtn}
             onPress={onRefresh}
             accessibilityLabel="Refresh admin data"
           >
-            <Ionicons name="refresh-outline" size={20} color={Colors.ink} />
+            <Ionicons name="refresh-outline" size={19} color={Colors.ink} />
           </TouchableOpacity>
+
           <TouchableOpacity
-            style={[styles.headerIconBtn, styles.logoutBtn]}
-            onPress={handleLogout}
-            accessibilityLabel="Sign out of admin"
+            style={styles.headerPublicBtn}
+            onPress={() => router.replace('/')}
+            accessibilityLabel="Return to public app"
           >
-            <Ionicons name="log-out-outline" size={20} color={Colors.error} />
+            <Ionicons name="arrow-back-outline" size={16} color={Colors.muted} />
           </TouchableOpacity>
         </View>
       </View>
 
-      {/* Navigation Tabs Bar */}
+      {/* Quick Navigation Scroll Bar */}
       <View style={styles.tabsBar}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsScroll}>
           <TouchableOpacity
-            style={[styles.tabItem, activeTab === 'overview' && styles.tabItemActive]}
-            onPress={() => handleTabChange('overview')}
+            style={styles.menuQuickPill}
+            onPress={() => setSidebarVisible(true)}
+            activeOpacity={0.8}
           >
-            <Ionicons
-              name={activeTab === 'overview' ? 'grid' : 'grid-outline'}
-              size={16}
-              color={activeTab === 'overview' ? '#FFFFFF' : Colors.muted}
-            />
-            <Text style={[styles.tabLabel, activeTab === 'overview' && styles.tabLabelActive]}>Overview</Text>
+            <Ionicons name="apps" size={15} color="#0A5554" />
+            <Text style={styles.menuQuickPillText}>All Sections</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.tabItem, activeTab === 'members' && styles.tabItemActive]}
-            onPress={() => handleTabChange('members')}
-          >
-            <Ionicons
-              name={activeTab === 'members' ? 'people' : 'people-outline'}
-              size={16}
-              color={activeTab === 'members' ? '#FFFFFF' : Colors.muted}
-            />
-            <Text style={[styles.tabLabel, activeTab === 'members' && styles.tabLabelActive]}>Members</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.tabItem, activeTab === 'deals' && styles.tabItemActive]}
-            onPress={() => handleTabChange('deals')}
-          >
-            <Ionicons
-              name={activeTab === 'deals' ? 'briefcase' : 'briefcase-outline'}
-              size={16}
-              color={activeTab === 'deals' ? '#FFFFFF' : Colors.muted}
-            />
-            <Text style={[styles.tabLabel, activeTab === 'deals' && styles.tabLabelActive]}>Deals</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.tabItem, activeTab === 'submissions' && styles.tabItemActive]}
-            onPress={() => handleTabChange('submissions')}
-          >
-            <Ionicons
-              name={activeTab === 'submissions' ? 'document-text' : 'document-text-outline'}
-              size={16}
-              color={activeTab === 'submissions' ? '#FFFFFF' : Colors.muted}
-            />
-            <Text style={[styles.tabLabel, activeTab === 'submissions' && styles.tabLabelActive]}>Submissions</Text>
-          </TouchableOpacity>
+          {[
+            { key: 'overview', label: 'Dashboard', icon: 'grid' },
+            { key: 'notifications', label: 'Notifications', icon: 'notifications', badge: unreadNotificationsCount },
+            { key: 'members', label: 'Members', icon: 'people' },
+            { key: 'deals', label: 'Deals', icon: 'briefcase' },
+            { key: 'founder-pitches', label: 'Pitches', icon: 'paper-plane' },
+            { key: 'angel-academy', label: 'Academy', icon: 'school' },
+            { key: 'subscriptions', label: 'Subscriptions', icon: 'card' },
+            { key: 'blogs', label: 'Blogs', icon: 'newspaper' },
+            { key: 'team-members', label: 'Team', icon: 'person-circle' },
+          ].map((item) => {
+            const isActive = activeTab === item.key;
+            return (
+              <TouchableOpacity
+                key={`tab-${item.key}`}
+                style={[styles.tabItem, isActive && styles.tabItemActive]}
+                onPress={() => handleTabChange(item.key)}
+                activeOpacity={0.8}
+              >
+                <Ionicons
+                  name={isActive ? item.icon : `${item.icon}-outline`}
+                  size={15}
+                  color={isActive ? '#FFFFFF' : Colors.muted}
+                />
+                <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>{item.label}</Text>
+                {Boolean(item.badge && item.badge > 0) && (
+                  <View style={[styles.tabBadge, isActive && styles.tabBadgeActive]}>
+                    <Text style={styles.tabBadgeText}>{item.badge > 99 ? '99+' : item.badge}</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          })}
         </ScrollView>
       </View>
 
@@ -965,8 +1232,8 @@ export default function AdminScreen() {
             </View>
           )}
 
-          {/* TAB 4: SUBMISSIONS */}
-          {activeTab === 'submissions' && (
+          {/* TAB: SUBMISSIONS / FOUNDER PITCHES / ANGEL ACADEMY */}
+          {(activeTab === 'submissions' || activeTab === 'founder-pitches' || activeTab === 'angel-academy') && (
             <View style={styles.tabContent}>
               <View style={styles.sectionHeaderRow}>
                 <View>
@@ -1143,6 +1410,655 @@ export default function AdminScreen() {
               )}
             </View>
           )}
+
+          {/* TAB: NOTIFICATIONS */}
+          {activeTab === 'notifications' && (
+            <View style={styles.tabContent}>
+              <View style={styles.sectionHeaderRow}>
+                <View>
+                  <Text style={styles.sectionHeading}>Member Activity Notifications</Text>
+                  <Text style={styles.sectionSubheading}>
+                    Real-time investment commitments and expressions of interest
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.refreshIconBtn}
+                  onPress={() => loadNotifications(authToken)}
+                >
+                  <Ionicons name="refresh" size={18} color={Colors.forest} />
+                </TouchableOpacity>
+              </View>
+
+              {/* Action bar with unread count and Mark All as Read button */}
+              <View style={styles.notifActionBar}>
+                <View style={styles.notifMetaPill}>
+                  <Text style={styles.notifMetaPillText}>
+                    {unreadNotificationsCount} Unread • {notifications.length} Total
+                  </Text>
+                </View>
+                {unreadNotificationsCount > 0 && (
+                  <TouchableOpacity
+                    style={styles.markReadBtn}
+                    onPress={handleMarkAllNotificationsRead}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="checkmark-done" size={15} color="#0A5554" />
+                    <Text style={styles.markReadBtnText}>Mark all as read</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* Filter chips */}
+              <View style={styles.filterChipsRow}>
+                <TouchableOpacity
+                  style={[styles.filterChip, notificationFilter === 'all' && styles.filterChipActive]}
+                  onPress={() => setNotificationFilter('all')}
+                >
+                  <Text style={[styles.filterChipText, notificationFilter === 'all' && styles.filterChipTextActive]}>
+                    All ({notifications.length})
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.filterChip, notificationFilter === 'unread' && styles.filterChipActive]}
+                  onPress={() => setNotificationFilter('unread')}
+                >
+                  <Text style={[styles.filterChipText, notificationFilter === 'unread' && styles.filterChipTextActive]}>
+                    Unread ({unreadNotificationsCount})
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Notifications List */}
+              {notificationsLoading ? (
+                <View style={styles.listLoadingBox}>
+                  <ActivityIndicator size="small" color={Colors.forest} />
+                  <Text style={styles.loadingText}>Fetching activity notifications...</Text>
+                </View>
+              ) : (
+                (() => {
+                  const filtered = notificationFilter === 'unread'
+                    ? notifications.filter((n) => !n.viewed_at)
+                    : notifications;
+
+                  if (filtered.length === 0) {
+                    return (
+                      <View style={styles.emptyState}>
+                        <Ionicons name="notifications-off-outline" size={40} color={Colors.mutedLight} />
+                        <Text style={styles.emptyTitle}>No Notifications</Text>
+                        <Text style={styles.emptyText}>
+                          {notificationFilter === 'unread'
+                            ? 'All activity notifications have been reviewed!'
+                            : 'No recent member activity recorded.'}
+                        </Text>
+                      </View>
+                    );
+                  }
+
+                  return (
+                    <View style={styles.cardsList}>
+                      {filtered.map((item, idx) => {
+                        const isUnread = !item.viewed_at;
+                        const userName = item.user?.name || item.investor_name || 'Member';
+                        const userEmail = item.user?.email || item.investor_email || '';
+                        const dealTitle = item.deal?.title || item.deal_name || 'Syndicate Deal';
+                        const dateFormatted = item.created_at
+                          ? new Date(item.created_at).toLocaleDateString('en-US', {
+                              month: 'short',
+                              day: 'numeric',
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })
+                          : 'Recent';
+
+                        return (
+                          <View
+                            key={`notif-${item.id || idx}`}
+                            style={[styles.notificationCard, isUnread && styles.notificationCardUnread]}
+                          >
+                            <View style={styles.notificationCardTop}>
+                              <View style={styles.notificationAvatar}>
+                                <Text style={styles.notificationAvatarText}>
+                                  {userName.charAt(0).toUpperCase()}
+                                </Text>
+                              </View>
+                              <View style={styles.notificationInfo}>
+                                <View style={styles.notificationHeaderRow}>
+                                  <Text style={styles.notificationUserName} numberOfLines={1}>
+                                    {userName}
+                                  </Text>
+                                  {isUnread && <View style={styles.unreadAmberDot} />}
+                                </View>
+                                {Boolean(userEmail) && (
+                                  <Text style={styles.notificationEmail} numberOfLines={1}>
+                                    {userEmail}
+                                  </Text>
+                                )}
+                              </View>
+                              <Text style={styles.notificationDate}>{dateFormatted}</Text>
+                            </View>
+
+                            <View style={styles.notificationBody}>
+                              <Text style={styles.notificationMessage}>
+                                Expressed investment interest in{' '}
+                                <Text style={styles.notificationDealBold}>{dealTitle}</Text>
+                              </Text>
+                              {Boolean(item.amount) && (
+                                <View style={styles.notificationAmountPill}>
+                                  <Text style={styles.notificationAmountText}>
+                                    Target: {item.currency || 'BDT'} {Number(item.amount).toLocaleString()}
+                                  </Text>
+                                </View>
+                              )}
+                            </View>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  );
+                })()
+              )}
+            </View>
+          )}
+
+          {/* TAB: SUBSCRIPTIONS */}
+          {activeTab === 'subscriptions' && (
+            <View style={styles.tabContent}>
+              <View style={styles.sectionHeaderRow}>
+                <View>
+                  <Text style={styles.sectionHeading}>Member Subscriptions</Text>
+                  <Text style={styles.sectionSubheading}>Tiers, active memberships, and payments</Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.refreshIconBtn}
+                  onPress={() => loadSubscriptions(authToken)}
+                >
+                  <Ionicons name="refresh" size={18} color={Colors.forest} />
+                </TouchableOpacity>
+              </View>
+
+              {/* Tiers Summary */}
+              <Text style={styles.subSectionTitle}>Active Membership Tiers</Text>
+              <View style={styles.tiersGrid}>
+                {[
+                  { name: 'Core Angel', price: 'BDT 5,000/yr', desc: 'Curated deal flow, investor syndicate voting, online pitches' },
+                  { name: 'Advanced Angel', price: 'BDT 15,000/yr', desc: 'Direct founder intros, priority allocations, data room access' },
+                  { name: 'Institutional', price: 'BDT 50,000/yr', desc: 'Custom SPVs, syndicate co-lead, strategic committee seat' },
+                ].map((tier, idx) => (
+                  <View key={`tier-${idx}`} style={styles.tierCard}>
+                    <Text style={styles.tierName}>{tier.name}</Text>
+                    <Text style={styles.tierPrice}>{tier.price}</Text>
+                    <Text style={styles.tierDesc}>{tier.desc}</Text>
+                  </View>
+                ))}
+              </View>
+
+              {/* Subscriptions List */}
+              <Text style={styles.subSectionTitle}>Subscribed Members</Text>
+              {subscriptionsLoading ? (
+                <View style={styles.listLoadingBox}>
+                  <ActivityIndicator size="small" color={Colors.forest} />
+                  <Text style={styles.loadingText}>Fetching subscriptions...</Text>
+                </View>
+              ) : (
+                (() => {
+                  const subsList = subscriptionsData?.subscriptions || [];
+                  if (subsList.length === 0) {
+                    return (
+                      <View style={styles.emptyState}>
+                        <Ionicons name="card-outline" size={40} color={Colors.mutedLight} />
+                        <Text style={styles.emptyTitle}>No Subscriptions on Record</Text>
+                        <Text style={styles.emptyText}>Active subscriber entries will appear here.</Text>
+                      </View>
+                    );
+                  }
+
+                  return (
+                    <View style={styles.cardsList}>
+                      {subsList.map((sub, idx) => {
+                        const sUser = sub.user || {};
+                        return (
+                          <View key={`sub-${sub.id || idx}`} style={styles.subCard}>
+                            <View style={styles.subCardHeader}>
+                              <View>
+                                <Text style={styles.subUserName}>{sUser.name || 'Member'}</Text>
+                                <Text style={styles.subUserEmail}>{sUser.email || ''}</Text>
+                              </View>
+                              <View style={styles.statusCompleted}>
+                                <Text style={styles.statusCompletedText}>
+                                  {String(sUser.account_status || 'Active').toUpperCase()}
+                                </Text>
+                              </View>
+                            </View>
+                            <View style={styles.subCardBottom}>
+                              <Text style={styles.subDate}>Tier: {sub.tier_name || 'Angel Member'}</Text>
+                              {Boolean(sub.payment?.amount) && (
+                                <Text style={styles.subAmount}>
+                                  BDT {Number(sub.payment.amount).toLocaleString()}
+                                </Text>
+                              )}
+                            </View>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  );
+                })()
+              )}
+            </View>
+          )}
+
+          {/* TAB: INVESTMENTS / INVESTOR INVESTMENTS */}
+          {(activeTab === 'investments' || activeTab === 'investor-investments') && (
+            <View style={styles.tabContent}>
+              <View style={styles.sectionHeaderRow}>
+                <View>
+                  <Text style={styles.sectionHeading}>Completed Investments</Text>
+                  <Text style={styles.sectionSubheading}>Syndicate and direct portfolio transactions</Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.refreshIconBtn}
+                  onPress={() => loadInvestorInvestments(authToken)}
+                >
+                  <Ionicons name="refresh" size={18} color={Colors.forest} />
+                </TouchableOpacity>
+              </View>
+
+              {investorInvestmentsLoading ? (
+                <View style={styles.listLoadingBox}>
+                  <ActivityIndicator size="small" color={Colors.forest} />
+                  <Text style={styles.loadingText}>Fetching investments...</Text>
+                </View>
+              ) : investorInvestments.length === 0 ? (
+                <View style={styles.emptyState}>
+                  <Ionicons name="trending-up-outline" size={40} color={Colors.mutedLight} />
+                  <Text style={styles.emptyTitle}>No Investment Records</Text>
+                  <Text style={styles.emptyText}>Completed investment transactions will appear here.</Text>
+                </View>
+              ) : (
+                <View style={styles.cardsList}>
+                  {investorInvestments.map((inv, idx) => (
+                    <View key={`inv-${inv.id || idx}`} style={styles.dealCard}>
+                      <View style={styles.dealCardHeader}>
+                        <View style={styles.dealTitleWrap}>
+                          <Text style={styles.dealTitle}>
+                            {inv.investor_name || inv.investor?.name || 'Investor'}
+                          </Text>
+                          <Text style={styles.dealCompany}>
+                            Invested in: {inv.startup_name || inv.startup?.title || 'Portfolio Startup'}
+                          </Text>
+                        </View>
+                        <View style={styles.statusCompleted}>
+                          <Text style={styles.statusCompletedText}>COMPLETED</Text>
+                        </View>
+                      </View>
+                      <View style={styles.dealMetaRow}>
+                        <View style={styles.metaPill}>
+                          <Text style={styles.metaPillText}>
+                            {inv.currency || 'BDT'} {Number(inv.amount || 0).toLocaleString()}
+                          </Text>
+                        </View>
+                        {Boolean(inv.completed_at) && (
+                          <Text style={styles.dealDateText}>
+                            {new Date(inv.completed_at).toLocaleDateString()}
+                          </Text>
+                        )}
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
+          )}
+
+          {/* TAB: BLOGS */}
+          {activeTab === 'blogs' && (
+            <View style={styles.tabContent}>
+              <View style={styles.sectionHeaderRow}>
+                <View>
+                  <Text style={styles.sectionHeading}>Editorial Blogs</Text>
+                  <Text style={styles.sectionSubheading}>Ecosystem insights, market analysis, and guides</Text>
+                </View>
+                <TouchableOpacity style={styles.refreshIconBtn} onPress={loadCmsData}>
+                  <Ionicons name="refresh" size={18} color={Colors.forest} />
+                </TouchableOpacity>
+              </View>
+
+              {cmsLoading ? (
+                <View style={styles.listLoadingBox}>
+                  <ActivityIndicator size="small" color={Colors.forest} />
+                  <Text style={styles.loadingText}>Fetching blogs...</Text>
+                </View>
+              ) : (
+                <View style={styles.cardsList}>
+                  {(cmsData?.blogs?.blogs?.data || [
+                    {
+                      id: 7,
+                      title: 'Bangladesh Makes It Easier for Foreign Investors to Repatriate',
+                      author_name: 'Nadim Abrar',
+                      category: 'Educational',
+                      excerpt: 'Analysis of Bangladesh Bank FEID Circular No. 01 on transfer of shares.',
+                    },
+                  ]).map((blog, idx) => (
+                    <View key={`blog-${blog.id || idx}`} style={styles.cmsCard}>
+                      <View style={styles.cmsCardHeader}>
+                        <View style={styles.metaPill}>
+                          <Text style={styles.metaPillText}>{blog.category || 'Article'}</Text>
+                        </View>
+                        <Text style={styles.cmsCardAuthor}>By {blog.author_name || 'BAN Team'}</Text>
+                      </View>
+                      <Text style={styles.cmsCardTitle}>{blog.title}</Text>
+                      <Text style={styles.cmsCardDesc} numberOfLines={2}>
+                        {blog.excerpt || 'Insightful publication from the BAN investment desk.'}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
+          )}
+
+          {/* TAB: PUBLICATIONS */}
+          {activeTab === 'publications' && (
+            <View style={styles.tabContent}>
+              <View style={styles.sectionHeaderRow}>
+                <View>
+                  <Text style={styles.sectionHeading}>Research Publications</Text>
+                  <Text style={styles.sectionSubheading}>Whitepapers, legal guides, and ecosystem reports</Text>
+                </View>
+                <TouchableOpacity style={styles.refreshIconBtn} onPress={loadCmsData}>
+                  <Ionicons name="refresh" size={18} color={Colors.forest} />
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.cardsList}>
+                {(cmsData?.publications?.publications?.data || [
+                  {
+                    id: 1,
+                    title: 'Bangladesh Startup Ecosystem Report 2024–2025',
+                    category: 'Market Research',
+                    excerpt: 'Comprehensive data on seed funding, deal sizes, active sectors, and exit horizons.',
+                  },
+                  {
+                    id: 2,
+                    title: 'Angel Investing in Bangladesh: A Legal & Regulatory Handbook',
+                    category: 'Legal Guide',
+                    excerpt: 'RJSC filings, foreign currency remittances, SPV formations, and investor rights.',
+                  },
+                ]).map((pub, idx) => (
+                  <View key={`pub-${pub.id || idx}`} style={styles.cmsCard}>
+                    <View style={styles.cmsCardHeader}>
+                      <View style={styles.metaPill}>
+                        <Text style={styles.metaPillText}>{pub.category || 'Research'}</Text>
+                      </View>
+                      <Ionicons name="document-text-outline" size={18} color={Colors.forest} />
+                    </View>
+                    <Text style={styles.cmsCardTitle}>{pub.title}</Text>
+                    <Text style={styles.cmsCardDesc}>{pub.excerpt}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          )}
+
+          {/* TAB: HOMEPAGE STATS */}
+          {activeTab === 'landing-stats' && (
+            <View style={styles.tabContent}>
+              <View style={styles.sectionHeaderRow}>
+                <View>
+                  <Text style={styles.sectionHeading}>Homepage Statistics</Text>
+                  <Text style={styles.sectionSubheading}>Key ecosystem numbers shown on landing screen</Text>
+                </View>
+                <TouchableOpacity style={styles.refreshIconBtn} onPress={loadCmsData}>
+                  <Ionicons name="refresh" size={18} color={Colors.forest} />
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.statsGrid}>
+                {[
+                  { value: '500+', label: 'Angel Investors in Community' },
+                  { value: '$11.5M+', label: 'Capital Facilitated & Invested' },
+                  { value: '54+', label: 'Active Portfolio Startups' },
+                ].map((stat, idx) => (
+                  <View key={`stat-${idx}`} style={styles.statBox}>
+                    <Text style={styles.statBoxVal}>{stat.value}</Text>
+                    <Text style={styles.statBoxLbl}>{stat.label}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          )}
+
+          {/* TAB: HOMEPAGE PROGRAMS */}
+          {activeTab === 'landing-programs' && (
+            <View style={styles.tabContent}>
+              <View style={styles.sectionHeaderRow}>
+                <View>
+                  <Text style={styles.sectionHeading}>Homepage Programs</Text>
+                  <Text style={styles.sectionSubheading}>Flagship initiatives and educational cohorts</Text>
+                </View>
+              </View>
+
+              <View style={styles.cardsList}>
+                {[
+                  {
+                    title: 'BWIN',
+                    badge: 'Initiative',
+                    desc: 'Building a more diverse pipeline of female investors and entrepreneurs across Bangladesh.',
+                  },
+                  {
+                    title: 'Angel Academy',
+                    badge: 'Education',
+                    desc: 'Practical masterclasses for aspiring and active angels—from first principles to syndicate committee.',
+                  },
+                ].map((prog, idx) => (
+                  <View key={`prog-${idx}`} style={styles.cmsCard}>
+                    <View style={styles.cmsCardHeader}>
+                      <View style={styles.metaPill}>
+                        <Text style={styles.metaPillText}>{prog.badge}</Text>
+                      </View>
+                      <Ionicons name="school" size={18} color={Colors.forest} />
+                    </View>
+                    <Text style={styles.cmsCardTitle}>{prog.title}</Text>
+                    <Text style={styles.cmsCardDesc}>{prog.desc}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          )}
+
+          {/* TAB: HOMEPAGE PORTFOLIOS */}
+          {activeTab === 'homepage-portfolios' && (
+            <View style={styles.tabContent}>
+              <View style={styles.sectionHeaderRow}>
+                <View>
+                  <Text style={styles.sectionHeading}>Featured Portfolios</Text>
+                  <Text style={styles.sectionSubheading}>Companies highlighted in the public showcase</Text>
+                </View>
+              </View>
+
+              <View style={styles.cardsList}>
+                {deals.slice(0, 6).map((deal, idx) => (
+                  <View key={`hp-deal-${deal.id || idx}`} style={styles.cmsCard}>
+                    <Text style={styles.cmsCardTitle}>{deal.title || deal.company_name}</Text>
+                    <Text style={styles.cmsCardDesc}>
+                      {deal.sector || 'Technology'} • Stage: {deal.stage || 'Seed'}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          )}
+
+          {/* TAB: TEAM ABOUT */}
+          {activeTab === 'team-about' && (
+            <View style={styles.tabContent}>
+              <View style={styles.sectionHeaderRow}>
+                <View>
+                  <Text style={styles.sectionHeading}>Team About Section</Text>
+                  <Text style={styles.sectionSubheading}>Mission, overview body, and branding badge</Text>
+                </View>
+              </View>
+
+              <View style={styles.cmsCard}>
+                <Text style={styles.eyebrow}>ABOUT BANGLADESH ANGELS</Text>
+                <Text style={styles.cmsCardTitle}>Capital. Community. Conviction.</Text>
+                <Text style={styles.cmsCardDesc}>
+                  BAN is the country’s first and largest angel-investing platform, connecting visionary entrepreneurs with seasoned investors and fostering an ecosystem that drives innovation and economic growth.
+                </Text>
+              </View>
+            </View>
+          )}
+
+          {/* TAB: EVENTS */}
+          {activeTab === 'events' && (
+            <View style={styles.tabContent}>
+              <View style={styles.sectionHeaderRow}>
+                <View>
+                  <Text style={styles.sectionHeading}>Community Events</Text>
+                  <Text style={styles.sectionSubheading}>Upcoming and featured investor showcases</Text>
+                </View>
+              </View>
+
+              <View style={styles.cmsCard}>
+                <View style={styles.cmsCardHeader}>
+                  <View style={styles.metaPill}>
+                    <Text style={styles.metaPillText}>Showcase</Text>
+                  </View>
+                  <Ionicons name="calendar-outline" size={18} color={Colors.forest} />
+                </View>
+                <Text style={styles.cmsCardTitle}>BAN Virtual Showcase</Text>
+                <Text style={styles.cmsCardDesc}>
+                  Monthly virtual showcase bringing curated high-potential startups to pitch directly to active angels.
+                </Text>
+              </View>
+            </View>
+          )}
+
+          {/* TAB: STARTUP SERVICES */}
+          {activeTab === 'startup-services' && (
+            <View style={styles.tabContent}>
+              <View style={styles.sectionHeaderRow}>
+                <View>
+                  <Text style={styles.sectionHeading}>Startup Services</Text>
+                  <Text style={styles.sectionSubheading}>Value-add advisory for portfolio companies</Text>
+                </View>
+              </View>
+
+              <View style={styles.cardsList}>
+                {[
+                  { title: 'Founder Readiness Advisory', desc: 'Financial modeling, valuation review, and pitch sharpening.' },
+                  { title: 'Legal & Structuring Advisory', desc: 'Term sheet review, cap table clean up, and cross-border holding setups.' },
+                  { title: 'DeckVue Due Diligence', desc: 'AI-assisted pitch deck analysis and instant market intel enrichment.' },
+                ].map((s, idx) => (
+                  <View key={`serv-${idx}`} style={styles.cmsCard}>
+                    <Text style={styles.cmsCardTitle}>{s.title}</Text>
+                    <Text style={styles.cmsCardDesc}>{s.desc}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          )}
+
+          {/* TAB: TEAM DIRECTORY */}
+          {activeTab === 'team-members' && (
+            <View style={styles.tabContent}>
+              <View style={styles.sectionHeaderRow}>
+                <View>
+                  <Text style={styles.sectionHeading}>Team Directory</Text>
+                  <Text style={styles.sectionSubheading}>Management team and governing board</Text>
+                </View>
+                <TouchableOpacity style={styles.refreshIconBtn} onPress={loadCmsData}>
+                  <Ionicons name="refresh" size={18} color={Colors.forest} />
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.cardsList}>
+                {(cmsData?.team?.management || [
+                  { name: 'Nirjhor Rahman', title: 'Chief Executive Officer' },
+                  { name: 'Sajid Rahman', title: 'Investment Advisor' },
+                  { name: 'Tahmid Ferdous', title: 'Tech Analyst & Developer' },
+                ]).map((tm, idx) => (
+                  <View key={`tm-${idx}`} style={styles.memberCard}>
+                    <View style={styles.memberCardTop}>
+                      <View style={styles.avatarCircleLarge}>
+                        <Text style={styles.avatarTextLarge}>{tm.name.charAt(0)}</Text>
+                      </View>
+                      <View style={styles.memberInfo}>
+                        <Text style={styles.memberName}>{tm.name}</Text>
+                        <Text style={styles.memberEmail}>{tm.title}</Text>
+                      </View>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            </View>
+          )}
+
+          {/* TAB: BAN WEALTH ORDERS */}
+          {activeTab === 'ban-wealth-orders' && (
+            <View style={styles.tabContent}>
+              <View style={styles.sectionHeaderRow}>
+                <View>
+                  <Text style={styles.sectionHeading}>BAN Wealth Orders</Text>
+                  <Text style={styles.sectionSubheading}>Private wealth & syndicate fund management orders</Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.refreshIconBtn}
+                  onPress={() => loadBanWealthOrders(authToken)}
+                >
+                  <Ionicons name="refresh" size={18} color={Colors.forest} />
+                </TouchableOpacity>
+              </View>
+
+              {banWealthOrdersLoading ? (
+                <View style={styles.listLoadingBox}>
+                  <ActivityIndicator size="small" color={Colors.forest} />
+                  <Text style={styles.loadingText}>Fetching wealth orders...</Text>
+                </View>
+              ) : banWealthOrders.length === 0 ? (
+                <View style={styles.emptyState}>
+                  <Ionicons name="receipt-outline" size={40} color={Colors.mutedLight} />
+                  <Text style={styles.emptyTitle}>No Wealth Orders</Text>
+                  <Text style={styles.emptyText}>All wealth management orders will appear here.</Text>
+                </View>
+              ) : (
+                <View style={styles.cardsList}>
+                  {banWealthOrders.map((ord, idx) => (
+                    <View key={`ord-${ord.id || idx}`} style={styles.subCard}>
+                      <Text style={styles.subUserName}>Order #{ord.id}</Text>
+                      <Text style={styles.subUserEmail}>{ord.currency || 'BDT'} {ord.amount}</Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
+          )}
+
+          {/* TAB: EMAIL CAMPAIGNS */}
+          {activeTab === 'mail-campaigns' && (
+            <View style={styles.tabContent}>
+              <View style={styles.sectionHeaderRow}>
+                <View>
+                  <Text style={styles.sectionHeading}>Email Campaigns</Text>
+                  <Text style={styles.sectionSubheading}>Syndicate memos, member announcements, digests</Text>
+                </View>
+              </View>
+
+              <View style={styles.cmsCard}>
+                <View style={styles.cmsCardHeader}>
+                  <View style={styles.metaPill}>
+                    <Text style={styles.metaPillText}>Digest Active</Text>
+                  </View>
+                  <Ionicons name="mail-outline" size={18} color={Colors.forest} />
+                </View>
+                <Text style={styles.cmsCardTitle}>Weekly Deal Memorandum</Text>
+                <Text style={styles.cmsCardDesc}>
+                  Automated notifications sent out to approved angel members whenever a new syndicate opportunity is opened.
+                </Text>
+              </View>
+            </View>
+          )}
         </ScrollView>
       )}
     </SafeAreaView>
@@ -1167,37 +2083,82 @@ const styles = StyleSheet.create({
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    flex: 1,
   },
-  backButton: {
-    padding: 6,
-    borderRadius: Radii.sm,
-    backgroundColor: Colors.cream,
+  sidebarToggleBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 8,
+    backgroundColor: '#0A5554',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.16,
+    shadowRadius: 3,
+    elevation: 3,
   },
-  logo: {
-    width: 110,
-    height: 32,
+  headerGreetingWrap: {
+    marginLeft: 10,
+    flex: 1,
   },
-  adminBadge: {
-    backgroundColor: '#0F7359',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: Radii.sm,
-  },
-  adminBadgeText: {
-    color: '#FFFFFF',
-    fontSize: 10,
+  greetingTitle: {
+    fontSize: 14,
     fontWeight: '800',
-    letterSpacing: 0.8,
+    color: Colors.ink,
+  },
+  greetingSubtitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0A5554',
   },
   headerRight: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
+  notificationBellBtn: {
+    position: 'relative',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#E6F4F1',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerUnreadBadge: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    minWidth: 17,
+    height: 17,
+    borderRadius: 8.5,
+    backgroundColor: '#EF4444',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+  },
+  headerUnreadBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '800',
+  },
   headerIconBtn: {
-    padding: 8,
-    borderRadius: Radii.sm,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.bgLight,
+  },
+  headerPublicBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: Colors.bgLight,
   },
   logoutBtn: {
@@ -1213,12 +2174,28 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     gap: 8,
   },
+  menuQuickPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: Radii.pill,
+    backgroundColor: '#E6F4F1',
+    borderWidth: 1,
+    borderColor: '#B4E6DA',
+  },
+  menuQuickPillText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0A5554',
+  },
   tabItem: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
     borderRadius: Radii.pill,
     backgroundColor: Colors.bgLight,
   },
@@ -1226,12 +2203,26 @@ const styles = StyleSheet.create({
     backgroundColor: '#0A5554',
   },
   tabLabel: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
     color: Colors.ink,
   },
   tabLabelActive: {
     color: '#FFFFFF',
+  },
+  tabBadge: {
+    backgroundColor: '#EF4444',
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: Radii.pill,
+  },
+  tabBadgeActive: {
+    backgroundColor: '#FFFFFF',
+  },
+  tabBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '800',
   },
   content: {
     flex: 1,
@@ -1929,5 +2920,263 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: Colors.muted,
     textAlign: 'center',
+  },
+  // Notifications styles
+  notifActionBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    padding: 12,
+    borderRadius: Radii.sm,
+    borderWidth: 1,
+    borderColor: Colors.line,
+  },
+  notifMetaPill: {
+    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: Radii.pill,
+  },
+  notifMetaPillText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.ink,
+  },
+  markReadBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: Radii.sm,
+    backgroundColor: '#E6F4F1',
+  },
+  markReadBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0A5554',
+  },
+  notificationCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: Radii.md,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    ...Shadows.card,
+  },
+  notificationCardUnread: {
+    backgroundColor: '#FFFDF0',
+    borderColor: '#FDE68A',
+  },
+  notificationCardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 8,
+  },
+  notificationAvatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#E6F4F1',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  notificationAvatarText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0A5554',
+  },
+  notificationInfo: {
+    flex: 1,
+  },
+  notificationHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  notificationUserName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.ink,
+  },
+  unreadAmberDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: '#F59E0B',
+  },
+  notificationEmail: {
+    fontSize: 11,
+    color: Colors.muted,
+  },
+  notificationDate: {
+    fontSize: 11,
+    color: Colors.muted,
+  },
+  notificationBody: {
+    paddingLeft: 44,
+  },
+  notificationMessage: {
+    fontSize: 13,
+    color: Colors.ink,
+    lineHeight: 18,
+  },
+  notificationDealBold: {
+    fontWeight: '800',
+    color: '#0A5554',
+  },
+  notificationAmountPill: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#E0F2FE',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: Radii.pill,
+    marginTop: 6,
+  },
+  notificationAmountText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0369A1',
+  },
+
+  // Subscriptions & Tiers styles
+  subSectionTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: Colors.ink,
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  tiersGrid: {
+    gap: 10,
+  },
+  tierCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: Radii.md,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    ...Shadows.card,
+  },
+  tierName: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0A5554',
+  },
+  tierPrice: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.ink,
+    marginVertical: 4,
+  },
+  tierDesc: {
+    fontSize: 12,
+    color: Colors.muted,
+    lineHeight: 16,
+  },
+  subCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: Radii.md,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    gap: 8,
+    ...Shadows.card,
+  },
+  subCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  subUserName: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: Colors.ink,
+  },
+  subUserEmail: {
+    fontSize: 11,
+    color: Colors.muted,
+  },
+  subCardBottom: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: Colors.lineLight,
+  },
+  subDate: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.muted,
+  },
+  subAmount: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: Colors.forest,
+  },
+
+  // CMS Cards & stats styles
+  cmsCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: Radii.md,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    gap: 6,
+    ...Shadows.card,
+  },
+  cmsCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  cmsCardTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: Colors.ink,
+  },
+  cmsCardDesc: {
+    fontSize: 13,
+    color: Colors.muted,
+    lineHeight: 18,
+  },
+  cmsCardAuthor: {
+    fontSize: 11,
+    color: Colors.muted,
+    fontWeight: '600',
+  },
+  statsGrid: {
+    gap: 10,
+  },
+  statBox: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: Radii.md,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...Shadows.card,
+  },
+  statBoxVal: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#0A5554',
+    marginBottom: 4,
+  },
+  statBoxLbl: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.muted,
+    textAlign: 'center',
+  },
+  dealDateText: {
+    fontSize: 11,
+    color: Colors.muted,
+    alignSelf: 'center',
   },
 });

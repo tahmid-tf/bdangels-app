@@ -259,13 +259,8 @@ export async function fetchAdminAngelAcademy(token) {
  */
 export async function fetchAdminNotifications(token) {
   try {
-    const res = await fetch(`${API_BASE_URL}/admin/notifications`, {
-      headers: {
-        Accept: 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-    });
-    if (res.ok) {
+    const res = await fetchAdminWithFallback('/admin/notifications', token);
+    if (res && res.ok) {
       const json = await res.json();
       return json.data || json;
     }
@@ -280,19 +275,64 @@ export async function fetchAdminNotifications(token) {
  */
 export async function markAdminNotificationsViewed(token) {
   try {
-    const res = await fetch(`${API_BASE_URL}/admin/notifications/mark-all-viewed`, {
+    const res = await fetchAdminWithFallback('/admin/notifications/mark-all-viewed', token, {
       method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
     });
-    return res.ok;
+    return Boolean(res && res.ok);
   } catch (err) {
     console.log('Mark notifications viewed error:', err);
     return false;
   }
 }
+
+/**
+ * Fetch Subscriptions list & tiers from GET /api/admin/subscriptions
+ */
+export async function fetchAdminSubscriptions(token) {
+  try {
+    const res = await fetchAdminWithFallback('/admin/subscriptions', token);
+    if (res && res.ok) {
+      const json = await res.json();
+      return json.data || json;
+    }
+  } catch (err) {
+    console.log('Admin subscriptions fetch error:', err);
+  }
+  return null;
+}
+
+/**
+ * Fetch Investor Investments from GET /api/admin/investor-investments
+ */
+export async function fetchAdminInvestorInvestments(token) {
+  try {
+    const res = await fetchAdminWithFallback('/admin/investor-investments', token);
+    if (res && res.ok) {
+      const json = await res.json();
+      return json.data || json;
+    }
+  } catch (err) {
+    console.log('Admin investor investments fetch error:', err);
+  }
+  return null;
+}
+
+/**
+ * Fetch BAN Wealth Orders from GET /api/admin/ban-wealth-orders
+ */
+export async function fetchAdminBanWealthOrders(token) {
+  try {
+    const res = await fetchAdminWithFallback('/admin/ban-wealth-orders', token);
+    if (res && res.ok) {
+      const json = await res.json();
+      return json.data || json;
+    }
+  } catch (err) {
+    console.log('Admin BAN wealth orders fetch error:', err);
+  }
+  return null;
+}
+
 
 // Embedded fallback data directly from live Laravel backend for 100% resilient rendering
 export const FALLBACK_HOME_DATA = {
