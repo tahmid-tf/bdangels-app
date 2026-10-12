@@ -13,6 +13,7 @@ import {
   Alert,
   Modal,
   Image,
+  Linking,
 } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -45,6 +46,11 @@ import {
   updateAdminBlog,
   updateAdminBlogStatus,
   deleteAdminBlog,
+  fetchAdminPublications,
+  createAdminPublication,
+  updateAdminPublication,
+  updateAdminPublicationStatus,
+  deleteAdminPublication,
   fetchPublicationsPageData,
   fetchTeamPageData,
 } from '../services/api';
@@ -116,6 +122,15 @@ const BLOG_CATEGORIES = [
   'Announcement',
   'Media appearances',
   'Investment',
+  'Misc',
+];
+
+const PUBLICATION_CATEGORIES = [
+  'Research',
+  'Market report',
+  'Founder guide',
+  'Investment education',
+  'Annual report',
   'Misc',
 ];
 
@@ -288,6 +303,44 @@ export default function AdminScreen() {
   const [editorSelection, setEditorSelection] = useState({ start: 0, end: 0 });
   const [linkModalVisible, setLinkModalVisible] = useState(false);
   const [linkFormData, setLinkFormData] = useState({ url: 'https://', text: '' });
+
+  // Publications Tab State
+  const [publications, setPublications] = useState([]);
+  const [publicationsLoading, setPublicationsLoading] = useState(false);
+  const [publicationSearch, setPublicationSearch] = useState('');
+  const [publicationStatusFilter, setPublicationStatusFilter] = useState('all'); // 'all' | 'published' | 'archived'
+  const [publicationCounts, setPublicationCounts] = useState({ all: 0, published: 0, archived: 0 });
+  const [publicationPagination, setPublicationPagination] = useState({
+    currentPage: 1,
+    lastPage: 1,
+    total: 0,
+    perPage: 15,
+    from: 0,
+    to: 0,
+  });
+
+  // Publication Modals
+  const [viewPublicationModalVisible, setViewPublicationModalVisible] = useState(false);
+  const [selectedPublicationForView, setSelectedPublicationForView] = useState(null);
+
+  const [createPublicationModalVisible, setCreatePublicationModalVisible] = useState(false);
+  const [editPublicationModalVisible, setEditPublicationModalVisible] = useState(false);
+  const [editingPublication, setEditingPublication] = useState(null);
+  const [publicationSaving, setPublicationSaving] = useState(false);
+  const [publicationFormData, setPublicationFormData] = useState({
+    title: '',
+    category: 'Research',
+    excerpt: '',
+    pdf_original_name: '',
+    pdf_path: '',
+    status: 'published',
+    published_at: '',
+  });
+
+  const [deletePublicationModalVisible, setDeletePublicationModalVisible] = useState(false);
+  const [selectedPublicationForDelete, setSelectedPublicationForDelete] = useState(null);
+  const [isDeletingPublication, setIsDeletingPublication] = useState(false);
+  const [updatingPublicationStatusId, setUpdatingPublicationStatusId] = useState(null);
 
   // Fetch Dashboard summary data
   const loadDashboard = useCallback(async (token = authToken) => {
@@ -589,6 +642,68 @@ export default function AdminScreen() {
     [authToken, blogSearch, blogStatusFilter]
   );
 
+  // Fetch Publications
+  const loadPublications = useCallback(
+    async (
+      token = authToken,
+      search = publicationSearch,
+      status = publicationStatusFilter,
+      page = 1,
+      options = {}
+    ) => {
+      if (!token) return;
+      const { silent = false } = options;
+      if (!silent) {
+        setPublicationsLoading(true);
+      }
+      try {
+        const filterStatus = status === 'all' ? '' : status;
+        const res = await fetchAdminPublications(token, {
+          search,
+          status: filterStatus,
+          page,
+          per_page: 15,
+        });
+        if (res) {
+          const paginator = res.data || res;
+          const list = Array.isArray(paginator) ? paginator : paginator.data || [];
+          setPublications(list);
+
+          if (paginator.current_page !== undefined) {
+            setPublicationPagination({
+              currentPage: paginator.current_page || 1,
+              lastPage: paginator.last_page || 1,
+              total: paginator.total || list.length,
+              perPage: paginator.per_page || 15,
+              from: paginator.from || (list.length > 0 ? (paginator.current_page - 1) * 15 + 1 : 0),
+              to: paginator.to || (list.length > 0 ? (paginator.current_page - 1) * 15 + list.length : 0),
+            });
+          } else {
+            setPublicationPagination({
+              currentPage: 1,
+              lastPage: 1,
+              total: list.length,
+              perPage: 15,
+              from: list.length > 0 ? 1 : 0,
+              to: list.length,
+            });
+          }
+
+          if (res.counts) {
+            setPublicationCounts(res.counts);
+          }
+        }
+      } catch (err) {
+        console.log('Error loading publications:', err);
+      } finally {
+        if (!silent) {
+          setPublicationsLoading(false);
+        }
+      }
+    },
+    [authToken, publicationSearch, publicationStatusFilter]
+  );
+
   // Handle Tab / Sidebar View Selection
   const handleTabChange = (tab) => {
     setActiveTab(tab);
@@ -598,6 +713,8 @@ export default function AdminScreen() {
       if (members.length === 0) loadMembers(authToken);
     } else if (tab === 'blogs') {
       if (blogs.length === 0) loadBlogs(authToken);
+    } else if (tab === 'publications') {
+      if (publications.length === 0) loadPublications(authToken);
     } else if (tab === 'deals') {
       if (deals.length === 0) loadDeals(authToken);
     } else if (tab === 'founder-pitches') {
@@ -616,7 +733,6 @@ export default function AdminScreen() {
       if (banWealthOrders.length === 0) loadBanWealthOrders(authToken);
     } else if (
       [
-        'publications',
         'landing-stats',
         'landing-programs',
         'homepage-portfolios',
@@ -637,6 +753,7 @@ export default function AdminScreen() {
     await loadNotifications(authToken);
     if (activeTab === 'members') await loadMembers(authToken);
     if (activeTab === 'blogs') await loadBlogs(authToken);
+    if (activeTab === 'publications') await loadPublications(authToken);
     if (activeTab === 'deals') await loadDeals(authToken);
     if (activeTab === 'submissions' || activeTab === 'founder-pitches' || activeTab === 'angel-academy') {
       await loadSubmissions(authToken);
@@ -648,7 +765,6 @@ export default function AdminScreen() {
     if (activeTab === 'ban-wealth-orders') await loadBanWealthOrders(authToken);
     if (
       [
-        'publications',
         'landing-stats',
         'landing-programs',
         'homepage-portfolios',
@@ -1488,6 +1604,294 @@ export default function AdminScreen() {
     } finally {
       setIsDeletingBlog(false);
       setSelectedBlogForDelete(null);
+    }
+  };
+
+  // Publication Handlers
+  const handleOpenViewPublication = (pub) => {
+    setSelectedPublicationForView(pub);
+    setViewPublicationModalVisible(true);
+  };
+
+  const handleOpenCreatePublication = () => {
+    setPublicationFormData({
+      title: '',
+      category: 'Research',
+      excerpt: '',
+      pdf_original_name: '',
+      pdf_path: '',
+      status: 'published',
+      published_at: new Date().toISOString().slice(0, 16),
+    });
+    setCreatePublicationModalVisible(true);
+  };
+
+  const handleSaveCreatePublication = async () => {
+    if (!authToken) return;
+    if (!publicationFormData.title.trim()) {
+      Alert.alert('Validation Error', 'Publication title is required.');
+      return;
+    }
+
+    setPublicationSaving(true);
+    try {
+      const payload = {
+        title: publicationFormData.title.trim(),
+        category: publicationFormData.category || 'Research',
+        excerpt: publicationFormData.excerpt.trim(),
+        pdf_original_name:
+          publicationFormData.pdf_original_name.trim() ||
+          `${publicationFormData.title.trim().toLowerCase().replace(/\s+/g, '-')}.pdf`,
+        pdf_path: publicationFormData.pdf_path.trim() || 'publications/report.pdf',
+        status: publicationFormData.status || 'published',
+        published_at: publicationFormData.published_at || null,
+      };
+
+      const res = await createAdminPublication(authToken, payload);
+      if (res.ok) {
+        const newPub = res.data || {
+          id: Date.now(),
+          ...payload,
+          download_url: `https://bdangels.co/api/publications/${Date.now()}/download`,
+          created_at: new Date().toISOString(),
+        };
+        setPublications((prev) => [newPub, ...prev]);
+        setPublicationPagination((prev) => ({
+          ...prev,
+          total: (prev.total || 0) + 1,
+          to: (prev.to || 0) + 1,
+        }));
+        setPublicationCounts((prev) => ({
+          ...prev,
+          all: (prev.all || 0) + 1,
+          published:
+            payload.status === 'published'
+              ? (prev.published || 0) + 1
+              : prev.published || 0,
+          archived:
+            payload.status === 'archived'
+              ? (prev.archived || 0) + 1
+              : prev.archived || 0,
+        }));
+
+        setCreatePublicationModalVisible(false);
+        Alert.alert('Success', 'Publication added successfully!');
+
+        // Silent background sync
+        loadPublications(authToken, publicationSearch, publicationStatusFilter, 1, {
+          silent: true,
+        });
+      } else {
+        const errorText = res.errors
+          ? Object.values(res.errors).flat().join('\n')
+          : res.message || 'Could not create publication.';
+        Alert.alert('Creation Failed', errorText);
+      }
+    } catch (err) {
+      console.log('Error creating publication:', err);
+      Alert.alert('Error', 'An unexpected error occurred while creating publication.');
+    } finally {
+      setPublicationSaving(false);
+    }
+  };
+
+  const handleOpenEditPublication = (pub) => {
+    setEditingPublication(pub);
+    setPublicationFormData({
+      title: pub.title || '',
+      category: pub.category || 'Research',
+      excerpt: pub.excerpt || '',
+      pdf_original_name: pub.pdf_original_name || '',
+      pdf_path: pub.pdf_path || '',
+      status: pub.status || 'published',
+      published_at: pub.published_at ? pub.published_at.slice(0, 16) : '',
+    });
+    setEditPublicationModalVisible(true);
+  };
+
+  const handleSaveEditPublication = async () => {
+    if (!editingPublication || !authToken) return;
+    if (!publicationFormData.title.trim()) {
+      Alert.alert('Validation Error', 'Publication title is required.');
+      return;
+    }
+
+    setPublicationSaving(true);
+    try {
+      const payload = {
+        title: publicationFormData.title.trim(),
+        category: publicationFormData.category || 'Research',
+        excerpt: publicationFormData.excerpt.trim(),
+        pdf_original_name:
+          publicationFormData.pdf_original_name.trim() ||
+          editingPublication.pdf_original_name,
+        pdf_path:
+          publicationFormData.pdf_path.trim() || editingPublication.pdf_path,
+        status: publicationFormData.status || 'published',
+        published_at: publicationFormData.published_at || null,
+      };
+
+      const res = await updateAdminPublication(authToken, editingPublication.id, payload);
+      if (res.ok) {
+        const updatedPub = res.data || {
+          ...editingPublication,
+          ...payload,
+        };
+        setPublications((prev) =>
+          prev.map((p) => (p.id === editingPublication.id ? updatedPub : p))
+        );
+        if (selectedPublicationForView?.id === editingPublication.id) {
+          setSelectedPublicationForView(updatedPub);
+        }
+
+        setEditPublicationModalVisible(false);
+        Alert.alert('Success', 'Publication updated successfully!');
+
+        // Silent background sync
+        loadPublications(
+          authToken,
+          publicationSearch,
+          publicationStatusFilter,
+          publicationPagination.currentPage,
+          { silent: true }
+        );
+      } else {
+        const errorText = res.errors
+          ? Object.values(res.errors).flat().join('\n')
+          : res.message || 'Could not update publication.';
+        Alert.alert('Update Failed', errorText);
+      }
+    } catch (err) {
+      console.log('Error updating publication:', err);
+      Alert.alert('Error', 'An unexpected error occurred while updating publication.');
+    } finally {
+      setPublicationSaving(false);
+    }
+  };
+
+  const handleTogglePublicationStatus = async (pub) => {
+    if (!authToken || !pub) return;
+    const isCurrentlyPublished = pub.status === 'published';
+    const newStatus = isCurrentlyPublished ? 'archived' : 'published';
+    const actionLabel = isCurrentlyPublished ? 'Archive' : 'Publish';
+
+    Alert.alert(
+      `${actionLabel} Publication`,
+      isCurrentlyPublished
+        ? `Archive "${pub.title}"? It will be hidden from the public research library.`
+        : `Publish "${pub.title}"? It will become visible on the public research library.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: actionLabel,
+          style: isCurrentlyPublished ? 'destructive' : 'default',
+          onPress: async () => {
+            const oldStatus = pub.status;
+            setUpdatingPublicationStatusId(pub.id);
+
+            // Optimistic in-place update
+            setPublications((prev) =>
+              prev.map((p) => (p.id === pub.id ? { ...p, status: newStatus } : p))
+            );
+            if (selectedPublicationForView?.id === pub.id) {
+              setSelectedPublicationForView((prev) => ({ ...prev, status: newStatus }));
+            }
+            setPublicationCounts((prev) => ({
+              ...prev,
+              published:
+                newStatus === 'published'
+                  ? (prev.published || 0) + 1
+                  : Math.max(0, (prev.published || 0) - 1),
+              archived:
+                newStatus === 'archived'
+                  ? (prev.archived || 0) + 1
+                  : Math.max(0, (prev.archived || 0) - 1),
+            }));
+
+            try {
+              const res = await updateAdminPublicationStatus(authToken, pub.id, newStatus);
+              if (!res.ok) {
+                // Rollback
+                setPublications((prev) =>
+                  prev.map((p) => (p.id === pub.id ? { ...p, status: oldStatus } : p))
+                );
+                Alert.alert('Status Update Failed', res.message || 'Could not update status.');
+              }
+            } catch (err) {
+              console.log('Error toggling publication status:', err);
+              // Rollback
+              setPublications((prev) =>
+                prev.map((p) => (p.id === pub.id ? { ...p, status: oldStatus } : p))
+              );
+            } finally {
+              setUpdatingPublicationStatusId(null);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleOpenDeletePublicationModal = (pub) => {
+    setSelectedPublicationForDelete(pub);
+    setDeletePublicationModalVisible(true);
+  };
+
+  const handleConfirmDeletePublication = async () => {
+    if (!selectedPublicationForDelete || !authToken) return;
+    const pubId = selectedPublicationForDelete.id;
+    const pubStatus = selectedPublicationForDelete.status;
+
+    setIsDeletingPublication(true);
+
+    try {
+      const res = await deleteAdminPublication(authToken, pubId);
+      if (res.ok) {
+        // Optimistic delete
+        setPublications((prev) => prev.filter((p) => p.id !== pubId));
+        setPublicationPagination((prev) => ({
+          ...prev,
+          total: Math.max(0, prev.total - 1),
+          to: Math.max(0, prev.to - 1),
+        }));
+        setPublicationCounts((prev) => ({
+          ...prev,
+          all: Math.max(0, (prev.all || 1) - 1),
+          published:
+            pubStatus === 'published'
+              ? Math.max(0, (prev.published || 1) - 1)
+              : prev.published || 0,
+          archived:
+            pubStatus === 'archived'
+              ? Math.max(0, (prev.archived || 1) - 1)
+              : prev.archived || 0,
+        }));
+
+        setDeletePublicationModalVisible(false);
+        if (selectedPublicationForView?.id === pubId) {
+          setViewPublicationModalVisible(false);
+          setSelectedPublicationForView(null);
+        }
+        setSelectedPublicationForDelete(null);
+        Alert.alert('Deleted', 'Publication removed successfully.');
+
+        // Silent background sync
+        loadPublications(
+          authToken,
+          publicationSearch,
+          publicationStatusFilter,
+          publicationPagination.currentPage,
+          { silent: true }
+        );
+      } else {
+        Alert.alert('Delete Failed', res.message || 'Could not delete publication.');
+      }
+    } catch (err) {
+      console.log('Error deleting publication:', err);
+      Alert.alert('Error', 'An unexpected error occurred while deleting publication.');
+    } finally {
+      setIsDeletingPublication(false);
+      setSelectedPublicationForDelete(null);
     }
   };
 
@@ -3433,48 +3837,437 @@ export default function AdminScreen() {
           {/* TAB: PUBLICATIONS */}
           {activeTab === 'publications' && (
             <View style={styles.tabContent}>
+              {/* Header */}
               <View style={styles.sectionHeaderRow}>
-                <View>
+                <View style={{ flex: 1, paddingRight: 8 }}>
                   <Text style={styles.sectionHeading}>Research Publications</Text>
-                  <Text style={styles.sectionSubheading}>Whitepapers, legal guides, and ecosystem reports</Text>
+                  <Text style={styles.sectionSubheading}>
+                    {publicationPagination.total > 0
+                      ? `Showing ${publicationPagination.from}–${publicationPagination.to} of ${publicationPagination.total} reports`
+                      : 'Upload and manage whitepapers, legal guides, and research'}
+                  </Text>
                 </View>
-                <TouchableOpacity style={styles.refreshIconBtn} onPress={loadCmsData}>
-                  <Ionicons name="refresh" size={18} color={Colors.forest} />
-                </TouchableOpacity>
+                <View style={styles.sectionHeaderActions}>
+                  <TouchableOpacity
+                    style={styles.addMemberBtn}
+                    onPress={handleOpenCreatePublication}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="add-circle" size={15} color="#FFFFFF" />
+                    <Text style={styles.addMemberBtnText}>New Report</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.refreshIconBtn}
+                    onPress={() =>
+                      loadPublications(
+                        authToken,
+                        publicationSearch,
+                        publicationStatusFilter,
+                        publicationPagination.currentPage
+                      )
+                    }
+                    disabled={publicationsLoading}
+                  >
+                    <Ionicons
+                      name="refresh"
+                      size={18}
+                      color={Colors.forest}
+                      style={publicationsLoading ? { opacity: 0.5 } : {}}
+                    />
+                  </TouchableOpacity>
+                </View>
               </View>
 
-              {cmsLoading && !cmsData ? (
+              {/* Search Box */}
+              <View style={styles.searchBar}>
+                <Ionicons name="search" size={18} color={Colors.muted} style={styles.searchIcon} />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Search by title, summary, or category..."
+                  placeholderTextColor={Colors.mutedLight}
+                  value={publicationSearch}
+                  onChangeText={(val) => {
+                    setPublicationSearch(val);
+                    loadPublications(authToken, val, publicationStatusFilter, 1);
+                  }}
+                  autoCapitalize="none"
+                  returnKeyType="search"
+                />
+                {publicationSearch.length > 0 && (
+                  <TouchableOpacity
+                    onPress={() => {
+                      setPublicationSearch('');
+                      loadPublications(authToken, '', publicationStatusFilter, 1);
+                    }}
+                  >
+                    <Ionicons name="close-circle" size={18} color={Colors.muted} />
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* Filter Tabs (All / Published / Archived) */}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.memberFilterTabsContent}
+                style={styles.memberFilterTabsScroll}
+              >
+                {[
+                  {
+                    key: 'all',
+                    label: 'All Reports',
+                    count: publicationCounts.all || publicationPagination.total,
+                  },
+                  { key: 'published', label: 'Published', count: publicationCounts.published },
+                  { key: 'archived', label: 'Archived', count: publicationCounts.archived },
+                ].map((tab) => {
+                  const isActive = publicationStatusFilter === tab.key;
+                  return (
+                    <TouchableOpacity
+                      key={`pub-filter-${tab.key}`}
+                      style={[styles.memberFilterChip, isActive && styles.memberFilterChipActive]}
+                      onPress={() => {
+                        setPublicationStatusFilter(tab.key);
+                        loadPublications(authToken, publicationSearch, tab.key, 1);
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Text
+                        style={[
+                          styles.memberFilterChipText,
+                          isActive && styles.memberFilterChipTextActive,
+                        ]}
+                      >
+                        {tab.label}
+                      </Text>
+                      <View
+                        style={[
+                          styles.memberFilterBadge,
+                          isActive ? styles.memberFilterBadgeActive : styles.memberFilterBadgeInactive,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.memberFilterBadgeText,
+                            isActive && styles.memberFilterBadgeTextActive,
+                          ]}
+                        >
+                          {tab.count !== undefined ? tab.count : 0}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+
+              {/* Publication List Content */}
+              {publicationsLoading && publications.length === 0 ? (
                 <View style={styles.listLoadingBox}>
                   <ActivityIndicator size="small" color={Colors.forest} />
                   <Text style={styles.loadingText}>Fetching publications...</Text>
                 </View>
+              ) : publications.length === 0 ? (
+                <View style={styles.emptyState}>
+                  <Ionicons name="document-text-outline" size={44} color={Colors.mutedLight} />
+                  <Text style={styles.emptyTitle}>No publications found</Text>
+                  <Text style={styles.emptyText}>
+                    No research reports match your current search query or filter scope.
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.emptyAddBtn}
+                    onPress={handleOpenCreatePublication}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="add-circle" size={15} color="#FFFFFF" />
+                    <Text style={styles.emptyAddBtnText}>Add New Publication</Text>
+                  </TouchableOpacity>
+                </View>
               ) : (
                 <View style={styles.cardsList}>
-                  {(cmsData?.publications?.publications?.data || [
-                    {
-                      id: 1,
-                      title: 'Bangladesh Startup Ecosystem Report 2024–2025',
-                      category: 'Market Research',
-                      excerpt: 'Comprehensive data on seed funding, deal sizes, active sectors, and exit horizons.',
-                    },
-                    {
-                      id: 2,
-                      title: 'Angel Investing in Bangladesh: A Legal & Regulatory Handbook',
-                      category: 'Legal Guide',
-                      excerpt: 'RJSC filings, foreign currency remittances, SPV formations, and investor rights.',
-                    },
-                  ]).map((pub, idx) => (
-                    <View key={`pub-${pub.id || idx}`} style={styles.cmsCard}>
-                      <View style={styles.cmsCardHeader}>
-                        <View style={styles.metaPill}>
-                          <Text style={styles.metaPillText}>{pub.category || 'Research'}</Text>
-                        </View>
-                        <Ionicons name="document-text-outline" size={18} color={Colors.forest} />
-                      </View>
-                      <Text style={styles.cmsCardTitle}>{pub.title}</Text>
-                      <Text style={styles.cmsCardDesc}>{pub.excerpt}</Text>
+                  {publicationsLoading && (
+                    <View style={styles.memberListUpdatingBar}>
+                      <ActivityIndicator size="small" color={Colors.forest} />
+                      <Text style={styles.memberListUpdatingText}>Syncing publications...</Text>
                     </View>
-                  ))}
+                  )}
+
+                  {publications.map((pub) => {
+                    const isPublished = pub.status === 'published';
+                    const isUpdatingStatus = updatingPublicationStatusId === pub.id;
+                    const formattedDate = pub.published_at
+                      ? new Date(pub.published_at).toLocaleDateString('en-GB', {
+                          day: 'numeric',
+                          month: 'short',
+                          year: 'numeric',
+                        })
+                      : pub.created_at
+                      ? new Date(pub.created_at).toLocaleDateString('en-GB', {
+                          day: 'numeric',
+                          month: 'short',
+                          year: 'numeric',
+                        })
+                      : 'Draft';
+
+                    const pdfFileName =
+                      pub.pdf_original_name ||
+                      (pub.pdf_path ? pub.pdf_path.split('/').pop() : 'Report.pdf');
+                    const downloadUrl =
+                      pub.download_url ||
+                      `https://bdangels.co/api/publications/${pub.id}/download`;
+
+                    return (
+                      <View key={`pub-card-${pub.id}`} style={styles.pubCard}>
+                        {/* Badges Row */}
+                        <View style={styles.blogCardTop}>
+                          <View
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              gap: 6,
+                              flexWrap: 'wrap',
+                              flex: 1,
+                            }}
+                          >
+                            <View style={styles.pubCategoryPill}>
+                              <Text style={styles.pubCategoryPillText}>
+                                {pub.category || 'Research'}
+                              </Text>
+                            </View>
+                            <View
+                              style={[
+                                styles.blogStatusPill,
+                                isPublished
+                                  ? styles.blogStatusPillPublished
+                                  : styles.blogStatusPillArchived,
+                              ]}
+                            >
+                              <View
+                                style={[
+                                  styles.blogStatusDot,
+                                  { backgroundColor: isPublished ? '#059669' : '#D97706' },
+                                ]}
+                              />
+                              <Text
+                                style={[
+                                  styles.blogStatusPillText,
+                                  { color: isPublished ? '#065F46' : '#92400E' },
+                                ]}
+                              >
+                                {isPublished ? 'Published' : 'Archived'}
+                              </Text>
+                            </View>
+                          </View>
+
+                          <View style={styles.pubDatePill}>
+                            <Ionicons name="calendar-outline" size={12} color="#64748B" />
+                            <Text style={styles.pubDateText}>{formattedDate}</Text>
+                          </View>
+                        </View>
+
+                        {/* Title */}
+                        <TouchableOpacity
+                          onPress={() => handleOpenViewPublication(pub)}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={styles.blogCardTitle}>{pub.title}</Text>
+                        </TouchableOpacity>
+
+                        {/* Excerpt / Summary */}
+                        {Boolean(pub.excerpt) && (
+                          <Text style={styles.blogCardExcerpt} numberOfLines={2}>
+                            {pub.excerpt}
+                          </Text>
+                        )}
+
+                        {/* PDF File Pill with direct download trigger */}
+                        <TouchableOpacity
+                          style={styles.pubPdfBar}
+                          onPress={async () => {
+                            try {
+                              const canOpen = await Linking.canOpenURL(downloadUrl);
+                              if (canOpen) {
+                                await Linking.openURL(downloadUrl);
+                              } else {
+                                Alert.alert('Cannot Open Link', downloadUrl);
+                              }
+                            } catch {
+                              Linking.openURL(downloadUrl);
+                            }
+                          }}
+                          activeOpacity={0.7}
+                        >
+                          <View style={styles.pubPdfIconWrap}>
+                            <Ionicons name="document-text" size={16} color="#DC2626" />
+                          </View>
+                          <Text style={styles.pubPdfName} numberOfLines={1}>
+                            {pdfFileName}
+                          </Text>
+                          <View style={styles.pubPdfActionBtn}>
+                            <Ionicons name="arrow-down-circle" size={15} color="#0A5554" />
+                            <Text style={styles.pubPdfActionText}>Download</Text>
+                          </View>
+                        </TouchableOpacity>
+
+                        {/* Action Buttons Toolbar */}
+                        <View style={styles.blogActionsToolbar}>
+                          {/* Preview / View */}
+                          <TouchableOpacity
+                            style={styles.blogActionBtn}
+                            onPress={() => handleOpenViewPublication(pub)}
+                            activeOpacity={0.7}
+                          >
+                            <Ionicons name="eye-outline" size={15} color="#0A5554" />
+                            <Text style={styles.blogActionBtnText}>Preview</Text>
+                          </TouchableOpacity>
+
+                          {/* Edit */}
+                          <TouchableOpacity
+                            style={styles.blogActionBtn}
+                            onPress={() => handleOpenEditPublication(pub)}
+                            activeOpacity={0.7}
+                          >
+                            <Ionicons name="create-outline" size={15} color="#0A5554" />
+                            <Text style={styles.blogActionBtnText}>Edit</Text>
+                          </TouchableOpacity>
+
+                          {/* Publish / Archive Toggle */}
+                          <TouchableOpacity
+                            style={[
+                              styles.blogActionBtn,
+                              isPublished ? styles.blogActionBtnArchive : styles.blogActionBtnPublish,
+                            ]}
+                            onPress={() => handleTogglePublicationStatus(pub)}
+                            disabled={isUpdatingStatus}
+                            activeOpacity={0.7}
+                          >
+                            {isUpdatingStatus ? (
+                              <ActivityIndicator
+                                size="small"
+                                color={isPublished ? '#B45309' : '#047857'}
+                              />
+                            ) : (
+                              <>
+                                <Ionicons
+                                  name={isPublished ? 'archive-outline' : 'checkmark-done-outline'}
+                                  size={15}
+                                  color={isPublished ? '#B45309' : '#047857'}
+                                />
+                                <Text
+                                  style={[
+                                    styles.blogActionBtnText,
+                                    isPublished
+                                      ? styles.blogActionBtnTextArchive
+                                      : styles.blogActionBtnTextPublish,
+                                  ]}
+                                >
+                                  {isPublished ? 'Archive' : 'Publish'}
+                                </Text>
+                              </>
+                            )}
+                          </TouchableOpacity>
+
+                          {/* Delete */}
+                          <TouchableOpacity
+                            style={[styles.blogActionBtn, styles.blogActionBtnDelete]}
+                            onPress={() => handleOpenDeletePublicationModal(pub)}
+                            activeOpacity={0.7}
+                          >
+                            <Ionicons name="trash-outline" size={15} color="#DC2626" />
+                            <Text
+                              style={[
+                                styles.blogActionBtnText,
+                                styles.blogActionBtnTextDelete,
+                              ]}
+                            >
+                              Delete
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    );
+                  })}
+
+                  {/* Pagination Footer */}
+                  {publicationPagination.lastPage > 1 && (
+                    <View style={styles.paginationBar}>
+                      <TouchableOpacity
+                        style={[
+                          styles.paginationBtn,
+                          publicationPagination.currentPage <= 1 && styles.paginationBtnDisabled,
+                        ]}
+                        disabled={publicationPagination.currentPage <= 1 || publicationsLoading}
+                        onPress={() => {
+                          const prevPage = publicationPagination.currentPage - 1;
+                          loadPublications(
+                            authToken,
+                            publicationSearch,
+                            publicationStatusFilter,
+                            prevPage
+                          );
+                        }}
+                      >
+                        <Ionicons
+                          name="chevron-back"
+                          size={16}
+                          color={publicationPagination.currentPage <= 1 ? '#9CA3AF' : '#0A5554'}
+                        />
+                        <Text
+                          style={[
+                            styles.paginationBtnText,
+                            publicationPagination.currentPage <= 1 &&
+                              styles.paginationBtnTextDisabled,
+                          ]}
+                        >
+                          Prev
+                        </Text>
+                      </TouchableOpacity>
+
+                      <Text style={styles.paginationInfo}>
+                        Page {publicationPagination.currentPage} of{' '}
+                        {publicationPagination.lastPage} ({publicationPagination.total} total)
+                      </Text>
+
+                      <TouchableOpacity
+                        style={[
+                          styles.paginationBtn,
+                          publicationPagination.currentPage >= publicationPagination.lastPage &&
+                            styles.paginationBtnDisabled,
+                        ]}
+                        disabled={
+                          publicationPagination.currentPage >= publicationPagination.lastPage ||
+                          publicationsLoading
+                        }
+                        onPress={() => {
+                          const nextPage = publicationPagination.currentPage + 1;
+                          loadPublications(
+                            authToken,
+                            publicationSearch,
+                            publicationStatusFilter,
+                            nextPage
+                          );
+                        }}
+                      >
+                        <Text
+                          style={[
+                            styles.paginationBtnText,
+                            publicationPagination.currentPage >= publicationPagination.lastPage &&
+                              styles.paginationBtnTextDisabled,
+                          ]}
+                        >
+                          Next
+                        </Text>
+                        <Ionicons
+                          name="chevron-forward"
+                          size={16}
+                          color={
+                            publicationPagination.currentPage >= publicationPagination.lastPage
+                              ? '#9CA3AF'
+                              : '#0A5554'
+                          }
+                        />
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </View>
               )}
             </View>
@@ -3488,8 +4281,17 @@ export default function AdminScreen() {
                   <Text style={styles.sectionHeading}>Homepage Statistics</Text>
                   <Text style={styles.sectionSubheading}>Key ecosystem numbers shown on landing screen</Text>
                 </View>
-                <TouchableOpacity style={styles.refreshIconBtn} onPress={loadCmsData}>
-                  <Ionicons name="refresh" size={18} color={Colors.forest} />
+                <TouchableOpacity
+                  style={styles.refreshIconBtn}
+                  onPress={loadCmsData}
+                  disabled={cmsLoading}
+                >
+                  <Ionicons
+                    name="refresh"
+                    size={18}
+                    color={Colors.forest}
+                    style={cmsLoading ? { opacity: 0.5 } : {}}
+                  />
                 </TouchableOpacity>
               </View>
 
@@ -3647,8 +4449,17 @@ export default function AdminScreen() {
                   <Text style={styles.sectionHeading}>Team Directory</Text>
                   <Text style={styles.sectionSubheading}>Management team and governing board</Text>
                 </View>
-                <TouchableOpacity style={styles.refreshIconBtn} onPress={loadCmsData}>
-                  <Ionicons name="refresh" size={18} color={Colors.forest} />
+                <TouchableOpacity
+                  style={styles.refreshIconBtn}
+                  onPress={loadCmsData}
+                  disabled={cmsLoading}
+                >
+                  <Ionicons
+                    name="refresh"
+                    size={18}
+                    color={Colors.forest}
+                    style={cmsLoading ? { opacity: 0.5 } : {}}
+                  />
                 </TouchableOpacity>
               </View>
 
@@ -5595,6 +6406,560 @@ export default function AdminScreen() {
             </View>
           </View>
         </TouchableOpacity>
+      </Modal>
+
+      {/* VIEW / PREVIEW PUBLICATION MODAL */}
+      <Modal
+        visible={viewPublicationModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => {
+          setViewPublicationModalVisible(false);
+          setSelectedPublicationForView(null);
+        }}
+      >
+        <SafeAreaView style={styles.editModalSafeArea}>
+          <View style={styles.editModalContainer}>
+            {/* Header */}
+            <View style={styles.editModalHeader}>
+              <View style={styles.editModalHeaderLeft}>
+                <View style={[styles.editModalIconWrap, { backgroundColor: '#FEE2E2' }]}>
+                  <Ionicons name="document-text" size={18} color="#DC2626" />
+                </View>
+                <View style={{ flex: 1, marginRight: 8 }}>
+                  <Text style={styles.editModalTitle} numberOfLines={1}>
+                    Publication Preview
+                  </Text>
+                  <Text style={styles.editModalSubtitle} numberOfLines={1}>
+                    {selectedPublicationForView?.category || 'Research Library'}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => {
+                  setViewPublicationModalVisible(false);
+                  setSelectedPublicationForView(null);
+                }}
+                style={styles.modalCloseBtn}
+              >
+                <Ionicons name="close" size={22} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Scrollable Reader Body */}
+            {selectedPublicationForView && (
+              <ScrollView
+                style={styles.editModalScrollView}
+                contentContainerStyle={styles.blogReaderContent}
+                showsVerticalScrollIndicator={false}
+              >
+                {/* Badges Row */}
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 6,
+                    flexWrap: 'wrap',
+                    marginBottom: 12,
+                  }}
+                >
+                  <View style={styles.pubCategoryPill}>
+                    <Text style={styles.pubCategoryPillText}>
+                      {selectedPublicationForView.category || 'Research'}
+                    </Text>
+                  </View>
+                  <View
+                    style={[
+                      styles.blogStatusPill,
+                      selectedPublicationForView.status === 'published'
+                        ? styles.blogStatusPillPublished
+                        : styles.blogStatusPillArchived,
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.blogStatusDot,
+                        {
+                          backgroundColor:
+                            selectedPublicationForView.status === 'published'
+                              ? '#059669'
+                              : '#D97706',
+                        },
+                      ]}
+                    />
+                    <Text
+                      style={[
+                        styles.blogStatusPillText,
+                        {
+                          color:
+                            selectedPublicationForView.status === 'published'
+                              ? '#065F46'
+                              : '#92400E',
+                        },
+                      ]}
+                    >
+                      {selectedPublicationForView.status === 'published' ? 'Published' : 'Archived'}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Title */}
+                <Text style={styles.blogReaderTitle}>{selectedPublicationForView.title}</Text>
+
+                {/* Date & Metadata Card */}
+                <View style={styles.pubDetailMetaBox}>
+                  <View style={styles.pubDetailMetaItem}>
+                    <Ionicons name="calendar-outline" size={15} color="#64748B" />
+                    <Text style={styles.pubDetailMetaLabel}>Published:</Text>
+                    <Text style={styles.pubDetailMetaValue}>
+                      {selectedPublicationForView.published_at
+                        ? new Date(selectedPublicationForView.published_at).toLocaleDateString(
+                            'en-GB',
+                            {
+                              day: 'numeric',
+                              month: 'long',
+                              year: 'numeric',
+                            }
+                          )
+                        : 'Unpublished / Draft'}
+                    </Text>
+                  </View>
+                  <View style={styles.pubDetailMetaItem}>
+                    <Ionicons name="folder-outline" size={15} color="#64748B" />
+                    <Text style={styles.pubDetailMetaLabel}>Category:</Text>
+                    <Text style={styles.pubDetailMetaValue}>
+                      {selectedPublicationForView.category || 'Research'}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* PDF Download Hero Card */}
+                <View style={styles.pubDownloadHeroCard}>
+                  <View style={styles.pubDownloadHeroIconWrap}>
+                    <Ionicons name="document-text" size={26} color="#DC2626" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.pubDownloadHeroTitle} numberOfLines={1}>
+                      {selectedPublicationForView.pdf_original_name || 'Publication Report.pdf'}
+                    </Text>
+                    <Text style={styles.pubDownloadHeroSubtitle}>
+                      Official publication document (PDF)
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.pubDownloadHeroBtn}
+                    onPress={async () => {
+                      const url =
+                        selectedPublicationForView.download_url ||
+                        `https://bdangels.co/api/publications/${selectedPublicationForView.id}/download`;
+                      try {
+                        const canOpen = await Linking.canOpenURL(url);
+                        if (canOpen) {
+                          await Linking.openURL(url);
+                        } else {
+                          Alert.alert('Cannot Open Link', url);
+                        }
+                      } catch {
+                        Linking.openURL(url);
+                      }
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="download" size={15} color="#FFFFFF" />
+                    <Text style={styles.pubDownloadHeroBtnText}>Download</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Summary / Excerpt Section */}
+                <View style={styles.pubSummarySection}>
+                  <Text style={styles.pubSummarySectionTitle}>EXECUTIVE SUMMARY & ABSTRACT</Text>
+                  <Text style={styles.pubSummaryText}>
+                    {selectedPublicationForView.excerpt ||
+                      'No summary or abstract has been provided for this publication.'}
+                  </Text>
+                </View>
+
+                {/* Public Library Notice Box */}
+                <View style={styles.pubPublicNoticeBox}>
+                  <Ionicons name="information-circle-outline" size={20} color="#0A5554" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.pubPublicNoticeTitle}>Research Portal Integration</Text>
+                    <Text style={styles.pubPublicNoticeText}>
+                      When marked as Published, this report is available for investors and founders at bdangels.co/publications.
+                    </Text>
+                  </View>
+                </View>
+              </ScrollView>
+            )}
+
+            {/* Footer Action Bar */}
+            <View style={styles.blogReaderFooter}>
+              <TouchableOpacity
+                style={styles.blogReaderBtnOutline}
+                onPress={() => {
+                  const pub = selectedPublicationForView;
+                  setViewPublicationModalVisible(false);
+                  handleOpenEditPublication(pub);
+                }}
+              >
+                <Ionicons name="create-outline" size={16} color="#0A5554" />
+                <Text style={styles.blogReaderBtnOutlineText}>Edit</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.blogReaderBtnOutline,
+                  selectedPublicationForView?.status === 'published'
+                    ? { borderColor: '#FDE68A' }
+                    : { borderColor: '#A7F3D0' },
+                ]}
+                onPress={() => handleTogglePublicationStatus(selectedPublicationForView)}
+              >
+                <Ionicons
+                  name={
+                    selectedPublicationForView?.status === 'published'
+                      ? 'archive-outline'
+                      : 'checkmark-circle-outline'
+                  }
+                  size={16}
+                  color={
+                    selectedPublicationForView?.status === 'published' ? '#B45309' : '#047857'
+                  }
+                />
+                <Text
+                  style={[
+                    styles.blogReaderBtnOutlineText,
+                    {
+                      color:
+                        selectedPublicationForView?.status === 'published'
+                          ? '#B45309'
+                          : '#047857',
+                    },
+                  ]}
+                >
+                  {selectedPublicationForView?.status === 'published' ? 'Archive' : 'Publish'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.blogReaderBtnClose}
+                onPress={() => {
+                  setViewPublicationModalVisible(false);
+                  setSelectedPublicationForView(null);
+                }}
+              >
+                <Text style={styles.blogReaderBtnCloseText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      {/* CREATE & EDIT PUBLICATION MODAL */}
+      <Modal
+        visible={createPublicationModalVisible || editPublicationModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => {
+          if (!publicationSaving) {
+            setCreatePublicationModalVisible(false);
+            setEditPublicationModalVisible(false);
+            setEditingPublication(null);
+          }
+        }}
+      >
+        <SafeAreaView style={styles.editModalSafeArea}>
+          <View style={styles.editModalContainer}>
+            {/* Header */}
+            <View style={styles.editModalHeader}>
+              <View style={styles.editModalHeaderLeft}>
+                <View style={[styles.editModalIconWrap, { backgroundColor: '#E6F4F1' }]}>
+                  <Ionicons
+                    name={editPublicationModalVisible ? 'create' : 'add-circle'}
+                    size={18}
+                    color="#0A5554"
+                  />
+                </View>
+                <View>
+                  <Text style={styles.editModalTitle}>
+                    {editPublicationModalVisible ? 'Edit Publication' : 'New Publication'}
+                  </Text>
+                  <Text style={styles.editModalSubtitle}>
+                    {editPublicationModalVisible
+                      ? 'Update publication details and document path'
+                      : 'Upload reports and make them available to the public'}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => {
+                  if (!publicationSaving) {
+                    setCreatePublicationModalVisible(false);
+                    setEditPublicationModalVisible(false);
+                    setEditingPublication(null);
+                  }
+                }}
+                style={styles.modalCloseBtn}
+                disabled={publicationSaving}
+              >
+                <Ionicons name="close" size={22} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Scrollable Form Body */}
+            <ScrollView
+              style={styles.editModalScrollView}
+              contentContainerStyle={styles.editModalFormContent}
+              keyboardShouldPersistTaps="handled"
+            >
+              {/* Section 1: Publication Information */}
+              <Text style={styles.formSectionHeader}>PUBLICATION INFORMATION</Text>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>
+                  Publication Title <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={publicationFormData.title}
+                  onChangeText={(val) =>
+                    setPublicationFormData((prev) => ({ ...prev, title: val }))
+                  }
+                  placeholder="e.g. Bangladesh Startup Ecosystem Report 2024–2025"
+                  placeholderTextColor="#94A3B8"
+                  maxLength={255}
+                />
+              </View>
+
+              {/* Category Chips */}
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>
+                  Category <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={{ gap: 6, paddingVertical: 2 }}
+                >
+                  {PUBLICATION_CATEGORIES.map((cat) => (
+                    <TouchableOpacity
+                      key={`pub-cat-chip-${cat}`}
+                      style={[
+                        styles.chipBtnSmall,
+                        publicationFormData.category === cat && styles.chipBtnSmallActive,
+                      ]}
+                      onPress={() =>
+                        setPublicationFormData((prev) => ({ ...prev, category: cat }))
+                      }
+                    >
+                      <Text
+                        style={[
+                          styles.chipBtnSmallText,
+                          publicationFormData.category === cat && styles.chipBtnSmallTextActive,
+                        ]}
+                      >
+                        {cat}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+                <TextInput
+                  style={[styles.fieldInput, { marginTop: 8 }]}
+                  value={publicationFormData.category}
+                  onChangeText={(val) =>
+                    setPublicationFormData((prev) => ({ ...prev, category: val }))
+                  }
+                  placeholder="Or enter custom category"
+                  placeholderTextColor="#94A3B8"
+                  maxLength={100}
+                />
+              </View>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>Summary / Abstract</Text>
+                <TextInput
+                  style={[
+                    styles.fieldInput,
+                    { height: 95, textAlignVertical: 'top', paddingTop: 8 },
+                  ]}
+                  value={publicationFormData.excerpt}
+                  onChangeText={(val) =>
+                    setPublicationFormData((prev) => ({ ...prev, excerpt: val }))
+                  }
+                  placeholder="A short description shown on the public publications page."
+                  placeholderTextColor="#94A3B8"
+                  multiline
+                  maxLength={2000}
+                />
+                <Text style={styles.fieldHint}>
+                  {(publicationFormData.excerpt || '').length}/2000 characters
+                </Text>
+              </View>
+
+              {/* Section 2: PDF Document Details */}
+              <Text style={styles.formSectionHeader}>PDF DOCUMENT DETAILS</Text>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>
+                  PDF Document Name <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={publicationFormData.pdf_original_name}
+                  onChangeText={(val) =>
+                    setPublicationFormData((prev) => ({ ...prev, pdf_original_name: val }))
+                  }
+                  placeholder="e.g. Bangladesh-Startup-Report-2025.pdf"
+                  placeholderTextColor="#94A3B8"
+                />
+                <Text style={styles.fieldHint}>
+                  The display filename presented to users when downloading the PDF.
+                </Text>
+              </View>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>Storage Path / Download URL</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={publicationFormData.pdf_path}
+                  onChangeText={(val) =>
+                    setPublicationFormData((prev) => ({ ...prev, pdf_path: val }))
+                  }
+                  placeholder="e.g. publications/report.pdf or https://..."
+                  placeholderTextColor="#94A3B8"
+                  autoCapitalize="none"
+                />
+                <Text style={styles.fieldHint}>
+                  Server storage location or remote file URL for downloading.
+                </Text>
+              </View>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>Publication Date</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={publicationFormData.published_at}
+                  onChangeText={(val) =>
+                    setPublicationFormData((prev) => ({ ...prev, published_at: val }))
+                  }
+                  placeholder="YYYY-MM-DD (e.g. 2025-06-15)"
+                  placeholderTextColor="#94A3B8"
+                />
+                <Text style={styles.fieldHint}>
+                  If blank when publishing, the current timestamp will be used automatically.
+                </Text>
+              </View>
+
+              {/* Section 3: Visibility Status */}
+              <Text style={styles.formSectionHeader}>VISIBILITY & STATUS</Text>
+
+              <View style={styles.formField}>
+                <View style={styles.chipButtonGroup}>
+                  {[
+                    { key: 'published', label: 'Published (Public)' },
+                    { key: 'archived', label: 'Archived (Hidden)' },
+                  ].map((s) => (
+                    <TouchableOpacity
+                      key={`pub-status-opt-${s.key}`}
+                      style={[
+                        styles.chipBtn,
+                        publicationFormData.status === s.key && styles.chipBtnActive,
+                      ]}
+                      onPress={() =>
+                        setPublicationFormData((prev) => ({ ...prev, status: s.key }))
+                      }
+                    >
+                      <Text
+                        style={[
+                          styles.chipBtnText,
+                          publicationFormData.status === s.key && styles.chipBtnTextActive,
+                        ]}
+                      >
+                        {s.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            </ScrollView>
+
+            {/* Footer Buttons */}
+            <View style={styles.editModalFooter}>
+              <TouchableOpacity
+                style={styles.editModalCancelBtn}
+                onPress={() => {
+                  setCreatePublicationModalVisible(false);
+                  setEditPublicationModalVisible(false);
+                  setEditingPublication(null);
+                }}
+                disabled={publicationSaving}
+              >
+                <Text style={styles.editModalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.editModalSaveBtn}
+                onPress={
+                  editPublicationModalVisible
+                    ? handleSaveEditPublication
+                    : handleSaveCreatePublication
+                }
+                disabled={publicationSaving}
+              >
+                {publicationSaving ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.editModalSaveBtnText}>
+                    {editPublicationModalVisible ? 'Save Changes' : 'Publish Report'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      {/* DELETE PUBLICATION CONFIRMATION MODAL */}
+      <Modal
+        visible={deletePublicationModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() =>
+          !isDeletingPublication && setDeletePublicationModalVisible(false)
+        }
+      >
+        <View style={styles.deleteModalOverlay}>
+          <View style={styles.deleteModalBox}>
+            <View style={[styles.deleteModalIconWrap, { backgroundColor: '#FEE2E2' }]}>
+              <Ionicons name="trash-outline" size={26} color="#DC2626" />
+            </View>
+            <Text style={styles.deleteModalTitle}>Delete Publication?</Text>
+            <Text style={styles.deleteModalMessage}>
+              Are you sure you want to permanently delete &ldquo;
+              {selectedPublicationForDelete?.title}&rdquo;? It will be removed from the public research library.
+            </Text>
+            <View style={styles.deleteModalBtnRow}>
+              <TouchableOpacity
+                style={styles.deleteModalCancelBtn}
+                onPress={() => setDeletePublicationModalVisible(false)}
+                disabled={isDeletingPublication}
+              >
+                <Text style={styles.deleteModalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.deleteModalConfirmBtn}
+                onPress={handleConfirmDeletePublication}
+                disabled={isDeletingPublication}
+              >
+                {isDeletingPublication ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.deleteModalConfirmBtnText}>Delete Publication</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
       </Modal>
     </SafeAreaView>
   );
@@ -8109,6 +9474,200 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: '#64748B',
     lineHeight: 14,
+    marginTop: 2,
+  },
+  // Publications Styles
+  pubCard: {
+    backgroundColor: '#FFFFFF',
+    padding: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  pubCategoryPill: {
+    backgroundColor: '#EEF2FF',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: Radii.pill,
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+  },
+  pubCategoryPillText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#4338CA',
+  },
+  pubDatePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: Radii.pill,
+  },
+  pubDateText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  pubPdfBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginTop: 10,
+    marginBottom: 12,
+    gap: 10,
+  },
+  pubPdfIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: '#FEE2E2',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pubPdfName: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#1E293B',
+  },
+  pubPdfActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#E6F4F1',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#B4E6DA',
+  },
+  pubPdfActionText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0A5554',
+  },
+  pubDetailMetaBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    gap: 8,
+  },
+  pubDetailMetaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  pubDetailMetaLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  pubDetailMetaValue: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#0F172A',
+  },
+  pubDownloadHeroCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 16,
+    gap: 12,
+  },
+  pubDownloadHeroIconWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+  },
+  pubDownloadHeroTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#991B1B',
+  },
+  pubDownloadHeroSubtitle: {
+    fontSize: 11,
+    color: '#B91C1C',
+    marginTop: 2,
+  },
+  pubDownloadHeroBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#DC2626',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  pubDownloadHeroBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  pubSummarySection: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  pubSummarySectionTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 8,
+    letterSpacing: 0.3,
+  },
+  pubSummaryText: {
+    fontSize: 13,
+    lineHeight: 20,
+    color: '#334155',
+  },
+  pubPublicNoticeBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 20,
+    gap: 10,
+  },
+  pubPublicNoticeTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#166534',
+  },
+  pubPublicNoticeText: {
+    fontSize: 11,
+    lineHeight: 16,
+    color: '#15803D',
     marginTop: 2,
   },
 });

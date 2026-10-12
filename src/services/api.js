@@ -614,6 +614,143 @@ export async function deleteAdminBlog(token, blogId) {
   return { ok: false, message: 'Could not delete blog post.' };
 }
 
+/**
+ * Fetch Paginated Admin Publications from GET /api/admin/publications
+ */
+export async function fetchAdminPublications(
+  token,
+  { status = '', search = '', page = 1, per_page = 15 } = {}
+) {
+  try {
+    const params = new URLSearchParams();
+    if (status && status !== 'all') params.append('status', status);
+    if (search) params.append('search', search);
+    if (page) params.append('page', String(page));
+    if (per_page) params.append('per_page', String(per_page));
+
+    const path = `/admin/publications${params.toString() ? '?' + params.toString() : ''}`;
+    const res = await fetchAdminWithFallback(path, token);
+    if (res && res.ok) {
+      const json = await res.json();
+      return json;
+    }
+  } catch (err) {
+    console.log('Admin publications fetch error:', err);
+  }
+  return null;
+}
+
+/**
+ * Fetch single Admin Publication by ID from GET /api/admin/publications/{id}
+ */
+export async function fetchAdminPublication(token, publicationId) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/publications/${publicationId}`, token);
+    if (res && res.ok) {
+      const json = await res.json();
+      return json.data || json;
+    }
+  } catch (err) {
+    console.log('Admin publication show error:', err);
+  }
+  return null;
+}
+
+/**
+ * Create new publication via POST /api/admin/publications
+ */
+export async function createAdminPublication(token, publicationData) {
+  try {
+    const res = await fetchAdminWithFallback('/admin/publications', token, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(publicationData),
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        data: json.data || null,
+        message: json.message || '',
+        errors: json.errors || null,
+      };
+    }
+  } catch (err) {
+    console.log('Admin create publication error:', err);
+  }
+  return { ok: false, message: 'Could not create publication.' };
+}
+
+/**
+ * Update publication via POST/PUT /api/admin/publications/{id}
+ */
+export async function updateAdminPublication(token, publicationId, publicationData) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/publications/${publicationId}`, token, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(publicationData),
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        data: json.data || null,
+        message: json.message || '',
+        errors: json.errors || null,
+      };
+    }
+  } catch (err) {
+    console.log('Admin update publication error:', err);
+  }
+  return { ok: false, message: 'Could not update publication.' };
+}
+
+/**
+ * Toggle/Update publication status via PATCH /api/admin/publications/{id}/status
+ */
+export async function updateAdminPublicationStatus(token, publicationId, status) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/publications/${publicationId}/status`, token, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        data: json.data || null,
+        message: json.message || '',
+      };
+    }
+  } catch (err) {
+    console.log('Admin update publication status error:', err);
+  }
+  return { ok: false, message: 'Could not update publication status.' };
+}
+
+/**
+ * Delete publication via DELETE /api/admin/publications/{id}
+ */
+export async function deleteAdminPublication(token, publicationId) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/publications/${publicationId}`, token, {
+      method: 'DELETE',
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        message: json.message || 'Publication deleted successfully.',
+      };
+    }
+  } catch (err) {
+    console.log('Admin delete publication error:', err);
+  }
+  return { ok: false, message: 'Could not delete publication.' };
+}
+
 
 // Embedded fallback data directly from live Laravel backend for 100% resilient rendering
 export const FALLBACK_HOME_DATA = {
