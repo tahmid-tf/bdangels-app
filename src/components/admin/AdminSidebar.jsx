@@ -99,7 +99,7 @@ export default function AdminSidebar({
             color={activeView === 'notifications' ? '#FFFFFF' : 'rgba(239, 252, 246, 0.75)'}
           />
           <Text style={[styles.navText, activeView === 'notifications' && styles.navTextActive]}>
-            Notifications
+            Notifications{unreadNotificationsCount > 0 ? ` (${unreadNotificationsCount})` : ''}
           </Text>
           {unreadNotificationsCount > 0 && (
             <View style={styles.badgePill}>

@@ -49,6 +49,7 @@ import {
   fetchAdminAngelAcademy,
   fetchAdminNotifications,
   markAdminNotificationsViewed,
+  toggleAdminNotificationViewed,
   fetchAdminSubscriptions,
   updateAdminSubscriptionTiers,
   fetchAdminInvestorInvestments,
@@ -107,12 +108,12 @@ import {
   deleteAdminTeamMember,
 } from '../services/api';
 
-export function getViewDisplayName(key) {
+export function getViewDisplayName(key, unreadCount = 0) {
   switch (key) {
     case 'overview':
       return 'Platform Overview';
     case 'notifications':
-      return 'Activity Notifications';
+      return unreadCount > 0 ? `Activity Notifications (${unreadCount})` : 'Activity Notifications';
     case 'members':
       return 'Member Directory';
     case 'deals':
@@ -354,6 +355,7 @@ export default function AdminScreen() {
   const [unreadNotificationsCount, setUnreadNotificationsCount] = useState(0);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [notificationFilter, setNotificationFilter] = useState('all'); // 'all' | 'unread'
+  const [togglingNotificationId, setTogglingNotificationId] = useState(null);
 
   // Subscriptions State
   const [subscriptionsData, setSubscriptionsData] = useState(null);
@@ -999,6 +1001,48 @@ export default function AdminScreen() {
     } catch (err) {
       console.log('Error marking all notifications viewed:', err);
     }
+  };
+
+  // Toggle individual notification between Viewed and Unseen
+  const handleToggleNotificationViewed = async (item) => {
+    if (!authToken || !item) return;
+    const notifId = item.id;
+    setTogglingNotificationId(notifId);
+
+    const isCurrentlyViewed = Boolean(item.viewed_at);
+    const nextViewed = !isCurrentlyViewed;
+    const nowIso = new Date().toISOString();
+    const nextViewedAt = nextViewed ? nowIso : null;
+
+    // Optimistic local state update
+    setNotifications((prev) =>
+      prev.map((n) => (n.id === notifId ? { ...n, viewed_at: nextViewedAt } : n))
+    );
+    setUnreadNotificationsCount((prev) => {
+      const updated = nextViewed ? Math.max(0, prev - 1) : prev + 1;
+      return updated;
+    });
+
+    try {
+      const res = await toggleAdminNotificationViewed(authToken, notifId, item);
+      if (res && res.ok && res.data) {
+        const serverViewed = res.data.viewed !== undefined ? Boolean(res.data.viewed) : nextViewed;
+        const serverViewedAt = serverViewed ? (res.data.viewed_at || nowIso) : null;
+        setNotifications((prev) =>
+          prev.map((n) => (n.id === notifId ? { ...n, viewed_at: serverViewedAt } : n))
+        );
+      }
+    } catch (err) {
+      console.log('Error toggling notification viewed status:', err);
+    } finally {
+      setTogglingNotificationId(null);
+    }
+  };
+
+  // Mark all notifications as unseen / unread
+  const handleMarkAllNotificationsUnseen = () => {
+    setNotifications((prev) => prev.map((n) => ({ ...n, viewed_at: null })));
+    setUnreadNotificationsCount(notifications.length);
   };
 
   // Fetch Subscriptions
@@ -6256,7 +6300,7 @@ export default function AdminScreen() {
               Hi {currentUser?.name ? currentUser.name.split(' ')[0] : 'Admin'},
             </Text>
             <Text style={styles.greetingSubtitle} numberOfLines={1}>
-              {getViewDisplayName(activeTab)}
+              {getViewDisplayName(activeTab, unreadNotificationsCount)}
             </Text>
           </View>
         </View>
@@ -6266,7 +6310,7 @@ export default function AdminScreen() {
           <TouchableOpacity
             style={styles.notificationBellBtn}
             onPress={() => handleTabChange('notifications')}
-            accessibilityLabel="View Activity Notifications"
+            accessibilityLabel={`Activity Notifications${unreadNotificationsCount > 0 ? ` (${unreadNotificationsCount} unread)` : ''}`}
             activeOpacity={0.8}
           >
             <Ionicons
@@ -6315,7 +6359,12 @@ export default function AdminScreen() {
 
           {[
             { key: 'overview', label: 'Dashboard', icon: 'grid' },
-            { key: 'notifications', label: 'Notifications', icon: 'notifications', badge: unreadNotificationsCount },
+            {
+              key: 'notifications',
+              label: unreadNotificationsCount > 0 ? `Notifications (${unreadNotificationsCount})` : 'Notifications',
+              icon: 'notifications',
+              badge: unreadNotificationsCount,
+            },
             { key: 'members', label: 'Members', icon: 'people' },
             { key: 'deals', label: 'Deals', icon: 'briefcase' },
             { key: 'founder-pitches', label: 'Pitches', icon: 'paper-plane' },
@@ -8074,28 +8123,30 @@ export default function AdminScreen() {
           {activeTab === 'notifications' && (
             <View style={styles.tabContent}>
               <View style={styles.sectionHeaderRow}>
-                <View>
+                <View style={{ flex: 1, marginRight: 12 }}>
                   <Text style={styles.sectionHeading}>Member Activity Notifications</Text>
-                  <Text style={styles.sectionSubheading}>
+                  <Text style={styles.sectionSubheading} numberOfLines={2}>
                     Real-time investment commitments and expressions of interest
                   </Text>
                 </View>
                 <TouchableOpacity
                   style={styles.refreshIconBtn}
                   onPress={() => loadNotifications(authToken)}
+                  accessibilityLabel="Reset and refresh notifications"
+                  activeOpacity={0.7}
                 >
                   <Ionicons name="refresh" size={18} color={Colors.forest} />
                 </TouchableOpacity>
               </View>
 
-              {/* Action bar with unread count and Mark All as Read button */}
+              {/* Action bar with unread count and Mark All as Read / Unseen button */}
               <View style={styles.notifActionBar}>
                 <View style={styles.notifMetaPill}>
                   <Text style={styles.notifMetaPillText}>
                     {unreadNotificationsCount} Unread • {notifications.length} Total
                   </Text>
                 </View>
-                {unreadNotificationsCount > 0 && (
+                {unreadNotificationsCount > 0 ? (
                   <TouchableOpacity
                     style={styles.markReadBtn}
                     onPress={handleMarkAllNotificationsRead}
@@ -8104,6 +8155,17 @@ export default function AdminScreen() {
                     <Ionicons name="checkmark-done" size={15} color="#0A5554" />
                     <Text style={styles.markReadBtnText}>Mark all as read</Text>
                   </TouchableOpacity>
+                ) : (
+                  notifications.length > 0 && (
+                    <TouchableOpacity
+                      style={[styles.markReadBtn, { backgroundColor: '#F1F5F9' }]}
+                      onPress={handleMarkAllNotificationsUnseen}
+                      activeOpacity={0.8}
+                    >
+                      <Ionicons name="eye-off-outline" size={14} color="#64748B" />
+                      <Text style={[styles.markReadBtnText, { color: '#64748B' }]}>Mark all as unseen</Text>
+                    </TouchableOpacity>
+                  )
                 )}
               </View>
 
@@ -8160,6 +8222,7 @@ export default function AdminScreen() {
                         const userName = item.user?.name || item.investor_name || 'Member';
                         const userEmail = item.user?.email || item.investor_email || '';
                         const dealTitle = item.deal?.title || item.deal_name || 'Syndicate Deal';
+                        const isToggling = togglingNotificationId === item.id;
                         const dateFormatted = item.created_at
                           ? new Date(item.created_at).toLocaleDateString('en-US', {
                               month: 'short',
@@ -8173,7 +8236,10 @@ export default function AdminScreen() {
                         return (
                           <View
                             key={`notif-${item.id || idx}`}
-                            style={[styles.notificationCard, isUnread && styles.notificationCardUnread]}
+                            style={[
+                              styles.notificationCard,
+                              isUnread && styles.notificationCardUnread,
+                            ]}
                           >
                             <View style={styles.notificationCardTop}>
                               <View style={styles.notificationAvatar}>
@@ -8194,7 +8260,28 @@ export default function AdminScreen() {
                                   </Text>
                                 )}
                               </View>
-                              <Text style={styles.notificationDate}>{dateFormatted}</Text>
+
+                              {/* Viewed / Unseen Status Pill */}
+                              <View
+                                style={[
+                                  styles.notifStatusPill,
+                                  isUnread ? styles.notifStatusPillUnseen : styles.notifStatusPillViewed,
+                                ]}
+                              >
+                                <Ionicons
+                                  name={isUnread ? 'eye-off-outline' : 'checkmark-circle'}
+                                  size={11}
+                                  color={isUnread ? '#B45309' : '#065F46'}
+                                />
+                                <Text
+                                  style={[
+                                    styles.notifStatusPillText,
+                                    isUnread ? styles.notifStatusPillTextUnseen : styles.notifStatusPillTextViewed,
+                                  ]}
+                                >
+                                  {isUnread ? 'Unseen' : 'Viewed'}
+                                </Text>
+                              </View>
                             </View>
 
                             <View style={styles.notificationBody}>
@@ -8209,6 +8296,44 @@ export default function AdminScreen() {
                                   </Text>
                                 </View>
                               )}
+                            </View>
+
+                            {/* Card Footer: Timestamp and Viewed/Unseen Toggle Button */}
+                            <View style={styles.notifCardFooter}>
+                              <View style={styles.notifDateRow}>
+                                <Ionicons name="time-outline" size={12} color={Colors.muted} />
+                                <Text style={styles.notificationDate}>{dateFormatted}</Text>
+                              </View>
+
+                              <TouchableOpacity
+                                style={[
+                                  styles.notifToggleBtn,
+                                  isUnread ? styles.notifToggleBtnMarkViewed : styles.notifToggleBtnMarkUnseen,
+                                ]}
+                                onPress={() => handleToggleNotificationViewed(item)}
+                                disabled={isToggling}
+                                activeOpacity={0.7}
+                              >
+                                {isToggling ? (
+                                  <ActivityIndicator size="small" color={isUnread ? '#0A5554' : '#64748B'} />
+                                ) : (
+                                  <>
+                                    <Ionicons
+                                      name={isUnread ? 'checkmark-done-circle-outline' : 'eye-off-outline'}
+                                      size={14}
+                                      color={isUnread ? '#0A5554' : '#64748B'}
+                                    />
+                                    <Text
+                                      style={[
+                                        styles.notifToggleBtnText,
+                                        isUnread ? styles.notifToggleBtnTextMarkViewed : styles.notifToggleBtnTextMarkUnseen,
+                                      ]}
+                                    >
+                                      {isUnread ? 'Mark Viewed' : 'Mark Unseen'}
+                                    </Text>
+                                  </>
+                                )}
+                              </TouchableOpacity>
                             </View>
                           </View>
                         );
@@ -22850,25 +22975,29 @@ const styles = StyleSheet.create({
     backgroundColor: '#E6F4F1',
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'visible',
   },
   headerUnreadBadge: {
     position: 'absolute',
-    top: -2,
-    right: -2,
-    minWidth: 17,
-    height: 17,
-    borderRadius: 8.5,
+    top: -4,
+    right: -4,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
     backgroundColor: '#EF4444',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 3,
     borderWidth: 1.5,
     borderColor: '#FFFFFF',
+    zIndex: 10,
+    elevation: 4,
   },
   headerUnreadBadgeText: {
     color: '#FFFFFF',
-    fontSize: 9,
-    fontWeight: '800',
+    fontSize: 9.5,
+    fontWeight: '900',
+    textAlign: 'center',
   },
   headerIconBtn: {
     width: 36,
@@ -23920,6 +24049,76 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: '#0369A1',
+  },
+  notifStatusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: Radii.pill,
+    borderWidth: 1,
+  },
+  notifStatusPillViewed: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
+  notifStatusPillUnseen: {
+    backgroundColor: '#FEF3C7',
+    borderColor: '#FDE68A',
+  },
+  notifStatusPillText: {
+    fontSize: 10,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  notifStatusPillTextViewed: {
+    color: '#065F46',
+  },
+  notifStatusPillTextUnseen: {
+    color: '#B45309',
+  },
+  notifCardFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 10,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  notifDateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  notifToggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: Radii.sm,
+    borderWidth: 1,
+  },
+  notifToggleBtnMarkViewed: {
+    backgroundColor: '#E6F4F1',
+    borderColor: '#A7F3D0',
+  },
+  notifToggleBtnMarkUnseen: {
+    backgroundColor: '#F8FAFC',
+    borderColor: '#E2E8F0',
+  },
+  notifToggleBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  notifToggleBtnTextMarkViewed: {
+    color: '#0A5554',
+  },
+  notifToggleBtnTextMarkUnseen: {
+    color: '#64748B',
   },
 
   // Subscriptions & Tiers styles
