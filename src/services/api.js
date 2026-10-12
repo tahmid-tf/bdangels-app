@@ -260,6 +260,31 @@ export async function updateAdminMemberMode(token, userId, mode) {
 }
 
 /**
+ * Create a new member via POST /api/admin/members
+ */
+export async function createAdminMember(token, memberData) {
+  try {
+    const res = await fetchAdminWithFallback('/admin/members', token, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(memberData),
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        data: json.data || null,
+        message: json.message || '',
+        errors: json.errors || null,
+      };
+    }
+  } catch (err) {
+    console.log('Admin create member error:', err);
+  }
+  return { ok: false, message: 'Could not create member.' };
+}
+
+/**
  * Update member full details via POST /api/admin/members/{userId}
  */
 export async function updateAdminMember(token, userId, memberData) {

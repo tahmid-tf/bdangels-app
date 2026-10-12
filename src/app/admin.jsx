@@ -22,6 +22,7 @@ import AdminSidebar from '../components/admin/AdminSidebar';
 import {
   fetchAdminDashboard,
   fetchAdminMembers,
+  createAdminMember,
   approveAdminMember,
   updateAdminMemberStatus,
   updateAdminMemberMode,
@@ -191,6 +192,29 @@ export default function AdminScreen() {
     password: '',
   });
   const [editSaving, setEditSaving] = useState(false);
+
+  // Add Member Modal State
+  const [addModalVisible, setAddModalVisible] = useState(false);
+  const [addSaving, setAddSaving] = useState(false);
+  const [showAddPassword, setShowAddPassword] = useState(false);
+  const [addFormData, setAddFormData] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    password: '',
+    password_confirmation: '',
+    gender: 'male',
+    primary_country: 'Bangladesh',
+    organization: '',
+    designation: '',
+    address: '',
+    preference_sector: '',
+    account_status: 'free',
+    status: 'active',
+    role: 'investor',
+    is_approved: true,
+    verify_email: true,
+  });
 
   // Deals Tab State
   const [deals, setDeals] = useState([]);
@@ -837,6 +861,127 @@ export default function AdminScreen() {
     }
   };
 
+  // Add Member Handlers
+  const handleOpenAddModal = () => {
+    setAddFormData({
+      name: '',
+      email: '',
+      phone: '',
+      password: '',
+      password_confirmation: '',
+      gender: 'male',
+      primary_country: 'Bangladesh',
+      organization: '',
+      designation: '',
+      address: '',
+      preference_sector: '',
+      account_status: 'free',
+      status: 'active',
+      role: 'investor',
+      is_approved: true,
+      verify_email: true,
+    });
+    setShowAddPassword(false);
+    setAddModalVisible(true);
+  };
+
+  const handleSaveAddMember = async () => {
+    if (!authToken) return;
+    if (!addFormData.name.trim()) {
+      Alert.alert('Validation Error', 'Full Name is required.');
+      return;
+    }
+    if (!addFormData.email.trim()) {
+      Alert.alert('Validation Error', 'Email address is required.');
+      return;
+    }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(addFormData.email.trim())) {
+      Alert.alert('Validation Error', 'Please enter a valid email address.');
+      return;
+    }
+    if (!addFormData.password || addFormData.password.length < 8) {
+      Alert.alert('Validation Error', 'Password must be at least 8 characters long.');
+      return;
+    }
+    if (
+      addFormData.password_confirmation &&
+      addFormData.password !== addFormData.password_confirmation
+    ) {
+      Alert.alert('Validation Error', 'Passwords do not match.');
+      return;
+    }
+
+    setAddSaving(true);
+    try {
+      const payload = {
+        name: addFormData.name.trim(),
+        email: addFormData.email.trim(),
+        phone: addFormData.phone.trim(),
+        password: addFormData.password,
+        gender: addFormData.gender,
+        primary_country: addFormData.primary_country,
+        organization: addFormData.organization.trim(),
+        company_name: addFormData.organization.trim(),
+        designation: addFormData.designation.trim(),
+        address: addFormData.address.trim(),
+        preference_sector: addFormData.preference_sector.trim(),
+        role: addFormData.role,
+        account_status: addFormData.account_status,
+        status: addFormData.status,
+        is_approved: Boolean(addFormData.is_approved),
+        verify_email: Boolean(addFormData.verify_email),
+      };
+
+      const res = await createAdminMember(authToken, payload);
+      if (res.ok) {
+        // Prepend new member in-place with zero flicker
+        const createdUser = res.data || {
+          id: Date.now(),
+          ...payload,
+          is_email_verified: Boolean(payload.verify_email),
+          tier_name: payload.account_status.charAt(0).toUpperCase() + payload.account_status.slice(1),
+        };
+        setMembers((prev) => [createdUser, ...prev]);
+        setMemberPagination((prev) => ({
+          ...prev,
+          total: (prev.total || 0) + 1,
+          to: (prev.to || 0) + 1,
+        }));
+        setMemberCounts((prev) => ({
+          ...prev,
+          all: (prev.all || 0) + 1,
+          active: payload.status === 'active' && payload.is_approved ? (prev.active || 0) + 1 : (prev.active || 0),
+          inactive: payload.status === 'inactive' ? (prev.inactive || 0) + 1 : (prev.inactive || 0),
+          pending: !payload.is_approved ? (prev.pending || 0) + 1 : (prev.pending || 0),
+        }));
+
+        setAddModalVisible(false);
+        Alert.alert('Success', `Member "${payload.name}" has been created successfully.`);
+
+        // Silent background sync
+        loadMembers(
+          authToken,
+          memberSearch,
+          memberStatusFilter,
+          1,
+          { silent: true }
+        );
+        loadDashboard(authToken);
+      } else {
+        const errorText = res.errors
+          ? Object.values(res.errors).flat().join('\n')
+          : res.message || 'Could not create member.';
+        Alert.alert('Creation Failed', errorText);
+      }
+    } catch (err) {
+      console.log('Error creating member:', err);
+      Alert.alert('Error', 'An unexpected error occurred while creating member.');
+    } finally {
+      setAddSaving(false);
+    }
+  };
+
   // Handle Logout
   const handleLogout = () => {
     Alert.alert('Sign Out', 'Are you sure you want to log out of the admin panel?', [
@@ -1020,11 +1165,23 @@ export default function AdminScreen() {
                 <View style={styles.quickActions}>
                   <TouchableOpacity
                     style={styles.quickActionBtnPrimary}
+                    onPress={() => {
+                      handleTabChange('members');
+                      setTimeout(() => handleOpenAddModal(), 200);
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="person-add" size={15} color="#FFFFFF" />
+                    <Text style={styles.quickActionBtnPrimaryText}>+ Add Member</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.quickActionBtnSecondary}
                     onPress={() => handleTabChange('members')}
                     activeOpacity={0.8}
                   >
-                    <Ionicons name="person-add-outline" size={15} color="#FFFFFF" />
-                    <Text style={styles.quickActionBtnPrimaryText}>Manage Members</Text>
+                    <Ionicons name="people-outline" size={15} color={Colors.forest} />
+                    <Text style={styles.quickActionBtnSecondaryText}>Directory</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
@@ -1291,7 +1448,7 @@ export default function AdminScreen() {
             <View style={styles.tabContent}>
               {/* Header with Title and Pagination Summary */}
               <View style={styles.sectionHeaderRow}>
-                <View style={{ flex: 1 }}>
+                <View style={{ flex: 1, marginRight: 8 }}>
                   <Text style={styles.sectionHeading}>Member Management</Text>
                   <Text style={styles.sectionSubheading}>
                     {memberPagination.total > 0
@@ -1299,18 +1456,28 @@ export default function AdminScreen() {
                       : 'Directory of angel investors, access tiers & statuses'}
                   </Text>
                 </View>
-                <TouchableOpacity
-                  style={styles.refreshIconBtn}
-                  onPress={() => loadMembers(authToken, memberSearch, memberStatusFilter, memberPagination.currentPage)}
-                  disabled={membersLoading}
-                >
-                  <Ionicons
-                    name="refresh"
-                    size={18}
-                    color={Colors.forest}
-                    style={membersLoading ? { opacity: 0.5 } : {}}
-                  />
-                </TouchableOpacity>
+                <View style={styles.sectionHeaderActions}>
+                  <TouchableOpacity
+                    style={styles.addMemberBtn}
+                    onPress={handleOpenAddModal}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="person-add" size={14} color="#FFFFFF" />
+                    <Text style={styles.addMemberBtnText}>Add Member</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.refreshIconBtn}
+                    onPress={() => loadMembers(authToken, memberSearch, memberStatusFilter, memberPagination.currentPage)}
+                    disabled={membersLoading}
+                  >
+                    <Ionicons
+                      name="refresh"
+                      size={18}
+                      color={Colors.forest}
+                      style={membersLoading ? { opacity: 0.5 } : {}}
+                    />
+                  </TouchableOpacity>
+                </View>
               </View>
 
               {/* Search Box */}
@@ -1405,6 +1572,14 @@ export default function AdminScreen() {
                   <Text style={styles.emptyText}>
                     No members match your current search query or filter scope.
                   </Text>
+                  <TouchableOpacity
+                    style={styles.emptyAddBtn}
+                    onPress={handleOpenAddModal}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="person-add" size={15} color="#FFFFFF" />
+                    <Text style={styles.emptyAddBtnText}>Add New Member</Text>
+                  </TouchableOpacity>
                 </View>
               ) : (
                 <View style={styles.cardsList}>
@@ -3461,6 +3636,408 @@ export default function AdminScreen() {
           </View>
         </SafeAreaView>
       </Modal>
+
+      {/* ADD MEMBER MODAL */}
+      <Modal
+        visible={addModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => !addSaving && setAddModalVisible(false)}
+      >
+        <SafeAreaView style={styles.editModalSafeArea}>
+          <View style={styles.editModalContainer}>
+            {/* Header */}
+            <View style={styles.editModalHeader}>
+              <View style={styles.editModalHeaderLeft}>
+                <View style={[styles.editModalIconWrap, { backgroundColor: '#E6F4F1' }]}>
+                  <Ionicons name="person-add" size={18} color="#0A5554" />
+                </View>
+                <View>
+                  <Text style={styles.editModalTitle}>Add New Member</Text>
+                  <Text style={styles.editModalSubtitle}>
+                    Create an investor account in Bangladesh Angels
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => !addSaving && setAddModalVisible(false)}
+                style={styles.modalCloseBtn}
+                disabled={addSaving}
+              >
+                <Ionicons name="close" size={22} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Scrollable Form Body */}
+            <ScrollView
+              style={styles.editModalScrollView}
+              contentContainerStyle={styles.editModalFormContent}
+              keyboardShouldPersistTaps="handled"
+            >
+              {/* Section 1: Basic & Contact */}
+              <Text style={styles.formSectionHeader}>BASIC & CONTACT DETAILS</Text>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>
+                  Full Name <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={addFormData.name}
+                  onChangeText={(val) => setAddFormData((prev) => ({ ...prev, name: val }))}
+                  placeholder="e.g. Tanveer Islam"
+                  placeholderTextColor="#94A3B8"
+                />
+              </View>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>
+                  Email Address <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={addFormData.email}
+                  onChangeText={(val) => setAddFormData((prev) => ({ ...prev, email: val }))}
+                  placeholder="e.g. tanveer@example.com"
+                  placeholderTextColor="#94A3B8"
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                />
+              </View>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>Phone / WhatsApp</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={addFormData.phone}
+                  onChangeText={(val) => setAddFormData((prev) => ({ ...prev, phone: val }))}
+                  placeholder="e.g. +8801712345678"
+                  placeholderTextColor="#94A3B8"
+                  keyboardType="phone-pad"
+                />
+              </View>
+
+              {/* Password & Confirm */}
+              <View style={styles.formField}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={styles.fieldLabel}>
+                    Password <Text style={styles.requiredStar}>*</Text>
+                  </Text>
+                  <TouchableOpacity onPress={() => setShowAddPassword((prev) => !prev)}>
+                    <Text style={{ fontSize: 12, color: Colors.forest, fontWeight: '600' }}>
+                      {showAddPassword ? 'Hide' : 'Show'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={addFormData.password}
+                  onChangeText={(val) => setAddFormData((prev) => ({ ...prev, password: val }))}
+                  placeholder="At least 8 characters"
+                  placeholderTextColor="#94A3B8"
+                  secureTextEntry={!showAddPassword}
+                />
+              </View>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>
+                  Confirm Password <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={addFormData.password_confirmation}
+                  onChangeText={(val) =>
+                    setAddFormData((prev) => ({ ...prev, password_confirmation: val }))
+                  }
+                  placeholder="Re-type password"
+                  placeholderTextColor="#94A3B8"
+                  secureTextEntry={!showAddPassword}
+                />
+              </View>
+
+              {/* Gender Chips */}
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>Gender</Text>
+                <View style={styles.chipButtonGroup}>
+                  {['male', 'female', 'other'].map((g) => (
+                    <TouchableOpacity
+                      key={`add-gender-${g}`}
+                      style={[
+                        styles.chipBtn,
+                        addFormData.gender === g && styles.chipBtnActive,
+                      ]}
+                      onPress={() => setAddFormData((prev) => ({ ...prev, gender: g }))}
+                    >
+                      <Text
+                        style={[
+                          styles.chipBtnText,
+                          addFormData.gender === g && styles.chipBtnTextActive,
+                        ]}
+                      >
+                        {g.charAt(0).toUpperCase() + g.slice(1)}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
+              {/* Country Selection Chips */}
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>Primary Country</Text>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={{ gap: 6, paddingVertical: 2 }}
+                >
+                  {COUNTRIES_LIST.map((c) => (
+                    <TouchableOpacity
+                      key={`add-country-${c}`}
+                      style={[
+                        styles.chipBtnSmall,
+                        addFormData.primary_country === c && styles.chipBtnSmallActive,
+                      ]}
+                      onPress={() =>
+                        setAddFormData((prev) => ({ ...prev, primary_country: c }))
+                      }
+                    >
+                      <Text
+                        style={[
+                          styles.chipBtnSmallText,
+                          addFormData.primary_country === c && styles.chipBtnSmallTextActive,
+                        ]}
+                      >
+                        {c}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+
+              {/* Section 2: Professional Details */}
+              <Text style={styles.formSectionHeader}>PROFESSIONAL & BILLING DETAILS</Text>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>Organization / Company</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={addFormData.organization}
+                  onChangeText={(val) =>
+                    setAddFormData((prev) => ({ ...prev, organization: val }))
+                  }
+                  placeholder="e.g. Apex Ventures, Robi"
+                  placeholderTextColor="#94A3B8"
+                />
+              </View>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>Designation / Title</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={addFormData.designation}
+                  onChangeText={(val) =>
+                    setAddFormData((prev) => ({ ...prev, designation: val }))
+                  }
+                  placeholder="e.g. Partner, Director"
+                  placeholderTextColor="#94A3B8"
+                />
+              </View>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>Billing / Office Address</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={addFormData.address}
+                  onChangeText={(val) =>
+                    setAddFormData((prev) => ({ ...prev, address: val }))
+                  }
+                  placeholder="e.g. Gulshan-2, Dhaka"
+                  placeholderTextColor="#94A3B8"
+                />
+              </View>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>Sector Preference</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={addFormData.preference_sector}
+                  onChangeText={(val) =>
+                    setAddFormData((prev) => ({ ...prev, preference_sector: val }))
+                  }
+                  placeholder="e.g. Fintech, Edtech, SaaS, AI"
+                  placeholderTextColor="#94A3B8"
+                />
+              </View>
+
+              {/* Section 3: Account Tier, Role & Mode */}
+              <Text style={styles.formSectionHeader}>TIER, ROLE & STATUS</Text>
+
+              {/* Account Tier */}
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>Account Tier</Text>
+                <View style={styles.chipButtonGroup}>
+                  {[
+                    { key: 'free', label: 'Free' },
+                    { key: 'core', label: 'Core' },
+                    { key: 'advanced', label: 'Advanced' },
+                    { key: 'institutional', label: 'Institutional' },
+                  ].map((t) => (
+                    <TouchableOpacity
+                      key={`add-tier-${t.key}`}
+                      style={[
+                        styles.chipBtn,
+                        addFormData.account_status === t.key && styles.chipBtnActive,
+                      ]}
+                      onPress={() =>
+                        setAddFormData((prev) => ({ ...prev, account_status: t.key }))
+                      }
+                    >
+                      <Text
+                        style={[
+                          styles.chipBtnText,
+                          addFormData.account_status === t.key && styles.chipBtnTextActive,
+                        ]}
+                      >
+                        {t.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
+              {/* Account Mode */}
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>Account Mode</Text>
+                <View style={styles.chipButtonGroup}>
+                  {[
+                    { key: 'active', label: 'Active Mode' },
+                    { key: 'inactive', label: 'Inactive Mode' },
+                  ].map((m) => (
+                    <TouchableOpacity
+                      key={`add-mode-${m.key}`}
+                      style={[
+                        styles.chipBtn,
+                        addFormData.status === m.key && styles.chipBtnActive,
+                      ]}
+                      onPress={() =>
+                        setAddFormData((prev) => ({ ...prev, status: m.key }))
+                      }
+                    >
+                      <Text
+                        style={[
+                          styles.chipBtnText,
+                          addFormData.status === m.key && styles.chipBtnTextActive,
+                        ]}
+                      >
+                        {m.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
+              {/* Role */}
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>Role</Text>
+                <View style={styles.chipButtonGroup}>
+                  {[
+                    { key: 'investor', label: 'Investor' },
+                    { key: 'admin', label: 'Admin' },
+                    { key: 'disabled', label: 'Disabled' },
+                  ].map((r) => (
+                    <TouchableOpacity
+                      key={`add-role-${r.key}`}
+                      style={[
+                        styles.chipBtn,
+                        addFormData.role === r.key && styles.chipBtnActive,
+                      ]}
+                      onPress={() =>
+                        setAddFormData((prev) => ({ ...prev, role: r.key }))
+                      }
+                    >
+                      <Text
+                        style={[
+                          styles.chipBtnText,
+                          addFormData.role === r.key && styles.chipBtnTextActive,
+                        ]}
+                      >
+                        {r.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
+              {/* Verification & Approval Toggles */}
+              <View style={styles.addTogglesContainer}>
+                {/* Pre-Approve Toggle */}
+                <TouchableOpacity
+                  style={styles.addToggleRow}
+                  onPress={() =>
+                    setAddFormData((prev) => ({ ...prev, is_approved: !prev.is_approved }))
+                  }
+                  activeOpacity={0.7}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.addToggleTitle}>Approve Immediately</Text>
+                    <Text style={styles.addToggleSubtitle}>
+                      Allow member immediate directory and platform access
+                    </Text>
+                  </View>
+                  <Ionicons
+                    name={addFormData.is_approved ? 'checkbox' : 'square-outline'}
+                    size={22}
+                    color={addFormData.is_approved ? '#0F7359' : '#94A3B8'}
+                  />
+                </TouchableOpacity>
+
+                {/* Mark Email Verified Toggle */}
+                <TouchableOpacity
+                  style={styles.addToggleRow}
+                  onPress={() =>
+                    setAddFormData((prev) => ({ ...prev, verify_email: !prev.verify_email }))
+                  }
+                  activeOpacity={0.7}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.addToggleTitle}>Verify Email Immediately</Text>
+                    <Text style={styles.addToggleSubtitle}>
+                      Grant verified badge without email link requirement
+                    </Text>
+                  </View>
+                  <Ionicons
+                    name={addFormData.verify_email ? 'checkbox' : 'square-outline'}
+                    size={22}
+                    color={addFormData.verify_email ? '#0F7359' : '#94A3B8'}
+                  />
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+
+            {/* Footer Buttons */}
+            <View style={styles.editModalFooter}>
+              <TouchableOpacity
+                style={styles.editModalCancelBtn}
+                onPress={() => setAddModalVisible(false)}
+                disabled={addSaving}
+              >
+                <Text style={styles.editModalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.editModalSaveBtn}
+                onPress={handleSaveAddMember}
+                disabled={addSaving}
+              >
+                {addSaving ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.editModalSaveBtnText}>Create Member</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -3951,6 +4528,30 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Colors.muted,
   },
+  sectionHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  addMemberBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#0F7359',
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: Radii.sm,
+    shadowColor: '#0F7359',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.16,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  addMemberBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
   refreshIconBtn: {
     padding: 8,
     borderRadius: Radii.sm,
@@ -4338,6 +4939,46 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: Colors.muted,
     textAlign: 'center',
+  },
+  emptyAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#0F7359',
+    paddingVertical: 9,
+    paddingHorizontal: 16,
+    borderRadius: Radii.sm,
+    marginTop: 8,
+  },
+  emptyAddBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  addTogglesContainer: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: Radii.sm,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 12,
+    gap: 12,
+    marginTop: 6,
+  },
+  addToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  addToggleTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#1E293B',
+  },
+  addToggleSubtitle: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
   },
   // Notifications styles
   notifActionBar: {
