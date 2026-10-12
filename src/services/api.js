@@ -348,22 +348,212 @@ export async function verifyAdminMemberEmail(token, userId) {
 /**
  * Fetch Admin Deals list from GET /api/admin/deals
  */
-export async function fetchAdminDeals(token, { type = '', status = '', search = '' } = {}) {
+export async function fetchAdminDeals(token, { type = '', status = '', search = '', per_page = 50, page = 1 } = {}) {
   try {
     const params = new URLSearchParams();
-    if (type) params.append('type', type);
-    if (status) params.append('status', status);
+    if (type && type !== 'all') params.append('type', type);
+    if (status && status !== 'all') params.append('status', status);
     if (search) params.append('search', search);
+    if (per_page) params.append('per_page', String(per_page));
+    if (page) params.append('page', String(page));
 
     const res = await fetchAdminWithFallback(`/admin/deals?${params.toString()}`, token);
     if (res && res.ok) {
       const json = await res.json();
-      return json.data || json;
+      const rawData = json.data;
+      const dealsArray = Array.isArray(rawData?.data)
+        ? rawData.data
+        : (Array.isArray(rawData) ? rawData : (Array.isArray(json) ? json : []));
+      return {
+        data: dealsArray,
+        counts: json.counts || null,
+        meta: rawData?.current_page ? {
+          current_page: rawData.current_page,
+          last_page: rawData.last_page,
+          per_page: rawData.per_page,
+          total: rawData.total,
+        } : null,
+      };
     }
   } catch (err) {
     console.log('Admin deals fetch error:', err);
   }
-  return null;
+  return { data: [], counts: null, meta: null };
+}
+
+/**
+ * Fetch Single Deal Details from GET /api/admin/deals/{id}
+ */
+export async function fetchAdminDeal(token, id) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/deals/${id}`, token);
+    if (res && res.ok) {
+      const json = await res.json();
+      return {
+        ok: true,
+        data: json.data || json,
+      };
+    }
+  } catch (err) {
+    console.log('Admin deal details fetch error:', err);
+  }
+  return { ok: false, message: 'Could not load deal details.' };
+}
+
+/**
+ * Create a new deal via POST /api/admin/deals
+ * Supports JSON or FormData (with company_logo, company_cover, gallery)
+ */
+export async function createAdminDeal(token, payload) {
+  try {
+    const isFormData = payload instanceof FormData;
+    const options = {
+      method: 'POST',
+    };
+
+    if (isFormData) {
+      options.body = payload;
+    } else {
+      options.headers = { 'Content-Type': 'application/json' };
+      options.body = JSON.stringify(payload);
+    }
+
+    const res = await fetchAdminWithFallback('/admin/deals', token, options);
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        data: json.data || null,
+        message: json.message || (res.ok ? 'Deal created successfully.' : 'Failed to create deal.'),
+        errors: json.errors || null,
+      };
+    }
+  } catch (err) {
+    console.log('Admin create deal error:', err);
+  }
+  return { ok: false, message: 'Could not connect to server.' };
+}
+
+/**
+ * Update an existing deal via POST /api/admin/deals/{id}
+ * Supports JSON or FormData (with company_logo, company_cover, gallery)
+ */
+export async function updateAdminDeal(token, id, payload) {
+  try {
+    const isFormData = payload instanceof FormData;
+    const options = {
+      method: 'POST',
+    };
+
+    if (isFormData) {
+      options.body = payload;
+    } else {
+      options.headers = { 'Content-Type': 'application/json' };
+      options.body = JSON.stringify(payload);
+    }
+
+    const res = await fetchAdminWithFallback(`/admin/deals/${id}`, token, options);
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        data: json.data || null,
+        message: json.message || (res.ok ? 'Deal updated successfully.' : 'Failed to update deal.'),
+        errors: json.errors || null,
+      };
+    }
+  } catch (err) {
+    console.log('Admin update deal error:', err);
+  }
+  return { ok: false, message: 'Could not connect to server.' };
+}
+
+/**
+ * Delete a deal via DELETE /api/admin/deals/{id}
+ */
+export async function deleteAdminDeal(token, id) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/deals/${id}`, token, {
+      method: 'DELETE',
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        message: json.message || (res.ok ? 'Deal deleted successfully.' : 'Failed to delete deal.'),
+      };
+    }
+  } catch (err) {
+    console.log('Admin delete deal error:', err);
+  }
+  return { ok: false, message: 'Could not delete deal.' };
+}
+
+/**
+ * Fetch member activity (interested, invest, review, commits) via GET /api/admin/deals/{id}/member-activity
+ */
+export async function fetchAdminDealMemberActivity(token, dealId) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/deals/${dealId}/member-activity`, token);
+    if (res && res.ok) {
+      const json = await res.json();
+      return {
+        ok: true,
+        data: json.data || json,
+      };
+    }
+  } catch (err) {
+    console.log('Admin deal member activity fetch error:', err);
+  }
+  return { ok: false, message: 'Could not load deal member activity.' };
+}
+
+/**
+ * Toggle viewed status for an investment via POST /api/admin/deals/{dealId}/member-activity/investments/{investmentId}/toggle-viewed
+ */
+export async function toggleAdminDealInvestmentViewed(token, dealId, investmentId) {
+  try {
+    const res = await fetchAdminWithFallback(
+      `/admin/deals/${dealId}/member-activity/investments/${investmentId}/toggle-viewed`,
+      token,
+      { method: 'POST' }
+    );
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        data: json.data || null,
+        message: json.message || 'Updated viewed status.',
+      };
+    }
+  } catch (err) {
+    console.log('Toggle viewed error:', err);
+  }
+  return { ok: false, message: 'Could not toggle viewed status.' };
+}
+
+/**
+ * Mark all interested members as viewed for a deal via POST /api/admin/deals/{dealId}/member-activity/mark-all-viewed
+ */
+export async function markAllAdminDealInvestmentsViewed(token, dealId) {
+  try {
+    const res = await fetchAdminWithFallback(
+      `/admin/deals/${dealId}/member-activity/mark-all-viewed`,
+      token,
+      { method: 'POST' }
+    );
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        data: json.data || null,
+        message: json.message || 'All activity marked as viewed.',
+      };
+    }
+  } catch (err) {
+    console.log('Mark all viewed error:', err);
+  }
+  return { ok: false, message: 'Could not mark all as viewed.' };
 }
 
 /**

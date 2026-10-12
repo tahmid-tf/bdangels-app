@@ -34,6 +34,12 @@ import {
   deleteAdminMember,
   verifyAdminMemberEmail,
   fetchAdminDeals,
+  createAdminDeal,
+  updateAdminDeal,
+  deleteAdminDeal,
+  fetchAdminDealMemberActivity,
+  toggleAdminDealInvestmentViewed,
+  markAllAdminDealInvestmentsViewed,
   fetchAdminFounderPitches,
   fetchAdminAngelAcademy,
   fetchAdminNotifications,
@@ -286,7 +292,62 @@ export default function AdminScreen() {
   const [deals, setDeals] = useState([]);
   const [dealsLoading, setDealsLoading] = useState(false);
   const [dealSearch, setDealSearch] = useState('');
-  const [dealTypeFilter, setDealTypeFilter] = useState('all');
+  const [dealTypeFilter, setDealTypeFilter] = useState('all'); // 'all' | 'invest' | 'commit' | 'review' | 'portfolio' | 'invest-portfolio'
+  const [dealStatusFilter, setDealStatusFilter] = useState('all'); // 'all' | 'active' | 'closed' | 'draft'
+  const [dealCounts, setDealCounts] = useState({
+    all: 0,
+    invest: 0,
+    commit: 0,
+    review: 0,
+    portfolio: 0,
+    invest_portfolio: 0,
+  });
+  const [selectedDealForView, setSelectedDealForView] = useState(null);
+  const [viewDealModalVisible, setViewDealModalVisible] = useState(false);
+  const [createDealModalVisible, setCreateDealModalVisible] = useState(false);
+  const [editDealModalVisible, setEditDealModalVisible] = useState(false);
+  const [editingDeal, setEditingDeal] = useState(null);
+  const [dealSaving, setDealSaving] = useState(false);
+  const [deleteDealModalVisible, setDeleteDealModalVisible] = useState(false);
+  const [selectedDealForDelete, setSelectedDealForDelete] = useState(null);
+  const [isDeletingDeal, setIsDeletingDeal] = useState(false);
+
+  // Member Activity State
+  const [activityModalVisible, setActivityModalVisible] = useState(false);
+  const [selectedDealForActivity, setSelectedDealForActivity] = useState(null);
+  const [dealActivityData, setDealActivityData] = useState(null);
+  const [dealActivityLoading, setDealActivityLoading] = useState(false);
+  const [activityActiveSubTab, setActivityActiveSubTab] = useState('interested'); // 'interested' | 'invest' | 'review' | 'commits'
+  const [togglingInvestmentId, setTogglingInvestmentId] = useState(null);
+  const [markingAllViewed, setMarkingAllViewed] = useState(false);
+
+  // Deal Form Data State
+  const [dealFormData, setDealFormData] = useState({
+    title: '',
+    sector: '',
+    type: 'invest',
+    is_portfolio: false,
+    investment_stage: 'Seed',
+    amount_seeking: '',
+    description: '',
+    status: 'active',
+    pitch_deck_url: '',
+    substack_link: '',
+    invest_link: '',
+    commit_link: '',
+    groupchat_invite_link: '',
+    growth_rate: '',
+    monthly_revenue: '',
+    revenue_model: '',
+    future_plans: '',
+    partnerships: '',
+    video_url: '',
+    key_metrics: [{ name: '', value: '' }],
+    logo_file: null,
+    remove_logo: false,
+    cover_file: null,
+    remove_cover: false,
+  });
 
   // Submissions Tab State
   const [submissionsSubTab, setSubmissionsSubTab] = useState('pitches'); // 'pitches' | 'academy'
@@ -755,20 +816,39 @@ export default function AdminScreen() {
   );
 
   // Fetch Deals
-  const loadDeals = useCallback(async (token = authToken, search = dealSearch, type = dealTypeFilter) => {
-    if (!token) return;
-    setDealsLoading(true);
-    try {
-      const filterType = type === 'all' ? '' : type;
-      const res = await fetchAdminDeals(token, { search, type: filterType });
-      const list = res?.data || (Array.isArray(res) ? res : []);
-      setDeals(list);
-    } catch (err) {
-      console.log('Error loading deals:', err);
-    } finally {
-      setDealsLoading(false);
-    }
-  }, [authToken, dealSearch, dealTypeFilter]);
+  const loadDeals = useCallback(
+    async (
+      token = authToken,
+      search = dealSearch,
+      type = dealTypeFilter,
+      status = dealStatusFilter,
+      options = {}
+    ) => {
+      if (!token) return;
+      const { silent = false } = options;
+      if (!silent) setDealsLoading(true);
+      try {
+        const filterType = type === 'all' ? '' : type;
+        const filterStatus = status === 'all' ? '' : status;
+        const res = await fetchAdminDeals(token, {
+          search,
+          type: filterType,
+          status: filterStatus,
+          per_page: 50,
+        });
+        const list = res?.data || (Array.isArray(res) ? res : []);
+        setDeals(list);
+        if (res?.counts) {
+          setDealCounts(res.counts);
+        }
+      } catch (err) {
+        console.log('Error loading deals:', err);
+      } finally {
+        if (!silent) setDealsLoading(false);
+      }
+    },
+    [authToken, dealSearch, dealTypeFilter, dealStatusFilter]
+  );
 
   // Fetch Submissions
   const loadSubmissions = useCallback(async (token = authToken) => {
@@ -3952,6 +4032,485 @@ export default function AdminScreen() {
     }
   };
 
+  // ==========================================
+  // DEALS HANDLERS & OPERATIONS
+  // ==========================================
+  const handleOpenCreateDeal = () => {
+    setEditingDeal(null);
+    setDealFormData({
+      title: '',
+      sector: '',
+      type: 'invest',
+      is_portfolio: false,
+      investment_stage: 'Seed',
+      amount_seeking: '',
+      description: '',
+      status: 'active',
+      pitch_deck_url: '',
+      substack_link: '',
+      invest_link: '',
+      commit_link: '',
+      groupchat_invite_link: '',
+      growth_rate: '',
+      monthly_revenue: '',
+      revenue_model: '',
+      future_plans: '',
+      partnerships: '',
+      video_url: '',
+      key_metrics: [{ name: '', value: '' }],
+      logo_file: null,
+      remove_logo: false,
+      cover_file: null,
+      remove_cover: false,
+    });
+    setCreateDealModalVisible(true);
+  };
+
+  const handleOpenEditDeal = (deal) => {
+    setEditingDeal(deal);
+    const metrics = Array.isArray(deal.key_metrics) && deal.key_metrics.length > 0
+      ? deal.key_metrics.map((m) => ({ name: m.name || '', value: m.value || '' }))
+      : [{ name: '', value: '' }];
+
+    setDealFormData({
+      title: deal.title || '',
+      sector: deal.sector || '',
+      type: deal.type || 'invest',
+      is_portfolio: Boolean(deal.is_portfolio),
+      investment_stage: deal.investment_stage || 'Seed',
+      amount_seeking: deal.amount_seeking ? String(deal.amount_seeking) : '',
+      description: deal.description || '',
+      status: deal.status || 'active',
+      pitch_deck_url: deal.pitch_deck_url || '',
+      substack_link: deal.substack_link || '',
+      invest_link: deal.invest_link || '',
+      commit_link: deal.commit_link || '',
+      groupchat_invite_link: deal.groupchat_invite_link || '',
+      growth_rate: deal.growth_rate || '',
+      monthly_revenue: deal.monthly_revenue || '',
+      revenue_model: deal.revenue_model || '',
+      future_plans: deal.future_plans || '',
+      partnerships: deal.partnerships || '',
+      video_url: deal.video_url || '',
+      key_metrics: metrics,
+      logo_file: null,
+      remove_logo: false,
+      cover_file: null,
+      remove_cover: false,
+    });
+    setEditDealModalVisible(true);
+  };
+
+  const handleOpenViewDeal = (deal) => {
+    setSelectedDealForView(deal);
+    setViewDealModalVisible(true);
+  };
+
+  const loadDealMemberActivity = async (dealId) => {
+    if (!authToken || !dealId) return;
+    setDealActivityLoading(true);
+    try {
+      const res = await fetchAdminDealMemberActivity(authToken, dealId);
+      if (res.ok && res.data) {
+        setDealActivityData(res.data);
+      } else {
+        Alert.alert('Notice', res.message || 'Could not load member activity for this deal.');
+      }
+    } catch (err) {
+      console.log('Error loading deal member activity:', err);
+      Alert.alert('Error', 'An unexpected error occurred while loading activity.');
+    } finally {
+      setDealActivityLoading(false);
+    }
+  };
+
+  const handleOpenDealActivity = async (deal) => {
+    setSelectedDealForActivity(deal);
+    setActivityActiveSubTab('interested');
+    setActivityModalVisible(true);
+    await loadDealMemberActivity(deal.id);
+  };
+
+  const handleToggleInvestmentViewed = async (investmentId) => {
+    if (!authToken || !selectedDealForActivity || !investmentId) return;
+    setTogglingInvestmentId(investmentId);
+    try {
+      const res = await toggleAdminDealInvestmentViewed(authToken, selectedDealForActivity.id, investmentId);
+      if (res.ok) {
+        const isNowViewed = Boolean(res.data?.viewed);
+        const nowIso = res.data?.viewed_at || new Date().toISOString();
+        setDealActivityData((prev) => {
+          if (!prev) return prev;
+          const updatedInvestments = (prev.investments || []).map((inv) =>
+            inv.id === investmentId ? { ...inv, viewed_at: isNowViewed ? nowIso : null } : inv
+          );
+          const updatedInterested = (prev.interested || []).map((inv) =>
+            inv.id === investmentId ? { ...inv, viewed_at: isNowViewed ? nowIso : null } : inv
+          );
+          const unviewedCount = updatedInterested.filter((inv) => !inv.viewed_at).length;
+          return {
+            ...prev,
+            investments: updatedInvestments,
+            interested: updatedInterested,
+            summary: {
+              ...(prev.summary || {}),
+              unviewed_interested_count: unviewedCount,
+            },
+          };
+        });
+      } else {
+        Alert.alert('Error', res.message || 'Could not update viewed status.');
+      }
+    } catch (err) {
+      console.log('Error toggling viewed status:', err);
+    } finally {
+      setTogglingInvestmentId(null);
+    }
+  };
+
+  const handleMarkAllDealActivityViewed = async () => {
+    if (!authToken || !selectedDealForActivity) return;
+    setMarkingAllViewed(true);
+    try {
+      const res = await markAllAdminDealInvestmentsViewed(authToken, selectedDealForActivity.id);
+      if (res.ok) {
+        const nowIso = new Date().toISOString();
+        setDealActivityData((prev) => {
+          if (!prev) return prev;
+          const updatedInvestments = (prev.investments || []).map((inv) => ({ ...inv, viewed_at: inv.viewed_at || nowIso }));
+          const updatedInterested = (prev.interested || []).map((inv) => ({ ...inv, viewed_at: inv.viewed_at || nowIso }));
+          return {
+            ...prev,
+            investments: updatedInvestments,
+            interested: updatedInterested,
+            summary: {
+              ...(prev.summary || {}),
+              unviewed_interested_count: 0,
+            },
+          };
+        });
+        Alert.alert('Success', 'All member activity marked as viewed.');
+      } else {
+        Alert.alert('Notice', res.message || 'Could not mark activity as viewed.');
+      }
+    } catch (err) {
+      console.log('Error marking all viewed:', err);
+      Alert.alert('Error', 'An unexpected error occurred.');
+    } finally {
+      setMarkingAllViewed(false);
+    }
+  };
+
+  const handlePickDealLogo = async () => {
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        type: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+        copyToCacheDirectory: true,
+      });
+      if (!res.canceled && res.assets && res.assets.length > 0) {
+        const file = res.assets[0];
+        if (file.size && file.size > 5 * 1024 * 1024) {
+          Alert.alert('File Limit Exceeded', 'The logo image is larger than 5 MB.');
+          return;
+        }
+        setDealFormData((prev) => ({
+          ...prev,
+          logo_file: file,
+          remove_logo: false,
+        }));
+      }
+    } catch (err) {
+      console.log('Error picking deal logo:', err);
+      Alert.alert('Notice', 'Could not open image picker.');
+    }
+  };
+
+  const handleCancelDealLogoChange = () => {
+    setDealFormData((prev) => ({
+      ...prev,
+      logo_file: null,
+      remove_logo: false,
+    }));
+  };
+
+  const handleRemoveDealLogo = () => {
+    setDealFormData((prev) => ({
+      ...prev,
+      logo_file: null,
+      remove_logo: true,
+    }));
+  };
+
+  const handlePickDealCover = async () => {
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        type: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+        copyToCacheDirectory: true,
+      });
+      if (!res.canceled && res.assets && res.assets.length > 0) {
+        const file = res.assets[0];
+        if (file.size && file.size > 5 * 1024 * 1024) {
+          Alert.alert('File Limit Exceeded', 'The cover image is larger than 5 MB.');
+          return;
+        }
+        setDealFormData((prev) => ({
+          ...prev,
+          cover_file: file,
+          remove_cover: false,
+        }));
+      }
+    } catch (err) {
+      console.log('Error picking deal cover:', err);
+      Alert.alert('Notice', 'Could not open image picker.');
+    }
+  };
+
+  const handleCancelDealCoverChange = () => {
+    setDealFormData((prev) => ({
+      ...prev,
+      cover_file: null,
+      remove_cover: false,
+    }));
+  };
+
+  const handleRemoveDealCover = () => {
+    setDealFormData((prev) => ({
+      ...prev,
+      cover_file: null,
+      remove_cover: true,
+    }));
+  };
+
+  const handleAddDealMetric = () => {
+    setDealFormData((prev) => ({
+      ...prev,
+      key_metrics: [...(prev.key_metrics || []), { name: '', value: '' }],
+    }));
+  };
+
+  const handleUpdateDealMetric = (index, field, text) => {
+    setDealFormData((prev) => {
+      const updated = [...(prev.key_metrics || [])];
+      updated[index] = { ...updated[index], [field]: text };
+      return { ...prev, key_metrics: updated };
+    });
+  };
+
+  const handleRemoveDealMetric = (index) => {
+    setDealFormData((prev) => {
+      const updated = [...(prev.key_metrics || [])];
+      updated.splice(index, 1);
+      return {
+        ...prev,
+        key_metrics: updated.length > 0 ? updated : [{ name: '', value: '' }],
+      };
+    });
+  };
+
+  const buildDealPayload = (formData) => {
+    const hasNewLogo = Boolean(formData.logo_file);
+    const hasNewCover = Boolean(formData.cover_file);
+    const isRemovingLogo = Boolean(formData.remove_logo);
+    const isRemovingCover = Boolean(formData.remove_cover);
+    const needsFormData = hasNewLogo || hasNewCover || isRemovingLogo || isRemovingCover;
+
+    const validMetrics = (formData.key_metrics || []).filter(
+      (m) => m && (m.name.trim() || m.value.trim())
+    );
+
+    if (needsFormData) {
+      const data = new FormData();
+      data.append('title', (formData.title || '').trim());
+      data.append('sector', (formData.sector || '').trim());
+      data.append('type', formData.type || 'invest');
+      data.append('is_portfolio', formData.is_portfolio ? '1' : '0');
+      data.append('status', formData.status || 'active');
+      if (formData.investment_stage) data.append('investment_stage', formData.investment_stage);
+      if (formData.amount_seeking !== '') data.append('amount_seeking', String(formData.amount_seeking).trim());
+      data.append('description', (formData.description || '').trim());
+      if (formData.pitch_deck_url) data.append('pitch_deck_url', formData.pitch_deck_url.trim());
+      if (formData.substack_link) data.append('substack_link', formData.substack_link.trim());
+      if (formData.invest_link) data.append('invest_link', formData.invest_link.trim());
+      if (formData.commit_link) data.append('commit_link', formData.commit_link.trim());
+      if (formData.groupchat_invite_link) data.append('groupchat_invite_link', formData.groupchat_invite_link.trim());
+      if (formData.growth_rate) data.append('growth_rate', formData.growth_rate.trim());
+      if (formData.monthly_revenue) data.append('monthly_revenue', formData.monthly_revenue.trim());
+      if (formData.revenue_model) data.append('revenue_model', formData.revenue_model.trim());
+      if (formData.future_plans) data.append('future_plans', formData.future_plans.trim());
+      if (formData.partnerships) data.append('partnerships', formData.partnerships.trim());
+      if (formData.video_url) data.append('video_url', formData.video_url.trim());
+      data.append('key_metrics', JSON.stringify(validMetrics));
+
+      if (formData.logo_file) {
+        const uri = formData.logo_file.uri;
+        const filename = uri.split('/').pop() || 'company_logo.jpg';
+        const match = /\.(\w+)$/.exec(filename);
+        const type = match ? `image/${match[1]}` : 'image/jpeg';
+        data.append('company_logo', { uri, name: filename, type });
+      } else if (formData.remove_logo) {
+        data.append('remove_logo', '1');
+      }
+
+      if (formData.cover_file) {
+        const uri = formData.cover_file.uri;
+        const filename = uri.split('/').pop() || 'company_cover.jpg';
+        const match = /\.(\w+)$/.exec(filename);
+        const type = match ? `image/${match[1]}` : 'image/jpeg';
+        data.append('company_cover', { uri, name: filename, type });
+      } else if (formData.remove_cover) {
+        data.append('remove_cover', '1');
+      }
+
+      return data;
+    }
+
+    return {
+      title: (formData.title || '').trim(),
+      sector: (formData.sector || '').trim(),
+      type: formData.type || 'invest',
+      is_portfolio: Boolean(formData.is_portfolio),
+      status: formData.status || 'active',
+      investment_stage: formData.investment_stage || null,
+      amount_seeking: formData.amount_seeking !== '' ? parseFloat(formData.amount_seeking) : null,
+      description: (formData.description || '').trim(),
+      pitch_deck_url: formData.pitch_deck_url ? formData.pitch_deck_url.trim() : null,
+      substack_link: formData.substack_link ? formData.substack_link.trim() : null,
+      invest_link: formData.invest_link ? formData.invest_link.trim() : null,
+      commit_link: formData.commit_link ? formData.commit_link.trim() : null,
+      groupchat_invite_link: formData.groupchat_invite_link ? formData.groupchat_invite_link.trim() : null,
+      growth_rate: formData.growth_rate ? formData.growth_rate.trim() : null,
+      monthly_revenue: formData.monthly_revenue ? formData.monthly_revenue.trim() : null,
+      revenue_model: formData.revenue_model ? formData.revenue_model.trim() : null,
+      future_plans: formData.future_plans ? formData.future_plans.trim() : null,
+      partnerships: formData.partnerships ? formData.partnerships.trim() : null,
+      video_url: formData.video_url ? formData.video_url.trim() : null,
+      key_metrics: validMetrics,
+    };
+  };
+
+  const handleSaveCreateDeal = async () => {
+    if (!authToken) return;
+    if (!dealFormData.title.trim()) {
+      Alert.alert('Required Field', 'Please enter the deal title / startup name.');
+      return;
+    }
+    if (!dealFormData.sector.trim()) {
+      Alert.alert('Required Field', 'Please enter the industry sector.');
+      return;
+    }
+    if (!dealFormData.description.trim()) {
+      Alert.alert('Required Field', 'Please provide an overview or description.');
+      return;
+    }
+
+    setDealSaving(true);
+    try {
+      const payload = buildDealPayload(dealFormData);
+      const res = await createAdminDeal(authToken, payload);
+      if (res.ok) {
+        setCreateDealModalVisible(false);
+        Alert.alert('Success', 'Deal created successfully!');
+        loadDeals(authToken, dealSearch, dealTypeFilter, dealStatusFilter);
+      } else {
+        const errorMsg = res.errors
+          ? Object.values(res.errors).flat().join('\n')
+          : res.message || 'Could not create deal.';
+        Alert.alert('Create Failed', errorMsg);
+      }
+    } catch (err) {
+      console.log('Error creating deal:', err);
+      Alert.alert('Error', 'An unexpected error occurred while creating the deal.');
+    } finally {
+      setDealSaving(false);
+    }
+  };
+
+  const handleSaveEditDeal = async () => {
+    if (!authToken || !editingDeal) return;
+    if (!dealFormData.title.trim()) {
+      Alert.alert('Required Field', 'Please enter the deal title / startup name.');
+      return;
+    }
+    if (!dealFormData.sector.trim()) {
+      Alert.alert('Required Field', 'Please enter the industry sector.');
+      return;
+    }
+    if (!dealFormData.description.trim()) {
+      Alert.alert('Required Field', 'Please provide an overview or description.');
+      return;
+    }
+
+    setDealSaving(true);
+    try {
+      const payload = buildDealPayload(dealFormData);
+      const res = await updateAdminDeal(authToken, editingDeal.id, payload);
+      if (res.ok) {
+        const updated = res.data || { ...editingDeal, ...dealFormData };
+        setDeals((prev) => prev.map((d) => (d.id === editingDeal.id ? updated : d)));
+        if (selectedDealForView?.id === editingDeal.id) {
+          setSelectedDealForView(updated);
+        }
+        setEditDealModalVisible(false);
+        setEditingDeal(null);
+        Alert.alert('Success', 'Deal updated successfully!');
+        loadDeals(authToken, dealSearch, dealTypeFilter, dealStatusFilter, { silent: true });
+      } else {
+        const errorMsg = res.errors
+          ? Object.values(res.errors).flat().join('\n')
+          : res.message || 'Could not update deal.';
+        Alert.alert('Update Failed', errorMsg);
+      }
+    } catch (err) {
+      console.log('Error updating deal:', err);
+      Alert.alert('Error', 'An unexpected error occurred while saving changes.');
+    } finally {
+      setDealSaving(false);
+    }
+  };
+
+  const handleOpenDeleteDeal = (deal) => {
+    setSelectedDealForDelete(deal);
+    setDeleteDealModalVisible(true);
+  };
+
+  const handleConfirmDeleteDeal = async () => {
+    if (!authToken || !selectedDealForDelete) return;
+    setIsDeletingDeal(true);
+    try {
+      const res = await deleteAdminDeal(authToken, selectedDealForDelete.id);
+      if (res.ok) {
+        setDeals((prev) => prev.filter((d) => d.id !== selectedDealForDelete.id));
+        setDealCounts((prev) => ({
+          ...prev,
+          all: Math.max(0, (prev.all || 1) - 1),
+          invest: selectedDealForDelete.type === 'invest' ? Math.max(0, (prev.invest || 1) - 1) : prev.invest,
+          commit: selectedDealForDelete.type === 'commit' ? Math.max(0, (prev.commit || 1) - 1) : prev.commit,
+          review: selectedDealForDelete.type === 'review' ? Math.max(0, (prev.review || 1) - 1) : prev.review,
+          portfolio: selectedDealForDelete.is_portfolio || selectedDealForDelete.type === 'portfolio' ? Math.max(0, (prev.portfolio || 1) - 1) : prev.portfolio,
+        }));
+        setDeleteDealModalVisible(false);
+        if (selectedDealForView?.id === selectedDealForDelete.id) {
+          setViewDealModalVisible(false);
+          setSelectedDealForView(null);
+        }
+        if (selectedDealForActivity?.id === selectedDealForDelete.id) {
+          setActivityModalVisible(false);
+          setSelectedDealForActivity(null);
+        }
+        setSelectedDealForDelete(null);
+        Alert.alert('Deleted', 'Deal deleted successfully.');
+      } else {
+        Alert.alert('Delete Failed', res.message || 'Could not delete deal.');
+      }
+    } catch (err) {
+      console.log('Error deleting deal:', err);
+      Alert.alert('Error', 'An unexpected error occurred while deleting deal.');
+    } finally {
+      setIsDeletingDeal(false);
+      setSelectedDealForDelete(null);
+    }
+  };
+
   // Handle Logout
   const handleLogout = () => {
     Alert.alert('Sign Out', 'Are you sure you want to log out of the admin panel?', [
@@ -4883,30 +5442,138 @@ export default function AdminScreen() {
           {/* TAB 3: DEALS */}
           {activeTab === 'deals' && (
             <View style={styles.tabContent}>
+              {/* Section Header */}
               <View style={styles.sectionHeaderRow}>
-                <View>
+                <View style={{ flex: 1 }}>
                   <Text style={styles.sectionHeading}>Deal Flow Pipeline</Text>
-                  <Text style={styles.sectionSubheading}>Active opportunities, co-investments & portfolios</Text>
+                  <Text style={styles.sectionSubheading}>
+                    {deals.length} {deals.length === 1 ? 'deal' : 'deals'} loaded · Curated opportunities & portfolios
+                  </Text>
                 </View>
-                <TouchableOpacity
-                  style={styles.refreshIconBtn}
-                  onPress={() => loadDeals(authToken, dealSearch, dealTypeFilter)}
-                >
-                  <Ionicons name="refresh" size={18} color={Colors.forest} />
-                </TouchableOpacity>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <TouchableOpacity
+                    style={styles.programsAddBtn}
+                    onPress={handleOpenCreateDeal}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="add" size={16} color="#FFFFFF" />
+                    <Text style={styles.programsAddBtnText}>New Deal</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.refreshIconBtn}
+                    onPress={() => loadDeals(authToken, dealSearch, dealTypeFilter, dealStatusFilter)}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="refresh" size={18} color="#0A5554" />
+                  </TouchableOpacity>
+                </View>
               </View>
 
-              {/* Deal Search */}
+              {/* Deal Type Filter Chips (matching Web tabs) */}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={[styles.filterChipsRow, { paddingVertical: 4 }]}
+              >
+                {[
+                  { key: 'all', label: 'All Deals', count: dealCounts.all },
+                  { key: 'invest', label: 'Invest', count: dealCounts.invest },
+                  { key: 'commit', label: 'Commit', count: dealCounts.commit },
+                  { key: 'review', label: 'Review', count: dealCounts.review },
+                  { key: 'portfolio', label: 'Portfolio', count: dealCounts.portfolio },
+                  { key: 'invest-portfolio', label: 'Dual Listed', count: dealCounts.invest_portfolio },
+                ].map((chip) => {
+                  const isActive = dealTypeFilter === chip.key;
+                  return (
+                    <TouchableOpacity
+                      key={`deal-type-chip-${chip.key}`}
+                      style={[styles.filterChip, isActive && styles.filterChipActive]}
+                      onPress={() => {
+                        setDealTypeFilter(chip.key);
+                        loadDeals(authToken, dealSearch, chip.key, dealStatusFilter);
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <Text
+                        style={[
+                          styles.filterChipText,
+                          isActive && styles.filterChipTextActive,
+                        ]}
+                      >
+                        {chip.label}
+                      </Text>
+                      <View
+                        style={[
+                          styles.filterChipBadge,
+                          isActive && styles.filterChipBadgeActive,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.filterChipBadgeText,
+                            isActive && styles.filterChipBadgeTextActive,
+                          ]}
+                        >
+                          {chip.count ?? 0}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+
+              {/* Status Filter Row */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 }}>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748B', marginRight: 4 }}>
+                  Status:
+                </Text>
+                {[
+                  { key: 'all', label: 'All' },
+                  { key: 'active', label: 'Active' },
+                  { key: 'closed', label: 'Closed' },
+                  { key: 'draft', label: 'Draft' },
+                ].map((st) => {
+                  const isCurrent = dealStatusFilter === st.key;
+                  return (
+                    <TouchableOpacity
+                      key={`deal-status-${st.key}`}
+                      style={{
+                        paddingHorizontal: 10,
+                        paddingVertical: 4,
+                        borderRadius: 6,
+                        backgroundColor: isCurrent ? '#0A5554' : '#F1F5F9',
+                      }}
+                      onPress={() => {
+                        setDealStatusFilter(st.key);
+                        loadDeals(authToken, dealSearch, dealTypeFilter, st.key);
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 11,
+                          fontWeight: '700',
+                          color: isCurrent ? '#FFFFFF' : '#475569',
+                        }}
+                      >
+                        {st.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* Deal Search Bar */}
               <View style={styles.searchBar}>
-                <Ionicons name="search" size={18} color={Colors.muted} style={styles.searchIcon} />
+                <Ionicons name="search" size={18} color="#94A3B8" style={styles.searchIcon} />
                 <TextInput
                   style={styles.searchInput}
-                  placeholder="Search deals by name or company..."
-                  placeholderTextColor={Colors.mutedLight}
+                  placeholder="Search deals by startup name or sector..."
+                  placeholderTextColor="#94A3B8"
                   value={dealSearch}
                   onChangeText={(val) => {
                     setDealSearch(val);
-                    loadDeals(authToken, val, dealTypeFilter);
+                    loadDeals(authToken, val, dealTypeFilter, dealStatusFilter);
                   }}
                   autoCapitalize="none"
                 />
@@ -4914,121 +5581,272 @@ export default function AdminScreen() {
                   <TouchableOpacity
                     onPress={() => {
                       setDealSearch('');
-                      loadDeals(authToken, '', dealTypeFilter);
+                      loadDeals(authToken, '', dealTypeFilter, dealStatusFilter);
                     }}
                   >
-                    <Ionicons name="close-circle" size={18} color={Colors.muted} />
+                    <Ionicons name="close-circle" size={18} color="#94A3B8" />
                   </TouchableOpacity>
                 )}
-              </View>
-
-              {/* Deal Type Filters */}
-              <View style={styles.filterChipsRow}>
-                {['all', 'syndicate', 'co-investment', 'portfolio'].map((type) => (
-                  <TouchableOpacity
-                    key={`type-${type}`}
-                    style={[styles.filterChip, dealTypeFilter === type && styles.filterChipActive]}
-                    onPress={() => {
-                      setDealTypeFilter(type);
-                      loadDeals(authToken, dealSearch, type);
-                    }}
-                  >
-                    <Text style={[styles.filterChipText, dealTypeFilter === type && styles.filterChipTextActive]}>
-                      {type === 'all' ? 'All Deals' : type.charAt(0).toUpperCase() + type.slice(1)}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
               </View>
 
               {/* Deals List */}
               {dealsLoading ? (
                 <View style={styles.listLoadingBox}>
-                  <ActivityIndicator size="small" color={Colors.forest} />
+                  <ActivityIndicator size="small" color="#0A5554" />
                   <Text style={styles.loadingText}>Loading deals...</Text>
                 </View>
               ) : deals.length === 0 ? (
                 <View style={styles.emptyState}>
-                  <Ionicons name="briefcase-outline" size={40} color={Colors.mutedLight} />
+                  <Ionicons name="briefcase-outline" size={44} color="#94A3B8" />
                   <Text style={styles.emptyTitle}>No deals found</Text>
-                  <Text style={styles.emptyText}>No deal entries matching your current filters.</Text>
+                  <Text style={styles.emptyText}>
+                    {dealSearch || dealTypeFilter !== 'all' || dealStatusFilter !== 'all'
+                      ? 'No deals match your current filters.'
+                      : 'No deals created yet. Tap "New Deal" to add one.'}
+                  </Text>
+                  <TouchableOpacity
+                    style={[styles.programsAddBtn, { marginTop: 12, alignSelf: 'center' }]}
+                    onPress={handleOpenCreateDeal}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="add" size={16} color="#FFFFFF" />
+                    <Text style={styles.programsAddBtnText}>Create First Deal</Text>
+                  </TouchableOpacity>
                 </View>
               ) : (
                 <View style={styles.cardsList}>
                   {deals.map((deal) => {
                     const isActive = deal.status === 'active';
+                    const isDraft = deal.status === 'draft';
+                    const hasUnread = (deal.unviewed_interested_count || 0) > 0;
+
                     return (
-                      <View key={`deal-${deal.id}`} style={styles.dealCard}>
+                      <View key={`deal-card-${deal.id}`} style={styles.dealCard}>
+                        {/* Header: Logo, Title, Sector, Status */}
                         <View style={styles.dealCardHeader}>
-                          <View style={styles.dealTitleWrap}>
-                            <Text style={styles.dealTitle}>{deal.title || deal.company_name}</Text>
-                            {Boolean(deal.company_name && deal.company_name !== deal.title) && (
-                              <Text style={styles.dealCompany}>{deal.company_name}</Text>
-                            )}
-                          </View>
-                          <View
-                            style={[
-                              styles.statusBadge,
-                              isActive ? styles.statusCompleted : styles.statusNeutral,
-                            ]}
-                          >
-                            <Text
-                              style={[
-                                styles.statusBadgeText,
-                                isActive ? styles.statusCompletedText : styles.statusNeutralText,
-                              ]}
+                          {deal.logo_url ? (
+                            <Image
+                              source={{ uri: deal.logo_url }}
+                              style={{
+                                width: 48,
+                                height: 48,
+                                borderRadius: 10,
+                                backgroundColor: '#E2E8F0',
+                                borderWidth: 1,
+                                borderColor: '#CBD5E1',
+                              }}
+                            />
+                          ) : (
+                            <View
+                              style={{
+                                width: 48,
+                                height: 48,
+                                borderRadius: 10,
+                                backgroundColor: '#E6F4F1',
+                                borderWidth: 1,
+                                borderColor: '#B4E6DA',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                              }}
                             >
-                              {String(deal.status || 'Active').toUpperCase()}
+                              <Text style={{ fontSize: 20, fontWeight: '800', color: '#0A5554' }}>
+                                {(deal.title || 'D').charAt(0).toUpperCase()}
+                              </Text>
+                            </View>
+                          )}
+
+                          <View style={{ flex: 1, marginLeft: 10 }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <Text style={[styles.dealTitle, { flex: 1, marginRight: 6 }]} numberOfLines={1}>
+                                {deal.title}
+                              </Text>
+                              <View
+                                style={[
+                                  styles.statusBadge,
+                                  isActive
+                                    ? styles.statusCompleted
+                                    : isDraft
+                                    ? { backgroundColor: '#FEF3C7', borderColor: '#FDE68A' }
+                                    : styles.statusNeutral,
+                                ]}
+                              >
+                                <Text
+                                  style={[
+                                    styles.statusBadgeText,
+                                    isActive
+                                      ? styles.statusCompletedText
+                                      : isDraft
+                                      ? { color: '#B45309' }
+                                      : styles.statusNeutralText,
+                                  ]}
+                                >
+                                  {String(deal.status || 'Active').toUpperCase()}
+                                </Text>
+                              </View>
+                            </View>
+                            <Text style={styles.dealCompany} numberOfLines={1}>
+                              {deal.sector || 'General Tech'}
                             </Text>
                           </View>
                         </View>
 
-                        {/* Badges / Sector / Stage */}
+                        {/* Meta Tags Row */}
                         <View style={styles.dealMetaRow}>
-                          {Boolean(deal.sector) && (
-                            <View style={styles.metaPill}>
-                              <Text style={styles.metaPillText}>{deal.sector}</Text>
-                            </View>
-                          )}
-                          {Boolean(deal.stage) && (
+                          {/* Type Pill */}
+                          <View
+                            style={[
+                              styles.metaPill,
+                              deal.type === 'invest'
+                                ? { backgroundColor: '#E6F4F1', borderColor: '#B4E6DA' }
+                                : deal.type === 'commit'
+                                ? { backgroundColor: '#FEF3C7', borderColor: '#FDE68A' }
+                                : deal.type === 'review'
+                                ? { backgroundColor: '#F3E8FF', borderColor: '#E9D5FF' }
+                                : { backgroundColor: '#EEF2FF', borderColor: '#C7D2FE' },
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.metaPillText,
+                                {
+                                  fontWeight: '800',
+                                  color:
+                                    deal.type === 'invest'
+                                      ? '#0A5554'
+                                      : deal.type === 'commit'
+                                      ? '#B45309'
+                                      : deal.type === 'review'
+                                      ? '#7E22CE'
+                                      : '#4338CA',
+                                },
+                              ]}
+                            >
+                              {deal.type === 'invest'
+                                ? 'Invest Round'
+                                : deal.type === 'commit'
+                                ? 'Commit Round'
+                                : deal.type === 'review'
+                                ? 'Review / DD'
+                                : 'Portfolio'}
+                            </Text>
+                          </View>
+
+                          {/* Stage Pill */}
+                          {Boolean(deal.investment_stage) && (
                             <View style={[styles.metaPill, styles.metaPillStage]}>
-                              <Text style={[styles.metaPillText, styles.metaPillStageText]}>{deal.stage}</Text>
+                              <Text style={[styles.metaPillText, styles.metaPillStageText]}>
+                                {deal.investment_stage}
+                              </Text>
                             </View>
                           )}
-                          {Boolean(deal.type) && (
-                            <View style={[styles.metaPill, styles.metaPillType]}>
-                              <Text style={[styles.metaPillText, styles.metaPillTypeText]}>{deal.type}</Text>
+
+                          {/* Dual Listing Pill */}
+                          {Boolean(deal.is_portfolio && deal.type !== 'portfolio') && (
+                            <View style={[styles.metaPill, { backgroundColor: '#EEF2FF', borderColor: '#C7D2FE' }]}>
+                              <Ionicons name="checkmark-circle" size={11} color="#4338CA" style={{ marginRight: 3 }} />
+                              <Text style={[styles.metaPillText, { color: '#4338CA', fontWeight: '700' }]}>
+                                Also Portfolio
+                              </Text>
                             </View>
                           )}
                         </View>
 
                         {/* Deal Summary / Pitch */}
-                        {Boolean(deal.short_pitch || deal.description) && (
+                        {Boolean(deal.excerpt || deal.description) && (
                           <Text style={styles.dealPitch} numberOfLines={2}>
-                            {deal.short_pitch || deal.description}
+                            {deal.excerpt || deal.description}
                           </Text>
                         )}
 
-                        {/* Deal Target & Minimum */}
-                        {(Boolean(deal.target_amount) || Boolean(deal.min_investment)) && (
-                          <View style={styles.dealStatsBox}>
-                            {Boolean(deal.target_amount) && (
-                              <View style={styles.dealStatItem}>
-                                <Text style={styles.dealStatLabel}>Target Round</Text>
-                                <Text style={styles.dealStatValue}>
-                                  BDT {Number(deal.target_amount).toLocaleString()}
-                                </Text>
-                              </View>
-                            )}
-                            {Boolean(deal.min_investment) && (
-                              <View style={styles.dealStatItem}>
-                                <Text style={styles.dealStatLabel}>Min Ticket</Text>
-                                <Text style={styles.dealStatValue}>
-                                  BDT {Number(deal.min_investment).toLocaleString()}
-                                </Text>
-                              </View>
-                            )}
+                        {/* Deal Financial & Engagement Stats */}
+                        <View style={styles.dealStatsBox}>
+                          {Boolean(deal.amount_seeking) && (
+                            <View style={styles.dealStatItem}>
+                              <Text style={styles.dealStatLabel}>Seeking</Text>
+                              <Text style={styles.dealStatValue}>
+                                BDT {Number(deal.amount_seeking).toLocaleString()}
+                              </Text>
+                            </View>
+                          )}
+
+                          <View style={styles.dealStatItem}>
+                            <Text style={styles.dealStatLabel}>Interested</Text>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                              <Text style={styles.dealStatValue}>
+                                {deal.interested_count ?? deal.investors_count ?? 0}
+                              </Text>
+                              {hasUnread && (
+                                <View style={{ backgroundColor: '#FEF3C7', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4, borderWidth: 1, borderColor: '#FDE68A' }}>
+                                  <Text style={{ fontSize: 9, fontWeight: '800', color: '#B45309' }}>
+                                    {deal.unviewed_interested_count} new
+                                  </Text>
+                                </View>
+                              )}
+                            </View>
                           </View>
-                        )}
+
+                          <View style={styles.dealStatItem}>
+                            <Text style={styles.dealStatLabel}>Commits</Text>
+                            <Text style={styles.dealStatValue}>
+                              {deal.commits_count ?? 0}
+                            </Text>
+                          </View>
+                        </View>
+
+                        {/* Card Action Toolbar */}
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 6, marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#F1F5F9' }}>
+                          {/* Member Activity Button */}
+                          <TouchableOpacity
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              gap: 4,
+                              backgroundColor: hasUnread ? '#FEF3C7' : '#F1F5F9',
+                              paddingHorizontal: 10,
+                              paddingVertical: 6,
+                              borderRadius: 6,
+                              borderWidth: 1,
+                              borderColor: hasUnread ? '#FDE68A' : '#E2E8F0',
+                            }}
+                            onPress={() => handleOpenDealActivity(deal)}
+                            activeOpacity={0.8}
+                          >
+                            <Ionicons name="people-outline" size={13} color={hasUnread ? '#B45309' : '#0A5554'} />
+                            <Text style={{ fontSize: 11, fontWeight: '700', color: hasUnread ? '#B45309' : '#0A5554' }}>
+                              Activity{hasUnread ? ` (${deal.unviewed_interested_count})` : ''}
+                            </Text>
+                          </TouchableOpacity>
+
+                          {/* View Button */}
+                          <TouchableOpacity
+                            style={styles.eventActionBtn}
+                            onPress={() => handleOpenViewDeal(deal)}
+                            activeOpacity={0.8}
+                          >
+                            <Ionicons name="eye-outline" size={13} color="#0A5554" />
+                            <Text style={styles.eventActionBtnText}>View</Text>
+                          </TouchableOpacity>
+
+                          {/* Edit Button */}
+                          <TouchableOpacity
+                            style={[styles.eventActionBtn, styles.eventActionBtnEdit]}
+                            onPress={() => handleOpenEditDeal(deal)}
+                            activeOpacity={0.8}
+                          >
+                            <Ionicons name="create-outline" size={13} color="#0284C7" />
+                            <Text style={[styles.eventActionBtnText, { color: '#0284C7' }]}>Edit</Text>
+                          </TouchableOpacity>
+
+                          {/* Delete Button */}
+                          <TouchableOpacity
+                            style={[styles.eventActionBtn, styles.eventActionBtnDelete]}
+                            onPress={() => handleOpenDeleteDeal(deal)}
+                            activeOpacity={0.8}
+                          >
+                            <Ionicons name="trash-outline" size={13} color="#DC2626" />
+                            <Text style={[styles.eventActionBtnText, { color: '#DC2626' }]}>Delete</Text>
+                          </TouchableOpacity>
+                        </View>
                       </View>
                     );
                   })}
@@ -14351,6 +15169,1529 @@ export default function AdminScreen() {
                   <ActivityIndicator size="small" color="#FFFFFF" />
                 ) : (
                   <Text style={styles.deleteModalConfirmBtnText}>Delete Member</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ========================================== */}
+      {/* 1. VIEW DEAL DETAILS MODAL                */}
+      {/* ========================================== */}
+      <Modal
+        visible={viewDealModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setViewDealModalVisible(false)}
+      >
+        <SafeAreaView style={styles.editModalSafeArea}>
+          <View style={styles.editModalContainer}>
+            {/* Modal Header */}
+            <View style={styles.editModalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                <View
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 18,
+                    backgroundColor: '#E6F4F1',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Ionicons name="briefcase-outline" size={20} color="#0A5554" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.editModalTitle} numberOfLines={1}>
+                    Deal Overview
+                  </Text>
+                  <Text style={styles.editModalSubtitle} numberOfLines={1}>
+                    Curated investment opportunity details
+                  </Text>
+                </View>
+              </View>
+
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                {selectedDealForView?.id ? (
+                  <View style={styles.editModalIdBadge}>
+                    <Text style={styles.editModalIdBadgeText}>
+                      #{selectedDealForView.id}
+                    </Text>
+                  </View>
+                ) : null}
+                <TouchableOpacity
+                  style={styles.modalCloseBtn}
+                  onPress={() => setViewDealModalVisible(false)}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="close" size={20} color="#64748B" />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Modal Body */}
+            <ScrollView
+              style={styles.editModalScrollView}
+              contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
+              showsVerticalScrollIndicator={false}
+            >
+              {selectedDealForView ? (
+                <View style={{ gap: 16 }}>
+                  {/* Hero Card */}
+                  <View style={[styles.eventCard, { padding: 16, gap: 12 }]}>
+                    {/* Cover Photo if present */}
+                    {selectedDealForView.cover_url && selectedDealForView.has_custom_cover ? (
+                      <Image
+                        source={{ uri: selectedDealForView.cover_url }}
+                        style={{
+                          width: '100%',
+                          height: 120,
+                          borderRadius: 8,
+                          backgroundColor: '#E2E8F0',
+                        }}
+                        resizeMode="cover"
+                      />
+                    ) : null}
+
+                    {/* Logo & Title Header */}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                      {selectedDealForView.logo_url ? (
+                        <Image
+                          source={{ uri: selectedDealForView.logo_url }}
+                          style={{
+                            width: 60,
+                            height: 60,
+                            borderRadius: 12,
+                            backgroundColor: '#E2E8F0',
+                            borderWidth: 1,
+                            borderColor: '#CBD5E1',
+                          }}
+                        />
+                      ) : (
+                        <View
+                          style={{
+                            width: 60,
+                            height: 60,
+                            borderRadius: 12,
+                            backgroundColor: '#E6F4F1',
+                            borderWidth: 1,
+                            borderColor: '#B4E6DA',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          <Text style={{ fontSize: 24, fontWeight: '800', color: '#0A5554' }}>
+                            {(selectedDealForView.title || 'D').charAt(0).toUpperCase()}
+                          </Text>
+                        </View>
+                      )}
+
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.eventTitle, { fontSize: 18, marginBottom: 2 }]}>
+                          {selectedDealForView.title}
+                        </Text>
+                        <Text style={{ fontSize: 13, color: '#64748B', fontWeight: '600', marginBottom: 4 }}>
+                          {selectedDealForView.sector || 'General Tech'}
+                        </Text>
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                          {/* Type Badge */}
+                          <View
+                            style={[
+                              styles.metaPill,
+                              selectedDealForView.type === 'invest'
+                                ? { backgroundColor: '#E6F4F1', borderColor: '#B4E6DA' }
+                                : selectedDealForView.type === 'commit'
+                                ? { backgroundColor: '#FEF3C7', borderColor: '#FDE68A' }
+                                : selectedDealForView.type === 'review'
+                                ? { backgroundColor: '#F3E8FF', borderColor: '#E9D5FF' }
+                                : { backgroundColor: '#EEF2FF', borderColor: '#C7D2FE' },
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.metaPillText,
+                                {
+                                  fontWeight: '800',
+                                  color:
+                                    selectedDealForView.type === 'invest'
+                                      ? '#0A5554'
+                                      : selectedDealForView.type === 'commit'
+                                      ? '#B45309'
+                                      : selectedDealForView.type === 'review'
+                                      ? '#7E22CE'
+                                      : '#4338CA',
+                                },
+                              ]}
+                            >
+                              {String(selectedDealForView.type || 'invest').toUpperCase()}
+                            </Text>
+                          </View>
+
+                          {/* Status Badge */}
+                          <View
+                            style={[
+                              styles.statusBadge,
+                              selectedDealForView.status === 'active'
+                                ? styles.statusCompleted
+                                : selectedDealForView.status === 'draft'
+                                ? { backgroundColor: '#FEF3C7', borderColor: '#FDE68A' }
+                                : styles.statusNeutral,
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.statusBadgeText,
+                                selectedDealForView.status === 'active'
+                                  ? styles.statusCompletedText
+                                  : selectedDealForView.status === 'draft'
+                                  ? { color: '#B45309' }
+                                  : styles.statusNeutralText,
+                              ]}
+                            >
+                              {String(selectedDealForView.status || 'Active').toUpperCase()}
+                            </Text>
+                          </View>
+
+                          {/* Stage */}
+                          {Boolean(selectedDealForView.investment_stage) && (
+                            <View style={[styles.metaPill, styles.metaPillStage]}>
+                              <Text style={[styles.metaPillText, styles.metaPillStageText]}>
+                                {selectedDealForView.investment_stage}
+                              </Text>
+                            </View>
+                          )}
+
+                          {/* Dual Listing */}
+                          {Boolean(selectedDealForView.is_portfolio && selectedDealForView.type !== 'portfolio') && (
+                            <View style={[styles.metaPill, { backgroundColor: '#EEF2FF', borderColor: '#C7D2FE' }]}>
+                              <Text style={[styles.metaPillText, { color: '#4338CA', fontWeight: '700' }]}>
+                                Also Portfolio
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+                      </View>
+                    </View>
+                  </View>
+
+                  {/* Financial & Terms Overview */}
+                  <View style={{ backgroundColor: '#FFFFFF', borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', padding: 14, gap: 10 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '800', color: '#0A5554', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                      Financial Parameters
+                    </Text>
+
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+                      <Text style={{ fontSize: 13, color: '#64748B' }}>Amount Seeking</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '800', color: '#0F172A' }}>
+                        {selectedDealForView.amount_seeking
+                          ? `BDT ${Number(selectedDealForView.amount_seeking).toLocaleString()}`
+                          : 'Not specified'}
+                      </Text>
+                    </View>
+
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+                      <Text style={{ fontSize: 13, color: '#64748B' }}>Investment Stage</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>
+                        {selectedDealForView.investment_stage || 'Not set'}
+                      </Text>
+                    </View>
+
+                    {Boolean(selectedDealForView.monthly_revenue) && (
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+                        <Text style={{ fontSize: 13, color: '#64748B' }}>Monthly Revenue</Text>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>
+                          {selectedDealForView.monthly_revenue}
+                        </Text>
+                      </View>
+                    )}
+
+                    {Boolean(selectedDealForView.growth_rate) && (
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+                        <Text style={{ fontSize: 13, color: '#64748B' }}>Growth Rate</Text>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>
+                          {selectedDealForView.growth_rate}
+                        </Text>
+                      </View>
+                    )}
+
+                    {Boolean(selectedDealForView.revenue_model) && (
+                      <View style={{ paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+                        <Text style={{ fontSize: 12, color: '#64748B', marginBottom: 2 }}>Revenue Model</Text>
+                        <Text style={{ fontSize: 13, color: '#334155' }}>
+                          {selectedDealForView.revenue_model}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+
+                  {/* Executive Overview */}
+                  <View style={{ backgroundColor: '#FFFFFF', borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', padding: 14 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '800', color: '#0A5554', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
+                      Description & Overview
+                    </Text>
+                    <Text style={{ fontSize: 13, color: '#334155', lineHeight: 20 }}>
+                      {selectedDealForView.description}
+                    </Text>
+                  </View>
+
+                  {/* Key Metrics Section */}
+                  {Array.isArray(selectedDealForView.key_metrics) && selectedDealForView.key_metrics.length > 0 ? (
+                    <View style={{ backgroundColor: '#FFFFFF', borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', padding: 14, gap: 8 }}>
+                      <Text style={{ fontSize: 11, fontWeight: '800', color: '#0A5554', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                        Key Metrics
+                      </Text>
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                        {selectedDealForView.key_metrics.map((km, idx) => (
+                          <View
+                            key={`vm-metric-${idx}`}
+                            style={{
+                              backgroundColor: '#F8FAFC',
+                              borderRadius: 8,
+                              borderWidth: 1,
+                              borderColor: '#E2E8F0',
+                              paddingHorizontal: 12,
+                              paddingVertical: 8,
+                              minWidth: '45%',
+                            }}
+                          >
+                            <Text style={{ fontSize: 11, color: '#64748B', fontWeight: '600' }}>
+                              {km.name}
+                            </Text>
+                            <Text style={{ fontSize: 14, fontWeight: '800', color: '#0A5554', marginTop: 2 }}>
+                              {km.value}
+                            </Text>
+                          </View>
+                        ))}
+                      </View>
+                    </View>
+                  ) : null}
+
+                  {/* Strategic Details */}
+                  {Boolean(selectedDealForView.future_plans || selectedDealForView.partnerships) && (
+                    <View style={{ backgroundColor: '#FFFFFF', borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', padding: 14, gap: 10 }}>
+                      <Text style={{ fontSize: 11, fontWeight: '800', color: '#0A5554', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                        Strategic Horizon
+                      </Text>
+
+                      {Boolean(selectedDealForView.future_plans) && (
+                        <View style={{ paddingVertical: 4 }}>
+                          <Text style={{ fontSize: 12, color: '#64748B', fontWeight: '700', marginBottom: 2 }}>Future Plans</Text>
+                          <Text style={{ fontSize: 13, color: '#334155', lineHeight: 18 }}>
+                            {selectedDealForView.future_plans}
+                          </Text>
+                        </View>
+                      )}
+
+                      {Boolean(selectedDealForView.partnerships) && (
+                        <View style={{ paddingVertical: 4, borderTopWidth: 1, borderTopColor: '#F1F5F9' }}>
+                          <Text style={{ fontSize: 12, color: '#64748B', fontWeight: '700', marginBottom: 2 }}>Key Partnerships</Text>
+                          <Text style={{ fontSize: 13, color: '#334155', lineHeight: 18 }}>
+                            {selectedDealForView.partnerships}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  )}
+
+                  {/* External Links & Materials Bar */}
+                  <View style={{ backgroundColor: '#FFFFFF', borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', padding: 14, gap: 8 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '800', color: '#0A5554', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>
+                      Deal Materials & External Links
+                    </Text>
+
+                    {selectedDealForView.pitch_deck_url ? (
+                      <TouchableOpacity
+                        style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#F0FDF4', padding: 10, borderRadius: 8, borderWidth: 1, borderColor: '#BBF7D0' }}
+                        onPress={() => Linking.openURL(selectedDealForView.pitch_deck_url)}
+                        activeOpacity={0.8}
+                      >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                          <Ionicons name="document-text-outline" size={16} color="#16A34A" />
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#15803D' }}>Pitch Deck</Text>
+                        </View>
+                        <Ionicons name="open-outline" size={14} color="#16A34A" />
+                      </TouchableOpacity>
+                    ) : null}
+
+                    {selectedDealForView.substack_link ? (
+                      <TouchableOpacity
+                        style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#FFFBEB', padding: 10, borderRadius: 8, borderWidth: 1, borderColor: '#FDE68A' }}
+                        onPress={() => Linking.openURL(selectedDealForView.substack_link)}
+                        activeOpacity={0.8}
+                      >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                          <Ionicons name="newspaper-outline" size={16} color="#D97706" />
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#B45309' }}>Substack Deal Memo</Text>
+                        </View>
+                        <Ionicons name="open-outline" size={14} color="#D97706" />
+                      </TouchableOpacity>
+                    ) : null}
+
+                    {selectedDealForView.groupchat_invite_link ? (
+                      <TouchableOpacity
+                        style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#ECFDF5', padding: 10, borderRadius: 8, borderWidth: 1, borderColor: '#A7F3D0' }}
+                        onPress={() => Linking.openURL(selectedDealForView.groupchat_invite_link)}
+                        activeOpacity={0.8}
+                      >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                          <Ionicons name="logo-whatsapp" size={16} color="#059669" />
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#047857' }}>Investor Syndicate Groupchat</Text>
+                        </View>
+                        <Ionicons name="open-outline" size={14} color="#059669" />
+                      </TouchableOpacity>
+                    ) : null}
+
+                    {selectedDealForView.video_url ? (
+                      <TouchableOpacity
+                        style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#EFF6FF', padding: 10, borderRadius: 8, borderWidth: 1, borderColor: '#BFDBFE' }}
+                        onPress={() => Linking.openURL(selectedDealForView.video_url)}
+                        activeOpacity={0.8}
+                      >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                          <Ionicons name="play-circle-outline" size={16} color="#2563EB" />
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#1D4ED8' }}>Founder Pitch Video</Text>
+                        </View>
+                        <Ionicons name="open-outline" size={14} color="#2563EB" />
+                      </TouchableOpacity>
+                    ) : null}
+
+                    {!selectedDealForView.pitch_deck_url &&
+                    !selectedDealForView.substack_link &&
+                    !selectedDealForView.groupchat_invite_link &&
+                    !selectedDealForView.video_url ? (
+                      <Text style={{ fontSize: 12, color: '#94A3B8', fontStyle: 'italic' }}>
+                        No external documents or links attached to this deal.
+                      </Text>
+                    ) : null}
+                  </View>
+                </View>
+              ) : null}
+            </ScrollView>
+
+            {/* Modal Footer */}
+            <View style={styles.editModalFooter}>
+              <TouchableOpacity
+                style={styles.editModalCancelBtn}
+                onPress={() => setViewDealModalVisible(false)}
+              >
+                <Text style={styles.editModalCancelBtnText}>Close</Text>
+              </TouchableOpacity>
+
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <TouchableOpacity
+                  style={[styles.editModalSaveBtn, { backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#CBD5E1' }]}
+                  onPress={() => {
+                    const d = selectedDealForView;
+                    setViewDealModalVisible(false);
+                    if (d) handleOpenDealActivity(d);
+                  }}
+                >
+                  <Ionicons name="people-outline" size={15} color="#0A5554" style={{ marginRight: 4 }} />
+                  <Text style={[styles.editModalSaveBtnText, { color: '#0A5554' }]}>Activity</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.editModalSaveBtn}
+                  onPress={() => {
+                    const d = selectedDealForView;
+                    setViewDealModalVisible(false);
+                    if (d) handleOpenEditDeal(d);
+                  }}
+                >
+                  <Ionicons name="create-outline" size={15} color="#FFFFFF" style={{ marginRight: 4 }} />
+                  <Text style={styles.editModalSaveBtnText}>Edit Deal</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      {/* ========================================== */}
+      {/* 2. CREATE / EDIT DEAL MODAL               */}
+      {/* ========================================== */}
+      <Modal
+        visible={createDealModalVisible || editDealModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => {
+          setCreateDealModalVisible(false);
+          setEditDealModalVisible(false);
+          setEditingDeal(null);
+        }}
+      >
+        <SafeAreaView style={styles.editModalSafeArea}>
+          <View style={styles.editModalContainer}>
+            {/* Modal Header */}
+            <View style={styles.editModalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                <View
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 18,
+                    backgroundColor: '#E6F4F1',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Ionicons name="briefcase-outline" size={20} color="#0A5554" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.editModalTitle} numberOfLines={1}>
+                    {editingDeal ? 'Edit Deal' : 'New Deal Entry'}
+                  </Text>
+                  <Text style={styles.editModalSubtitle} numberOfLines={1}>
+                    {editingDeal ? 'Update deal pipeline parameters & links' : 'Add new opportunity to deal flow pipeline'}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                {editingDeal?.id ? (
+                  <View style={styles.editModalIdBadge}>
+                    <Text style={styles.editModalIdBadgeText}>
+                      #{editingDeal.id}
+                    </Text>
+                  </View>
+                ) : null}
+                <TouchableOpacity
+                  style={styles.modalCloseBtn}
+                  onPress={() => {
+                    setCreateDealModalVisible(false);
+                    setEditDealModalVisible(false);
+                    setEditingDeal(null);
+                  }}
+                  activeOpacity={0.7}
+                  disabled={dealSaving}
+                >
+                  <Ionicons name="close" size={20} color="#64748B" />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Modal Body */}
+            <ScrollView
+              style={styles.editModalScrollView}
+              contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
+              <View style={{ gap: 16 }}>
+                {/* Field 1: Deal Type Selector */}
+                <View style={styles.formField}>
+                  <Text style={styles.formLabel}>Deal Type *</Text>
+                  <View style={{ flexDirection: 'row', gap: 6 }}>
+                    {[
+                      { key: 'invest', label: 'Invest' },
+                      { key: 'commit', label: 'Commit' },
+                      { key: 'review', label: 'Review' },
+                      { key: 'portfolio', label: 'Portfolio' },
+                    ].map((t) => {
+                      const isSelected = dealFormData.type === t.key;
+                      return (
+                        <TouchableOpacity
+                          key={`deal-type-select-${t.key}`}
+                          style={{
+                            flex: 1,
+                            paddingVertical: 10,
+                            borderRadius: 8,
+                            backgroundColor: isSelected ? '#E6F4F1' : '#FFFFFF',
+                            borderWidth: 1.5,
+                            borderColor: isSelected ? '#0A5554' : '#E2E8F0',
+                            alignItems: 'center',
+                          }}
+                          onPress={() => setDealFormData((prev) => ({ ...prev, type: t.key }))}
+                          activeOpacity={0.8}
+                        >
+                          <Text
+                            style={{
+                              fontSize: 12,
+                              fontWeight: '700',
+                              color: isSelected ? '#0A5554' : '#475569',
+                            }}
+                          >
+                            {t.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+
+                {/* Field 2: Also in Portfolio Toggle */}
+                {dealFormData.type !== 'portfolio' ? (
+                  <TouchableOpacity
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      backgroundColor: dealFormData.is_portfolio ? '#EEF2FF' : '#F8FAFC',
+                      padding: 12,
+                      borderRadius: 10,
+                      borderWidth: 1,
+                      borderColor: dealFormData.is_portfolio ? '#C7D2FE' : '#E2E8F0',
+                      gap: 10,
+                    }}
+                    onPress={() => setDealFormData((prev) => ({ ...prev, is_portfolio: !prev.is_portfolio }))}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons
+                      name={dealFormData.is_portfolio ? 'checkbox' : 'square-outline'}
+                      size={20}
+                      color={dealFormData.is_portfolio ? '#4338CA' : '#94A3B8'}
+                    />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: dealFormData.is_portfolio ? '#3730A3' : '#334155' }}>
+                        Dual-List in Portfolio
+                      </Text>
+                      <Text style={{ fontSize: 11, color: dealFormData.is_portfolio ? '#4F46E5' : '#64748B' }}>
+                        Shows this active syndicate round in public portfolio sections.
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                ) : null}
+
+                {/* Field 3: Title */}
+                <View style={styles.formField}>
+                  <Text style={styles.formLabel}>Startup Name / Deal Title *</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    value={dealFormData.title}
+                    onChangeText={(text) => setDealFormData((prev) => ({ ...prev, title: text }))}
+                    placeholder="e.g. MedTech Solutions"
+                    placeholderTextColor="#94A3B8"
+                    maxLength={255}
+                  />
+                </View>
+
+                {/* Field 4: Sector */}
+                <View style={styles.formField}>
+                  <Text style={styles.formLabel}>Industry Sector *</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    value={dealFormData.sector}
+                    onChangeText={(text) => setDealFormData((prev) => ({ ...prev, sector: text }))}
+                    placeholder="e.g. HealthTech, FinTech, B2B SaaS"
+                    placeholderTextColor="#94A3B8"
+                    maxLength={255}
+                  />
+                </View>
+
+                {/* Field 5: Investment Stage */}
+                <View style={styles.formField}>
+                  <Text style={styles.formLabel}>Investment Stage</Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                    {['Pre Seed', 'Seed', 'Series A', 'Series B', 'Series C', 'Series D'].map((stg) => {
+                      const isChosen = dealFormData.investment_stage === stg;
+                      return (
+                        <TouchableOpacity
+                          key={`stage-opt-${stg}`}
+                          style={{
+                            paddingHorizontal: 10,
+                            paddingVertical: 6,
+                            borderRadius: 6,
+                            backgroundColor: isChosen ? '#0A5554' : '#F1F5F9',
+                            borderWidth: 1,
+                            borderColor: isChosen ? '#0A5554' : '#E2E8F0',
+                          }}
+                          onPress={() => setDealFormData((prev) => ({ ...prev, investment_stage: stg }))}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: isChosen ? '#FFFFFF' : '#475569' }}>
+                            {stg}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+
+                {/* Field 6: Amount Seeking */}
+                <View style={styles.formField}>
+                  <Text style={styles.formLabel}>Amount Seeking (BDT)</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    value={dealFormData.amount_seeking}
+                    onChangeText={(text) => setDealFormData((prev) => ({ ...prev, amount_seeking: text }))}
+                    placeholder="e.g. 250000"
+                    placeholderTextColor="#94A3B8"
+                    keyboardType="numeric"
+                    maxLength={15}
+                  />
+                </View>
+
+                {/* Field 7: Status */}
+                <View style={styles.formField}>
+                  <Text style={styles.formLabel}>Publication Status</Text>
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    {['active', 'closed', 'draft'].map((st) => {
+                      const isCurrent = dealFormData.status === st;
+                      return (
+                        <TouchableOpacity
+                          key={`deal-status-edit-${st}`}
+                          style={{
+                            flex: 1,
+                            paddingVertical: 8,
+                            borderRadius: 8,
+                            backgroundColor: isCurrent ? '#0A5554' : '#F1F5F9',
+                            alignItems: 'center',
+                          }}
+                          onPress={() => setDealFormData((prev) => ({ ...prev, status: st }))}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: isCurrent ? '#FFFFFF' : '#475569' }}>
+                            {st.toUpperCase()}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+
+                {/* Field 8: Company Logo */}
+                <View style={styles.formField}>
+                  <Text style={styles.formLabel}>Company Logo (Optional)</Text>
+                  <View style={styles.teamAboutPhotoPickerBox}>
+                    <View style={styles.teamAboutPhotoPickerRow}>
+                      {dealFormData.logo_file ? (
+                        <Image
+                          source={{ uri: dealFormData.logo_file.uri }}
+                          style={[styles.teamAboutPhotoThumb, { borderRadius: 10 }]}
+                        />
+                      ) : editingDeal && editingDeal.logo_url && !dealFormData.remove_logo ? (
+                        <Image
+                          source={{ uri: editingDeal.logo_url }}
+                          style={[styles.teamAboutPhotoThumb, { borderRadius: 10 }]}
+                        />
+                      ) : (
+                        <View
+                          style={[
+                            styles.teamAboutPhotoThumb,
+                            { borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+                          ]}
+                        >
+                          <Ionicons name="image-outline" size={26} color="#94A3B8" />
+                        </View>
+                      )}
+
+                      <View style={styles.teamAboutPhotoActionsCol}>
+                        <TouchableOpacity
+                          style={styles.teamAboutPhotoChooseBtn}
+                          onPress={handlePickDealLogo}
+                          activeOpacity={0.8}
+                        >
+                          <Ionicons name="camera-outline" size={16} color="#0A5554" />
+                          <Text style={styles.teamAboutPhotoChooseBtnText}>
+                            {dealFormData.logo_file ? 'Change Logo' : 'Choose Logo'}
+                          </Text>
+                        </TouchableOpacity>
+
+                        {dealFormData.logo_file ? (
+                          <TouchableOpacity
+                            style={styles.teamAboutPhotoRemoveBtn}
+                            onPress={handleCancelDealLogoChange}
+                            activeOpacity={0.8}
+                          >
+                            <Ionicons name="close-circle-outline" size={14} color="#DC2626" />
+                            <Text style={styles.teamAboutPhotoRemoveBtnText}>Cancel Selected</Text>
+                          </TouchableOpacity>
+                        ) : editingDeal && editingDeal.has_custom_logo && !dealFormData.remove_logo ? (
+                          <TouchableOpacity
+                            style={styles.teamAboutPhotoRemoveBtn}
+                            onPress={handleRemoveDealLogo}
+                            activeOpacity={0.8}
+                          >
+                            <Ionicons name="trash-outline" size={14} color="#DC2626" />
+                            <Text style={styles.teamAboutPhotoRemoveBtnText}>Remove Logo</Text>
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+                    </View>
+
+                    {dealFormData.remove_logo ? (
+                      <View style={styles.teamAboutPhotoRemovedNotice}>
+                        <Text style={styles.teamAboutPhotoRemovedText}>Logo marked for removal on save.</Text>
+                        <TouchableOpacity
+                          style={styles.teamAboutPhotoUndoBtn}
+                          onPress={() => setDealFormData((prev) => ({ ...prev, remove_logo: false }))}
+                        >
+                          <Text style={styles.teamAboutPhotoUndoBtnText}>Undo</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : null}
+                  </View>
+                </View>
+
+                {/* Field 9: Company Cover Banner */}
+                <View style={styles.formField}>
+                  <Text style={styles.formLabel}>Cover / Header Banner (Optional)</Text>
+                  <View style={styles.teamAboutPhotoPickerBox}>
+                    <View style={styles.teamAboutPhotoPickerRow}>
+                      {dealFormData.cover_file ? (
+                        <Image
+                          source={{ uri: dealFormData.cover_file.uri }}
+                          style={[styles.teamAboutPhotoThumb, { borderRadius: 8, width: 88 }]}
+                          resizeMode="cover"
+                        />
+                      ) : editingDeal && editingDeal.cover_url && !dealFormData.remove_cover ? (
+                        <Image
+                          source={{ uri: editingDeal.cover_url }}
+                          style={[styles.teamAboutPhotoThumb, { borderRadius: 8, width: 88 }]}
+                          resizeMode="cover"
+                        />
+                      ) : (
+                        <View
+                          style={[
+                            styles.teamAboutPhotoThumb,
+                            { borderRadius: 8, width: 88, alignItems: 'center', justifyContent: 'center' },
+                          ]}
+                        >
+                          <Ionicons name="images-outline" size={26} color="#94A3B8" />
+                        </View>
+                      )}
+
+                      <View style={styles.teamAboutPhotoActionsCol}>
+                        <TouchableOpacity
+                          style={styles.teamAboutPhotoChooseBtn}
+                          onPress={handlePickDealCover}
+                          activeOpacity={0.8}
+                        >
+                          <Ionicons name="camera-outline" size={16} color="#0A5554" />
+                          <Text style={styles.teamAboutPhotoChooseBtnText}>
+                            {dealFormData.cover_file ? 'Change Cover' : 'Choose Cover'}
+                          </Text>
+                        </TouchableOpacity>
+
+                        {dealFormData.cover_file ? (
+                          <TouchableOpacity
+                            style={styles.teamAboutPhotoRemoveBtn}
+                            onPress={handleCancelDealCoverChange}
+                            activeOpacity={0.8}
+                          >
+                            <Ionicons name="close-circle-outline" size={14} color="#DC2626" />
+                            <Text style={styles.teamAboutPhotoRemoveBtnText}>Cancel Selected</Text>
+                          </TouchableOpacity>
+                        ) : editingDeal && editingDeal.has_custom_cover && !dealFormData.remove_cover ? (
+                          <TouchableOpacity
+                            style={styles.teamAboutPhotoRemoveBtn}
+                            onPress={handleRemoveDealCover}
+                            activeOpacity={0.8}
+                          >
+                            <Ionicons name="trash-outline" size={14} color="#DC2626" />
+                            <Text style={styles.teamAboutPhotoRemoveBtnText}>Remove Cover</Text>
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+                    </View>
+
+                    {dealFormData.remove_cover ? (
+                      <View style={styles.teamAboutPhotoRemovedNotice}>
+                        <Text style={styles.teamAboutPhotoRemovedText}>Cover marked for removal on save.</Text>
+                        <TouchableOpacity
+                          style={styles.teamAboutPhotoUndoBtn}
+                          onPress={() => setDealFormData((prev) => ({ ...prev, remove_cover: false }))}
+                        >
+                          <Text style={styles.teamAboutPhotoUndoBtnText}>Undo</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : null}
+                  </View>
+                </View>
+
+                {/* Field 10: Description */}
+                <View style={styles.formField}>
+                  <Text style={styles.formLabel}>Overview / Pitch *</Text>
+                  <TextInput
+                    style={[styles.formInput, { minHeight: 90, textAlignVertical: 'top' }]}
+                    value={dealFormData.description}
+                    onChangeText={(text) => setDealFormData((prev) => ({ ...prev, description: text }))}
+                    placeholder="Executive summary of the opportunity, market proposition, traction..."
+                    placeholderTextColor="#94A3B8"
+                    multiline
+                    numberOfLines={4}
+                  />
+                </View>
+
+                {/* Field 11: Dynamic Key Metrics Builder */}
+                <View style={styles.formField}>
+                  <View style={styles.formSectionHeaderRow}>
+                    <Text style={styles.formLabel}>Key Metrics (KPIs)</Text>
+                    <TouchableOpacity
+                      style={styles.dynamicListAddBtn}
+                      onPress={handleAddDealMetric}
+                      activeOpacity={0.8}
+                    >
+                      <Ionicons name="add" size={14} color="#0A5554" />
+                      <Text style={styles.dynamicListAddBtnText}>Add Metric</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {(dealFormData.key_metrics || []).map((m, idx) => (
+                    <View key={`deal-metric-row-${idx}`} style={styles.dynamicListRow}>
+                      <TextInput
+                        style={[styles.formInput, { flex: 1 }]}
+                        value={m.name}
+                        onChangeText={(text) => handleUpdateDealMetric(idx, 'name', text)}
+                        placeholder="Name (e.g. ARR)"
+                        placeholderTextColor="#94A3B8"
+                        maxLength={100}
+                      />
+                      <TextInput
+                        style={[styles.formInput, { flex: 1 }]}
+                        value={m.value}
+                        onChangeText={(text) => handleUpdateDealMetric(idx, 'value', text)}
+                        placeholder="Value (e.g. $50k)"
+                        placeholderTextColor="#94A3B8"
+                        maxLength={100}
+                      />
+                      <TouchableOpacity
+                        style={styles.dynamicListRemoveBtn}
+                        onPress={() => handleRemoveDealMetric(idx)}
+                        activeOpacity={0.8}
+                      >
+                        <Ionicons name="trash-outline" size={16} color="#DC2626" />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+
+                {/* Field 12 & 13: Revenue & Growth */}
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  <View style={[styles.formField, { flex: 1 }]}>
+                    <Text style={styles.formLabel}>Monthly Revenue</Text>
+                    <TextInput
+                      style={styles.formInput}
+                      value={dealFormData.monthly_revenue}
+                      onChangeText={(text) => setDealFormData((prev) => ({ ...prev, monthly_revenue: text }))}
+                      placeholder="$15,000 / mo"
+                      placeholderTextColor="#94A3B8"
+                      maxLength={100}
+                    />
+                  </View>
+                  <View style={[styles.formField, { flex: 1 }]}>
+                    <Text style={styles.formLabel}>Growth Rate</Text>
+                    <TextInput
+                      style={styles.formInput}
+                      value={dealFormData.growth_rate}
+                      onChangeText={(text) => setDealFormData((prev) => ({ ...prev, growth_rate: text }))}
+                      placeholder="25% MoM"
+                      placeholderTextColor="#94A3B8"
+                      maxLength={100}
+                    />
+                  </View>
+                </View>
+
+                {/* Field 14: Revenue Model */}
+                <View style={styles.formField}>
+                  <Text style={styles.formLabel}>Revenue Model (Optional)</Text>
+                  <TextInput
+                    style={[styles.formInput, { minHeight: 60, textAlignVertical: 'top' }]}
+                    value={dealFormData.revenue_model}
+                    onChangeText={(text) => setDealFormData((prev) => ({ ...prev, revenue_model: text }))}
+                    placeholder="B2B subscription tiers, commission fee on GMV..."
+                    placeholderTextColor="#94A3B8"
+                    multiline
+                  />
+                </View>
+
+                {/* Field 15: Future Plans */}
+                <View style={styles.formField}>
+                  <Text style={styles.formLabel}>Future Expansion Plans (Optional)</Text>
+                  <TextInput
+                    style={[styles.formInput, { minHeight: 60, textAlignVertical: 'top' }]}
+                    value={dealFormData.future_plans}
+                    onChangeText={(text) => setDealFormData((prev) => ({ ...prev, future_plans: text }))}
+                    placeholder="Regional rollout, enterprise API, key hires..."
+                    placeholderTextColor="#94A3B8"
+                    multiline
+                  />
+                </View>
+
+                {/* Field 16: Partnerships */}
+                <View style={styles.formField}>
+                  <Text style={styles.formLabel}>Key Strategic Partnerships (Optional)</Text>
+                  <TextInput
+                    style={[styles.formInput, { minHeight: 60, textAlignVertical: 'top' }]}
+                    value={dealFormData.partnerships}
+                    onChangeText={(text) => setDealFormData((prev) => ({ ...prev, partnerships: text }))}
+                    placeholder="Commercial distributors, channel partners, academic sponsors..."
+                    placeholderTextColor="#94A3B8"
+                    multiline
+                  />
+                </View>
+
+                {/* External Links Section */}
+                <View style={styles.formField}>
+                  <Text style={styles.formLabel}>External Links & Documents</Text>
+
+                  <TextInput
+                    style={[styles.formInput, { marginBottom: 8 }]}
+                    value={dealFormData.pitch_deck_url}
+                    onChangeText={(text) => setDealFormData((prev) => ({ ...prev, pitch_deck_url: text }))}
+                    placeholder="Pitch Deck URL (e.g. https://drive.google.com/...)"
+                    placeholderTextColor="#94A3B8"
+                    keyboardType="url"
+                    autoCapitalize="none"
+                  />
+
+                  <TextInput
+                    style={[styles.formInput, { marginBottom: 8 }]}
+                    value={dealFormData.substack_link}
+                    onChangeText={(text) => setDealFormData((prev) => ({ ...prev, substack_link: text }))}
+                    placeholder="Substack Memo Link"
+                    placeholderTextColor="#94A3B8"
+                    keyboardType="url"
+                    autoCapitalize="none"
+                  />
+
+                  <TextInput
+                    style={[styles.formInput, { marginBottom: 8 }]}
+                    value={dealFormData.groupchat_invite_link}
+                    onChangeText={(text) => setDealFormData((prev) => ({ ...prev, groupchat_invite_link: text }))}
+                    placeholder="WhatsApp Syndicate Group Link"
+                    placeholderTextColor="#94A3B8"
+                    keyboardType="url"
+                    autoCapitalize="none"
+                  />
+
+                  <TextInput
+                    style={[styles.formInput, { marginBottom: 8 }]}
+                    value={dealFormData.invest_link}
+                    onChangeText={(text) => setDealFormData((prev) => ({ ...prev, invest_link: text }))}
+                    placeholder="Invest Intent Form URL (Optional override)"
+                    placeholderTextColor="#94A3B8"
+                    keyboardType="url"
+                    autoCapitalize="none"
+                  />
+
+                  <TextInput
+                    style={[styles.formInput, { marginBottom: 8 }]}
+                    value={dealFormData.commit_link}
+                    onChangeText={(text) => setDealFormData((prev) => ({ ...prev, commit_link: text }))}
+                    placeholder="Commitment Form URL (Optional override)"
+                    placeholderTextColor="#94A3B8"
+                    keyboardType="url"
+                    autoCapitalize="none"
+                  />
+
+                  <TextInput
+                    style={styles.formInput}
+                    value={dealFormData.video_url}
+                    onChangeText={(text) => setDealFormData((prev) => ({ ...prev, video_url: text }))}
+                    placeholder="Pitch Video URL (YouTube, Loom, Vimeo)"
+                    placeholderTextColor="#94A3B8"
+                    keyboardType="url"
+                    autoCapitalize="none"
+                  />
+                </View>
+              </View>
+            </ScrollView>
+
+            {/* Modal Footer */}
+            <View style={styles.editModalFooter}>
+              <TouchableOpacity
+                style={styles.editModalCancelBtn}
+                onPress={() => {
+                  setCreateDealModalVisible(false);
+                  setEditDealModalVisible(false);
+                  setEditingDeal(null);
+                }}
+                disabled={dealSaving}
+              >
+                <Text style={styles.editModalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.editModalSaveBtn}
+                onPress={editingDeal ? handleSaveEditDeal : handleSaveCreateDeal}
+                disabled={dealSaving}
+              >
+                {dealSaving ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <Ionicons name="checkmark-sharp" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                    <Text style={styles.editModalSaveBtnText}>
+                      {editingDeal ? 'Save Changes' : 'Create Deal'}
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      {/* ========================================== */}
+      {/* 3. MEMBER ACTIVITY MODAL                  */}
+      {/* ========================================== */}
+      <Modal
+        visible={activityModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setActivityModalVisible(false)}
+      >
+        <SafeAreaView style={styles.editModalSafeArea}>
+          <View style={styles.editModalContainer}>
+            {/* Header */}
+            <View style={styles.editModalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                <View
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 18,
+                    backgroundColor: '#FEF3C7',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Ionicons name="people-outline" size={20} color="#B45309" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.editModalTitle} numberOfLines={1}>
+                    {selectedDealForActivity?.title || 'Deal'} Activity
+                  </Text>
+                  <Text style={styles.editModalSubtitle} numberOfLines={1}>
+                    Member interest, intents & commitments
+                  </Text>
+                </View>
+              </View>
+
+              <TouchableOpacity
+                style={styles.modalCloseBtn}
+                onPress={() => setActivityModalVisible(false)}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Modal Body */}
+            <ScrollView
+              style={styles.editModalScrollView}
+              contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
+              showsVerticalScrollIndicator={false}
+            >
+              {dealActivityLoading ? (
+                <View style={[styles.listLoadingBox, { padding: 40 }]}>
+                  <ActivityIndicator size="large" color="#0A5554" />
+                  <Text style={styles.loadingText}>Loading member activity...</Text>
+                </View>
+              ) : (
+                <View style={{ gap: 14 }}>
+                  {/* Summary Metric Counters */}
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <View style={{ flex: 1, backgroundColor: '#ECFDF5', padding: 10, borderRadius: 8, borderWidth: 1, borderColor: '#A7F3D0', alignItems: 'center' }}>
+                      <Text style={{ fontSize: 10, fontWeight: '700', color: '#047857', textTransform: 'uppercase' }}>Interested</Text>
+                      <Text style={{ fontSize: 18, fontWeight: '800', color: '#065F46', marginTop: 2 }}>
+                        {dealActivityData?.summary?.interested_count ?? 0}
+                      </Text>
+                    </View>
+
+                    <View style={{ flex: 1, backgroundColor: '#F0FDFA', padding: 10, borderRadius: 8, borderWidth: 1, borderColor: '#99F6E4', alignItems: 'center' }}>
+                      <Text style={{ fontSize: 10, fontWeight: '700', color: '#0F766E', textTransform: 'uppercase' }}>Invest</Text>
+                      <Text style={{ fontSize: 18, fontWeight: '800', color: '#115E59', marginTop: 2 }}>
+                        {dealActivityData?.summary?.invest_count ?? 0}
+                      </Text>
+                    </View>
+
+                    <View style={{ flex: 1, backgroundColor: '#FAF5FF', padding: 10, borderRadius: 8, borderWidth: 1, borderColor: '#E9D5FF', alignItems: 'center' }}>
+                      <Text style={{ fontSize: 10, fontWeight: '700', color: '#7E22CE', textTransform: 'uppercase' }}>Review</Text>
+                      <Text style={{ fontSize: 18, fontWeight: '800', color: '#6B21A8', marginTop: 2 }}>
+                        {dealActivityData?.summary?.review_count ?? 0}
+                      </Text>
+                    </View>
+
+                    <View style={{ flex: 1, backgroundColor: '#FFFBEB', padding: 10, borderRadius: 8, borderWidth: 1, borderColor: '#FDE68A', alignItems: 'center' }}>
+                      <Text style={{ fontSize: 10, fontWeight: '700', color: '#B45309', textTransform: 'uppercase' }}>Commits</Text>
+                      <Text style={{ fontSize: 18, fontWeight: '800', color: '#92400E', marginTop: 2 }}>
+                        {dealActivityData?.summary?.commits_count ?? 0}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Unread Interest Banner with Mark All Button */}
+                  {(dealActivityData?.summary?.unviewed_interested_count ?? 0) > 0 ? (
+                    <View
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        backgroundColor: '#FEF3C7',
+                        padding: 12,
+                        borderRadius: 10,
+                        borderWidth: 1,
+                        borderColor: '#FDE68A',
+                      }}
+                    >
+                      <View style={{ flex: 1, marginRight: 8 }}>
+                        <Text style={{ fontSize: 12, fontWeight: '800', color: '#92400E' }}>
+                          {dealActivityData.summary.unviewed_interested_count} Unviewed Expression(s)
+                        </Text>
+                        <Text style={{ fontSize: 11, color: '#B45309' }}>
+                          Members expressed interest in this round.
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        style={{
+                          backgroundColor: '#0A5554',
+                          paddingHorizontal: 10,
+                          paddingVertical: 6,
+                          borderRadius: 6,
+                        }}
+                        onPress={handleMarkAllDealActivityViewed}
+                        disabled={markingAllViewed}
+                      >
+                        {markingAllViewed ? (
+                          <ActivityIndicator size="small" color="#FFFFFF" />
+                        ) : (
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: '#FFFFFF' }}>
+                            Mark All Viewed
+                          </Text>
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
+
+                  {/* Sub-tab Navigation */}
+                  <View style={{ flexDirection: 'row', backgroundColor: '#F1F5F9', borderRadius: 8, padding: 3 }}>
+                    {[
+                      { key: 'interested', label: 'Interested', count: dealActivityData?.interested?.length ?? 0 },
+                      { key: 'invest', label: 'Invest', count: dealActivityData?.invest_rows?.length ?? 0 },
+                      { key: 'review', label: 'Review', count: dealActivityData?.review_rows?.length ?? 0 },
+                      { key: 'commits', label: 'Commits', count: dealActivityData?.commits?.length ?? 0 },
+                    ].map((tab) => {
+                      const isActive = activityActiveSubTab === tab.key;
+                      return (
+                        <TouchableOpacity
+                          key={`act-subtab-${tab.key}`}
+                          style={{
+                            flex: 1,
+                            paddingVertical: 6,
+                            borderRadius: 6,
+                            backgroundColor: isActive ? '#FFFFFF' : 'transparent',
+                            alignItems: 'center',
+                            shadowColor: isActive ? '#000000' : 'transparent',
+                            shadowOffset: { width: 0, height: 1 },
+                            shadowOpacity: isActive ? 0.08 : 0,
+                            elevation: isActive ? 1 : 0,
+                          }}
+                          onPress={() => setActivityActiveSubTab(tab.key)}
+                        >
+                          <Text
+                            style={{
+                              fontSize: 11,
+                              fontWeight: '700',
+                              color: isActive ? '#0A5554' : '#64748B',
+                            }}
+                          >
+                            {tab.label} ({tab.count})
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+
+                  {/* Activity Tab 1: Interested Members */}
+                  {activityActiveSubTab === 'interested' && (
+                    <View style={{ gap: 10 }}>
+                      {!dealActivityData?.interested || dealActivityData.interested.length === 0 ? (
+                        <View style={[styles.emptyState, { padding: 30 }]}>
+                          <Ionicons name="chatbubbles-outline" size={32} color="#94A3B8" />
+                          <Text style={[styles.emptyTitle, { fontSize: 14 }]}>No interested members</Text>
+                          <Text style={styles.emptyText}>No members have expressed interest in this round yet.</Text>
+                        </View>
+                      ) : (
+                        dealActivityData.interested.map((inv) => {
+                          const isViewed = Boolean(inv.viewed_at);
+                          const user = inv.user || {};
+                          const isToggling = togglingInvestmentId === inv.id;
+
+                          return (
+                            <View
+                              key={`act-inv-${inv.id}`}
+                              style={{
+                                backgroundColor: isViewed ? '#FFFFFF' : '#FFFDF5',
+                                borderRadius: 10,
+                                borderWidth: 1,
+                                borderColor: isViewed ? '#E2E8F0' : '#FDE68A',
+                                padding: 12,
+                                gap: 8,
+                              }}
+                            >
+                              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                                  <View
+                                    style={{
+                                      width: 38,
+                                      height: 38,
+                                      borderRadius: 19,
+                                      backgroundColor: '#E6F4F1',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                    }}
+                                  >
+                                    <Text style={{ fontSize: 16, fontWeight: '800', color: '#0A5554' }}>
+                                      {(user.name || 'M').charAt(0).toUpperCase()}
+                                    </Text>
+                                  </View>
+                                  <View style={{ flex: 1 }}>
+                                    <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A' }}>
+                                      {user.name || 'Anonymous Investor'}
+                                    </Text>
+                                    <Text style={{ fontSize: 12, color: '#64748B' }}>
+                                      {user.email || 'No email'}
+                                    </Text>
+                                  </View>
+                                </View>
+
+                                {/* Viewed Status Pill */}
+                                <View
+                                  style={{
+                                    backgroundColor: isViewed ? '#ECFDF5' : '#FEF3C7',
+                                    paddingHorizontal: 8,
+                                    paddingVertical: 3,
+                                    borderRadius: 6,
+                                  }}
+                                >
+                                  <Text
+                                    style={{
+                                      fontSize: 10,
+                                      fontWeight: '800',
+                                      color: isViewed ? '#065F46' : '#B45309',
+                                    }}
+                                  >
+                                    {isViewed ? 'Viewed' : 'Unviewed'}
+                                  </Text>
+                                </View>
+                              </View>
+
+                              {/* Member info details */}
+                              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, paddingTop: 4 }}>
+                                {Boolean(user.phone) && (
+                                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                    <Ionicons name="call-outline" size={12} color="#64748B" />
+                                    <Text style={{ fontSize: 11, color: '#475569' }}>{user.phone}</Text>
+                                  </View>
+                                )}
+                                {Boolean(user.designation || user.company_name) && (
+                                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                    <Ionicons name="business-outline" size={12} color="#64748B" />
+                                    <Text style={{ fontSize: 11, color: '#475569' }}>
+                                      {[user.designation, user.company_name].filter(Boolean).join(', ')}
+                                    </Text>
+                                  </View>
+                                )}
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                  <Ionicons name="time-outline" size={12} color="#64748B" />
+                                  <Text style={{ fontSize: 11, color: '#64748B' }}>
+                                    {inv.created_at ? new Date(inv.created_at).toLocaleDateString() : 'Recent'}
+                                  </Text>
+                                </View>
+                              </View>
+
+                              {/* Toggle viewed button */}
+                              <View style={{ flexDirection: 'row', justifyContent: 'flex-end', paddingTop: 6, borderTopWidth: 1, borderTopColor: '#F1F5F9' }}>
+                                <TouchableOpacity
+                                  style={{
+                                    flexDirection: 'row',
+                                    alignItems: 'center',
+                                    gap: 4,
+                                    paddingHorizontal: 8,
+                                    paddingVertical: 4,
+                                    borderRadius: 6,
+                                    backgroundColor: isViewed ? '#F1F5F9' : '#E6F4F1',
+                                  }}
+                                  onPress={() => handleToggleInvestmentViewed(inv.id)}
+                                  disabled={isToggling}
+                                >
+                                  {isToggling ? (
+                                    <ActivityIndicator size="small" color="#0A5554" />
+                                  ) : (
+                                    <>
+                                      <Ionicons
+                                        name={isViewed ? 'checkmark-circle-outline' : 'checkmark-done'}
+                                        size={13}
+                                        color="#0A5554"
+                                      />
+                                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#0A5554' }}>
+                                        {isViewed ? 'Mark Unread' : 'Mark Viewed'}
+                                      </Text>
+                                    </>
+                                  )}
+                                </TouchableOpacity>
+                              </View>
+                            </View>
+                          );
+                        })
+                      )}
+                    </View>
+                  )}
+
+                  {/* Activity Tab 2: Invest Intent */}
+                  {activityActiveSubTab === 'invest' && (
+                    <View style={{ gap: 10 }}>
+                      {!dealActivityData?.invest_rows || dealActivityData.invest_rows.length === 0 ? (
+                        <View style={[styles.emptyState, { padding: 30 }]}>
+                          <Ionicons name="wallet-outline" size={32} color="#94A3B8" />
+                          <Text style={[styles.emptyTitle, { fontSize: 14 }]}>No direct investments</Text>
+                          <Text style={styles.emptyText}>No direct invest intents recorded for this deal.</Text>
+                        </View>
+                      ) : (
+                        dealActivityData.invest_rows.map((row) => (
+                          <View
+                            key={`act-invrow-${row.id}`}
+                            style={{
+                              backgroundColor: '#FFFFFF',
+                              borderRadius: 10,
+                              borderWidth: 1,
+                              borderColor: '#E2E8F0',
+                              padding: 12,
+                              gap: 6,
+                            }}
+                          >
+                            <Text style={{ fontSize: 13, fontWeight: '800', color: '#0F172A' }}>
+                              {row.user?.name || 'Investor'}
+                            </Text>
+                            <Text style={{ fontSize: 11, color: '#64748B' }}>{row.user?.email}</Text>
+                          </View>
+                        ))
+                      )}
+                    </View>
+                  )}
+
+                  {/* Activity Tab 3: Review / WhatsApp */}
+                  {activityActiveSubTab === 'review' && (
+                    <View style={{ gap: 10 }}>
+                      {!dealActivityData?.review_rows || dealActivityData.review_rows.length === 0 ? (
+                        <View style={[styles.emptyState, { padding: 30 }]}>
+                          <Ionicons name="document-text-outline" size={32} color="#94A3B8" />
+                          <Text style={[styles.emptyTitle, { fontSize: 14 }]}>No review requests</Text>
+                          <Text style={styles.emptyText}>No due diligence or groupchat join requests yet.</Text>
+                        </View>
+                      ) : (
+                        dealActivityData.review_rows.map((row) => (
+                          <View
+                            key={`act-revrow-${row.id}`}
+                            style={{
+                              backgroundColor: '#FFFFFF',
+                              borderRadius: 10,
+                              borderWidth: 1,
+                              borderColor: '#E2E8F0',
+                              padding: 12,
+                              gap: 6,
+                            }}
+                          >
+                            <Text style={{ fontSize: 13, fontWeight: '800', color: '#0F172A' }}>
+                              {row.user?.name || 'Member'}
+                            </Text>
+                            <Text style={{ fontSize: 11, color: '#64748B' }}>{row.user?.email}</Text>
+                            <Text style={{ fontSize: 10, color: '#94A3B8' }}>
+                              Requested review on {row.created_at ? new Date(row.created_at).toLocaleDateString() : 'N/A'}
+                            </Text>
+                          </View>
+                        ))
+                      )}
+                    </View>
+                  )}
+
+                  {/* Activity Tab 4: Commits */}
+                  {activityActiveSubTab === 'commits' && (
+                    <View style={{ gap: 10 }}>
+                      {!dealActivityData?.commits || dealActivityData.commits.length === 0 ? (
+                        <View style={[styles.emptyState, { padding: 30 }]}>
+                          <Ionicons name="shield-checkmark-outline" size={32} color="#94A3B8" />
+                          <Text style={[styles.emptyTitle, { fontSize: 14 }]}>No formal commitments</Text>
+                          <Text style={styles.emptyText}>No investor commitment tickets submitted yet.</Text>
+                        </View>
+                      ) : (
+                        dealActivityData.commits.map((c) => (
+                          <View
+                            key={`act-commit-${c.id}`}
+                            style={{
+                              backgroundColor: '#FFFFFF',
+                              borderRadius: 10,
+                              borderWidth: 1,
+                              borderColor: '#E2E8F0',
+                              padding: 12,
+                              gap: 6,
+                            }}
+                          >
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A' }}>
+                                {c.user?.name || 'Committed Investor'}
+                              </Text>
+                              <View style={{ backgroundColor: '#FEF3C7', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
+                                <Text style={{ fontSize: 12, fontWeight: '800', color: '#B45309' }}>
+                                  BDT {Number(c.amount || 0).toLocaleString()}
+                                </Text>
+                              </View>
+                            </View>
+                            <Text style={{ fontSize: 11, color: '#64748B' }}>{c.user?.email}</Text>
+                            {Boolean(c.deadline) && (
+                              <Text style={{ fontSize: 11, color: '#94A3B8' }}>
+                                Target Fulfilment: {c.deadline}
+                              </Text>
+                            )}
+                          </View>
+                        ))
+                      )}
+                    </View>
+                  )}
+                </View>
+              )}
+            </ScrollView>
+
+            {/* Modal Footer */}
+            <View style={styles.editModalFooter}>
+              <TouchableOpacity
+                style={styles.editModalCancelBtn}
+                onPress={() => setActivityModalVisible(false)}
+              >
+                <Text style={styles.editModalCancelBtnText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      {/* ========================================== */}
+      {/* 4. DELETE DEAL CONFIRMATION MODAL         */}
+      {/* ========================================== */}
+      <Modal
+        visible={deleteDealModalVisible}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => setDeleteDealModalVisible(false)}
+      >
+        <View style={styles.deleteModalOverlay}>
+          <View style={styles.deleteModalBox}>
+            <View style={[styles.deleteModalIconWrap, { backgroundColor: '#FEE2E2' }]}>
+              <Ionicons name="trash-outline" size={26} color="#DC2626" />
+            </View>
+            <Text style={styles.deleteModalTitle}>Delete Deal?</Text>
+            <Text style={styles.deleteModalMessage}>
+              Are you sure you want to permanently delete &ldquo;{selectedDealForDelete?.title}&rdquo;? It will be removed from all BAN investor syndicates and directories.
+            </Text>
+            <View style={styles.deleteModalBtnRow}>
+              <TouchableOpacity
+                style={styles.deleteModalCancelBtn}
+                onPress={() => setDeleteDealModalVisible(false)}
+                disabled={isDeletingDeal}
+              >
+                <Text style={styles.deleteModalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.deleteModalConfirmBtn}
+                onPress={handleConfirmDeleteDeal}
+                disabled={isDeletingDeal}
+              >
+                {isDeletingDeal ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.deleteModalConfirmBtnText}>Delete Deal</Text>
                 )}
               </TouchableOpacity>
             </View>
