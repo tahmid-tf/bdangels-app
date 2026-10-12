@@ -2797,12 +2797,20 @@ function sanitizeEvents(events) {
 function normalizeStats(stats) {
   if (!stats || !stats.length) return FALLBACK_HOME_DATA.landing_stats;
   return stats.map((s, idx) => {
-    const val = s.value || s.stat_value;
-    const lbl = s.label || s.stat_label;
-    if (val && lbl) {
-      return { id: s.id || idx, value: val, label: lbl.replace(/\r\n/g, ' ') };
-    }
-    return FALLBACK_HOME_DATA.landing_stats[idx] || s;
+    const fallback = FALLBACK_HOME_DATA.landing_stats[idx] || FALLBACK_HOME_DATA.landing_stats[0];
+    const rawVal = s.value !== undefined && s.value !== null ? String(s.value).trim() : '';
+    const rawStatVal = s.stat_value !== undefined && s.stat_value !== null ? String(s.stat_value).trim() : '';
+    const val = rawVal || rawStatVal || fallback.value;
+
+    const rawLbl = s.label !== undefined && s.label !== null ? String(s.label).trim() : '';
+    const rawStatLbl = s.stat_label !== undefined && s.stat_label !== null ? String(s.stat_label).trim() : '';
+    const lbl = (rawLbl || rawStatLbl || fallback.label).replace(/\r\n/g, ' ');
+
+    return {
+      id: s.id || fallback.id || idx,
+      value: val,
+      label: lbl,
+    };
   });
 }
 
@@ -3142,4 +3150,100 @@ export async function fetchPublicationsPageData() {
       { category: 'Legal Guide', publications_count: 1 },
     ],
   };
+}
+
+/**
+ * Fetch member deals (Active deals / Featured startups) from GET /api/deals
+ */
+export async function fetchPublicDeals(token, { type = '', search = '', stage = '', sector = '', per_page = 20 } = {}) {
+  try {
+    const params = new URLSearchParams();
+    if (type) params.append('type', type);
+    if (search) params.append('search', search);
+    if (stage) params.append('stage', stage);
+    if (sector) params.append('sector', sector);
+    if (per_page) params.append('per_page', String(per_page));
+
+    const query = params.toString() ? `?${params.toString()}` : '';
+    const res = await fetchAdminWithFallback(`/deals${query}`, token);
+
+    if (res) {
+      const json = await res.json().catch(() => null);
+      if (res.ok) {
+        const rawList = json?.data?.data || json?.data || json;
+        const list = Array.isArray(rawList) ? rawList : [];
+        return {
+          ok: true,
+          status: res.status,
+          deals: sanitizeDeals(list),
+          raw: json,
+        };
+      }
+
+      return {
+        ok: false,
+        status: res.status,
+        message: json?.message || 'Access to active deals requires an approved membership.',
+        statusReason: json?.status || (res.status === 401 ? 'unauthenticated' : 'locked'),
+        deals: [],
+      };
+    }
+  } catch (err) {
+    console.log('Public deals fetch notice:', err);
+  }
+
+  return {
+    ok: false,
+    status: 0,
+    message: 'Could not connect to deals service.',
+    deals: [],
+  };
+}
+
+/**
+ * Fetch a single deal by slug from GET /api/deals/{slug}
+ */
+export async function fetchSingleDeal(token, slug) {
+  try {
+    const res = await fetchAdminWithFallback(`/deals/${encodeURIComponent(slug)}`, token);
+    if (res && res.ok) {
+      const json = await res.json().catch(() => null);
+      const data = json?.data || json;
+      if (data) {
+        return {
+          ok: true,
+          deal: {
+            ...data,
+            logo_url: normalizeImageUrl(data.logo_url),
+            cover_url: normalizeImageUrl(data.cover_url),
+          },
+        };
+      }
+    }
+  } catch (err) {
+    console.log('Single deal fetch notice:', err);
+  }
+  return { ok: false, deal: null };
+}
+
+/**
+ * Express investment interest in a deal via POST /api/deals/{dealId}/invest
+ */
+export async function submitDealInvestmentInterest(token, dealId, type = 'interested') {
+  try {
+    const res = await fetchAdminWithFallback(`/deals/${dealId}/invest`, token, {
+      method: 'POST',
+      body: JSON.stringify({ type }),
+    });
+    if (res) {
+      const json = await res.json().catch(() => null);
+      return {
+        ok: res.ok,
+        message: json?.message || (res.ok ? 'Investment interest recorded.' : 'Unable to record interest.'),
+      };
+    }
+  } catch (err) {
+    console.log('Deal investment interest notice:', err);
+  }
+  return { ok: false, message: 'Network error submitting investment interest.' };
 }

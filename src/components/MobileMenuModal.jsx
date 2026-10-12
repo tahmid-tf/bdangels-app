@@ -124,15 +124,30 @@ export default function MobileMenuModal({ visible, onClose, onNavigate }) {
 
           {/* Account & Admin */}
           <View style={styles.group}>
-            <Text style={styles.groupLabel}>ACCOUNT & ADMIN</Text>
-            {authState.isAdmin() ? (
+            <Text style={styles.groupLabel}>ACCOUNT & MEMBERSHIP</Text>
+            {authState.isLoggedIn() ? (
               <>
-                <TouchableOpacity style={styles.navItem} onPress={() => handleNavigate('/admin')}>
-                  <Ionicons name="shield-checkmark-outline" size={20} color={Colors.forest} />
-                  <Text style={[styles.navLabel, { fontWeight: '700', color: Colors.forest }]}>
-                    Admin Dashboard
-                  </Text>
-                </TouchableOpacity>
+                <View style={styles.userProfilePill}>
+                  <Ionicons name="person-circle-outline" size={24} color={Colors.forest} />
+                  <View style={styles.userProfileInfo}>
+                    <Text style={styles.userProfileName} numberOfLines={1}>
+                      {authState.getUser()?.name || 'BAN Member'}
+                    </Text>
+                    <Text style={styles.userProfileEmail} numberOfLines={1}>
+                      {authState.getUser()?.email || ''}
+                    </Text>
+                  </View>
+                </View>
+
+                {authState.isAdmin() && (
+                  <TouchableOpacity style={styles.navItem} onPress={() => handleNavigate('/admin')}>
+                    <Ionicons name="shield-checkmark-outline" size={20} color={Colors.forest} />
+                    <Text style={[styles.navLabel, { fontWeight: '700', color: Colors.forest }]}>
+                      Admin Dashboard
+                    </Text>
+                  </TouchableOpacity>
+                )}
+
                 <TouchableOpacity
                   style={styles.navItem}
                   onPress={async () => {
@@ -145,10 +160,18 @@ export default function MobileMenuModal({ visible, onClose, onNavigate }) {
                 </TouchableOpacity>
               </>
             ) : (
-              <TouchableOpacity style={styles.navItem} onPress={() => handleNavigate('/login')}>
-                <Ionicons name="log-in-outline" size={20} color={Colors.green} />
-                <Text style={styles.navLabel}>Sign In / Admin Portal</Text>
-              </TouchableOpacity>
+              <>
+                <TouchableOpacity style={styles.navItem} onPress={() => handleNavigate('/login')}>
+                  <Ionicons name="log-in-outline" size={20} color={Colors.green} />
+                  <Text style={styles.navLabel}>Sign In</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.navItem} onPress={() => handleNavigate('/register')}>
+                  <Ionicons name="person-add-outline" size={20} color={Colors.forest} />
+                  <Text style={[styles.navLabel, { color: Colors.forest, fontWeight: '700' }]}>
+                    Create Account / Register
+                  </Text>
+                </TouchableOpacity>
+              </>
             )}
           </View>
 
@@ -277,5 +300,26 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: Colors.green,
     marginTop: 4,
+  },
+  userProfilePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F3F4F6',
+    borderRadius: Radii.md,
+    padding: 10,
+    marginBottom: 8,
+    gap: 10,
+  },
+  userProfileInfo: {
+    flex: 1,
+  },
+  userProfileName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Colors.ink,
+  },
+  userProfileEmail: {
+    fontSize: 12,
+    color: Colors.muted,
   },
 });

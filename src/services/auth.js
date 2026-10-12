@@ -10,7 +10,16 @@ let inMemoryUser = null;
 export const authState = {
   getToken: () => inMemoryToken,
   getUser: () => inMemoryUser,
-  isAdmin: () => Boolean(inMemoryUser && (inMemoryUser.is_admin || inMemoryUser.role === 'admin')),
+  isLoggedIn: () => Boolean(inMemoryToken),
+  isAdmin: () => Boolean(inMemoryUser && (inMemoryUser.is_admin || inMemoryUser.role === 'admin' || inMemoryUser.role === 'superadmin')),
+  canViewDeals: () => {
+    if (!inMemoryToken || !inMemoryUser) return false;
+    if (inMemoryUser.is_admin || inMemoryUser.role === 'admin' || inMemoryUser.role === 'superadmin') return true;
+    if (inMemoryUser.can_view_paywalled_deals) return true;
+    if (inMemoryUser.has_paid_membership) return true;
+    if (inMemoryUser.is_approved && inMemoryUser.account_status && inMemoryUser.account_status !== 'free') return true;
+    return false;
+  },
 };
 
 /**
@@ -169,4 +178,84 @@ export async function logoutUser() {
   } finally {
     await clearAuthSession();
   }
+}
+
+/**
+ * Register a new user account via POST /auth/register
+ */
+export async function registerUser({
+  name,
+  email,
+  password,
+  password_confirmation,
+  phone = '',
+  gender = 'other',
+  primary_country = 'Bangladesh',
+}) {
+  const endpoints = getAuthEndpoints();
+  let lastErrorMessage = '';
+  let lastErrors = null;
+
+  for (const baseUrl of endpoints) {
+    try {
+      const res = await fetch(`${baseUrl}/auth/register`, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: name.trim(),
+          email: email.trim(),
+          password,
+          password_confirmation: password_confirmation || password,
+          phone: phone.trim() || undefined,
+          gender,
+          primary_country,
+          device_name: 'mobile-app',
+        }),
+      });
+
+      const json = await res.json().catch(() => null);
+
+      if (res.ok && (json?.data?.token || json?.token)) {
+        const user = json?.data?.user || json?.user;
+        const token = json?.data?.token || json?.token;
+        if (user && token) {
+          await saveAuthSession(user, token);
+        }
+        return {
+          ok: true,
+          user,
+          token,
+          message: json?.message || 'Registration successful. Account pending approval.',
+        };
+      }
+
+      if (res.status === 422) {
+        return {
+          ok: false,
+          message: json?.message || 'Please check the registration details provided.',
+          errors: json?.errors || null,
+        };
+      }
+
+      if (res.status >= 500) {
+        lastErrorMessage = 'Authentication server error. Retrying backup connection...';
+        continue;
+      }
+
+      lastErrorMessage = json?.message || `Registration error (${res.status})`;
+      lastErrors = json?.errors || null;
+    } catch (err) {
+      console.log(`Register attempt at ${baseUrl} failed:`, err);
+      lastErrorMessage = 'Network error connecting to registration service. Please check your connection.';
+    }
+  }
+
+  return {
+    ok: false,
+    message: lastErrorMessage || 'Unable to connect to registration service.',
+    errors: lastErrors,
+  };
 }

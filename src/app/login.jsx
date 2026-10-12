@@ -209,6 +209,14 @@ export default function LoginScreen() {
               )}
             </TouchableOpacity>
 
+            {/* Register Option */}
+            <View style={styles.switchAuthRow}>
+              <Text style={styles.switchAuthText}>{"Don't have an account?"}</Text>
+              <TouchableOpacity onPress={() => router.push('/register')} activeOpacity={0.7}>
+                <Text style={styles.switchAuthLink}> Create Account</Text>
+              </TouchableOpacity>
+            </View>
+
             <View style={styles.securityNote}>
               <Ionicons name="lock-closed" size={12} color={Colors.muted} />
               <Text style={styles.securityText}>Authorized BAN administrative & member credentials only.</Text>
@@ -395,5 +403,21 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: Colors.muted,
     textAlign: 'center',
+  },
+  switchAuthRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    marginTop: 4,
+  },
+  switchAuthText: {
+    fontSize: 14,
+    color: Colors.muted,
+  },
+  switchAuthLink: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Colors.forest,
   },
 });
