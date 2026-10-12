@@ -1076,6 +1076,116 @@ export async function deleteAdminLandingProgramCard(token, cardId) {
   return { ok: false, message: 'Could not delete program card.' };
 }
 
+/**
+ * Fetch Homepage Selected Portfolios from GET /api/admin/homepage-portfolios
+ */
+export async function fetchAdminHomepagePortfolios(token) {
+  try {
+    const res = await fetchAdminWithFallback('/admin/homepage-portfolios', token);
+    if (res && res.ok) {
+      const json = await res.json();
+      return json.data || json || [];
+    }
+  } catch (err) {
+    console.log('Admin homepage portfolios fetch error:', err);
+  }
+  return null;
+}
+
+/**
+ * Add a deal to Homepage Portfolios via POST /api/admin/homepage-portfolios
+ */
+export async function addAdminHomepagePortfolio(token, dealId) {
+  try {
+    const res = await fetchAdminWithFallback('/admin/homepage-portfolios', token, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deal_id: Number(dealId) }),
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        data: json.data || null,
+        message: json.message || (res.ok ? 'Portfolio added to homepage.' : 'Failed to add portfolio.'),
+        errors: json.errors || null,
+      };
+    }
+  } catch (err) {
+    console.log('Admin add homepage portfolio error:', err);
+  }
+  return { ok: false, message: 'Could not connect to server.' };
+}
+
+/**
+ * Reorder Homepage Portfolios via PUT /api/admin/homepage-portfolios/reorder
+ */
+export async function reorderAdminHomepagePortfolios(token, orderArray) {
+  try {
+    const res = await fetchAdminWithFallback('/admin/homepage-portfolios/reorder', token, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ order: orderArray }),
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        data: json.data || null,
+        message: json.message || 'Order updated successfully.',
+      };
+    }
+  } catch (err) {
+    console.log('Admin reorder homepage portfolios error:', err);
+  }
+  return { ok: false, message: 'Could not update portfolio order.' };
+}
+
+/**
+ * Delete a Homepage Portfolio via DELETE /api/admin/homepage-portfolios/:id
+ */
+export async function deleteAdminHomepagePortfolio(token, portfolioId) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/homepage-portfolios/${portfolioId}`, token, {
+      method: 'DELETE',
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        message: json.message || 'Portfolio removed from homepage.',
+      };
+    }
+  } catch (err) {
+    console.log('Admin delete homepage portfolio error:', err);
+  }
+  return { ok: false, message: 'Could not remove portfolio from homepage.' };
+}
+
+/**
+ * Sync / Batch update Homepage Portfolios via POST /api/admin/homepage-portfolios/sync
+ */
+export async function syncAdminHomepagePortfolios(token, dealIdsArray) {
+  try {
+    const res = await fetchAdminWithFallback('/admin/homepage-portfolios/sync', token, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deal_ids: dealIdsArray }),
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        data: json.data || null,
+        message: json.message || 'Homepage selections updated.',
+      };
+    }
+  } catch (err) {
+    console.log('Admin sync homepage portfolios error:', err);
+  }
+  return { ok: false, message: 'Could not sync homepage portfolios.' };
+}
+
 
 // Embedded fallback data directly from live Laravel backend for 100% resilient rendering
 export const FALLBACK_HOME_DATA = {

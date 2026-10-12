@@ -60,6 +60,11 @@ import {
   createAdminLandingProgramCard,
   updateAdminLandingProgramCard,
   deleteAdminLandingProgramCard,
+  fetchAdminHomepagePortfolios,
+  addAdminHomepagePortfolio,
+  reorderAdminHomepagePortfolios,
+  deleteAdminHomepagePortfolio,
+  syncAdminHomepagePortfolios,
 } from '../services/api';
 
 export function getViewDisplayName(key) {
@@ -90,7 +95,7 @@ export function getViewDisplayName(key) {
     case 'landing-programs':
       return 'Homepage Programs';
     case 'homepage-portfolios':
-      return 'Featured Portfolios';
+      return 'Homepage Portfolios';
     case 'team-about':
       return 'Team About Section';
     case 'events':
@@ -398,6 +403,23 @@ export default function AdminScreen() {
       { title: '', link: '' },
     ],
   });
+
+  // Homepage Selected Portfolios State
+  const [homepagePortfolios, setHomepagePortfolios] = useState([]);
+  const [homepagePortfoliosLoading, setHomepagePortfoliosLoading] = useState(false);
+  const [allPortfolioDeals, setAllPortfolioDeals] = useState([]);
+  const [addPortfolioModalVisible, setAddPortfolioModalVisible] = useState(false);
+  const [selectedDealToAdd, setSelectedDealToAdd] = useState(null);
+  const [addPortfolioSearch, setAddPortfolioSearch] = useState('');
+  const [portfolioSaving, setPortfolioSaving] = useState(false);
+  const [batchPortfolioModalVisible, setBatchPortfolioModalVisible] = useState(false);
+  const [batchSelectedDealIds, setBatchSelectedDealIds] = useState([]);
+  const [batchSearch, setBatchSearch] = useState('');
+  const [deletePortfolioModalVisible, setDeletePortfolioModalVisible] = useState(false);
+  const [selectedPortfolioForDelete, setSelectedPortfolioForDelete] = useState(null);
+  const [isDeletingPortfolio, setIsDeletingPortfolio] = useState(false);
+  const [clearAllPortfoliosModalVisible, setClearAllPortfoliosModalVisible] = useState(false);
+  const [isClearingAllPortfolios, setIsClearingAllPortfolios] = useState(false);
 
   // Fetch Dashboard summary data
   const loadDashboard = useCallback(async (token = authToken) => {
@@ -809,6 +831,32 @@ export default function AdminScreen() {
     [authToken]
   );
 
+  // Fetch Homepage Selected Portfolios & Available Deals
+  const loadHomepagePortfolios = useCallback(
+    async (token = authToken, options = {}) => {
+      if (!token) return;
+      const { silent = false } = options;
+      if (!silent) setHomepagePortfoliosLoading(true);
+      try {
+        const [portfoliosRes, dealsRes] = await Promise.all([
+          fetchAdminHomepagePortfolios(token),
+          fetchAdminDeals(token, { type: 'portfolio' }),
+        ]);
+        if (Array.isArray(portfoliosRes)) {
+          const sorted = [...portfoliosRes].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+          setHomepagePortfolios(sorted);
+        }
+        const dealsList = dealsRes?.data || (Array.isArray(dealsRes) ? dealsRes : []);
+        setAllPortfolioDeals(dealsList);
+      } catch (err) {
+        console.log('Error loading homepage portfolios:', err);
+      } finally {
+        if (!silent) setHomepagePortfoliosLoading(false);
+      }
+    },
+    [authToken]
+  );
+
   // Handle Tab / Sidebar View Selection
   const handleTabChange = (tab) => {
     setActiveTab(tab);
@@ -824,6 +872,8 @@ export default function AdminScreen() {
       loadLandingPageStats(authToken);
     } else if (tab === 'landing-programs') {
       if (landingPrograms.length === 0) loadLandingPrograms(authToken);
+    } else if (tab === 'homepage-portfolios') {
+      if (homepagePortfolios.length === 0) loadHomepagePortfolios(authToken);
     } else if (tab === 'deals') {
       if (deals.length === 0) loadDeals(authToken);
     } else if (tab === 'founder-pitches') {
@@ -842,7 +892,6 @@ export default function AdminScreen() {
       if (banWealthOrders.length === 0) loadBanWealthOrders(authToken);
     } else if (
       [
-        'homepage-portfolios',
         'team-about',
         'events',
         'startup-services',
@@ -863,6 +912,7 @@ export default function AdminScreen() {
     if (activeTab === 'publications') await loadPublications(authToken);
     if (activeTab === 'landing-stats') await loadLandingPageStats(authToken);
     if (activeTab === 'landing-programs') await loadLandingPrograms(authToken);
+    if (activeTab === 'homepage-portfolios') await loadHomepagePortfolios(authToken);
     if (activeTab === 'deals') await loadDeals(authToken);
     if (activeTab === 'submissions' || activeTab === 'founder-pitches' || activeTab === 'angel-academy') {
       await loadSubmissions(authToken);
@@ -874,7 +924,6 @@ export default function AdminScreen() {
     if (activeTab === 'ban-wealth-orders') await loadBanWealthOrders(authToken);
     if (
       [
-        'homepage-portfolios',
         'team-about',
         'events',
         'startup-services',
@@ -2413,6 +2462,183 @@ export default function AdminScreen() {
     } finally {
       setIsDeletingProgram(false);
       setSelectedProgramForDelete(null);
+    }
+  };
+
+  // ==========================================
+  // HOMEPAGE PORTFOLIOS HANDLERS
+  // ==========================================
+  const handleOpenAddPortfolio = () => {
+    if (homepagePortfolios.length >= 8) {
+      Alert.alert(
+        'Maximum Limit Reached',
+        'The homepage can show a maximum of 8 selected portfolio companies. You must remove an existing company first.'
+      );
+      return;
+    }
+    setSelectedDealToAdd(null);
+    setAddPortfolioSearch('');
+    setAddPortfolioModalVisible(true);
+  };
+
+  const handleConfirmAddPortfolio = async () => {
+    if (!authToken || !selectedDealToAdd) return;
+    if (homepagePortfolios.length >= 8) {
+      Alert.alert('Maximum Limit Reached', 'A maximum of 8 portfolio companies can be selected for the homepage.');
+      return;
+    }
+    setPortfolioSaving(true);
+    try {
+      const res = await addAdminHomepagePortfolio(authToken, selectedDealToAdd.id);
+      if (res.ok) {
+        setAddPortfolioModalVisible(false);
+        setSelectedDealToAdd(null);
+        setAddPortfolioSearch('');
+        Alert.alert('Success', `${selectedDealToAdd.title} has been added to homepage selected portfolios.`);
+        loadHomepagePortfolios(authToken, { silent: true });
+      } else {
+        Alert.alert('Failed', res.message || 'Could not add portfolio to homepage.');
+      }
+    } catch (err) {
+      console.log('Error adding homepage portfolio:', err);
+      Alert.alert('Error', 'An unexpected error occurred while adding portfolio.');
+    } finally {
+      setPortfolioSaving(false);
+    }
+  };
+
+  const handleMovePortfolio = async (item, direction) => {
+    if (!authToken || !item || portfolioSaving) return;
+    const currentIndex = homepagePortfolios.findIndex((p) => p.id === item.id);
+    if (currentIndex === -1) return;
+    const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0 || targetIndex >= homepagePortfolios.length) return;
+
+    const updated = [...homepagePortfolios];
+    const temp = updated[currentIndex];
+    updated[currentIndex] = updated[targetIndex];
+    updated[targetIndex] = temp;
+
+    setHomepagePortfolios(updated);
+    setPortfolioSaving(true);
+    try {
+      const orderIds = updated.map((p) => p.id);
+      const res = await reorderAdminHomepagePortfolios(authToken, orderIds);
+      if (res.ok && Array.isArray(res.data)) {
+        setHomepagePortfolios(res.data);
+      } else {
+        loadHomepagePortfolios(authToken, { silent: true });
+      }
+    } catch (err) {
+      console.log('Error reordering homepage portfolios:', err);
+      loadHomepagePortfolios(authToken, { silent: true });
+    } finally {
+      setPortfolioSaving(false);
+    }
+  };
+
+  const handleOpenDeletePortfolio = (item) => {
+    setSelectedPortfolioForDelete(item);
+    setDeletePortfolioModalVisible(true);
+  };
+
+  const handleConfirmDeletePortfolio = async () => {
+    if (!authToken || !selectedPortfolioForDelete) return;
+    setIsDeletingPortfolio(true);
+    try {
+      const res = await deleteAdminHomepagePortfolio(authToken, selectedPortfolioForDelete.id);
+      if (res.ok) {
+        setHomepagePortfolios((prev) =>
+          prev.filter((p) => p.id !== selectedPortfolioForDelete.id)
+        );
+        setDeletePortfolioModalVisible(false);
+        const title = selectedPortfolioForDelete.deal?.title || 'Portfolio company';
+        Alert.alert('Removed', `${title} removed from homepage selected portfolios.`);
+        loadHomepagePortfolios(authToken, { silent: true });
+      } else {
+        Alert.alert('Remove Failed', res.message || 'Could not remove portfolio.');
+      }
+    } catch (err) {
+      console.log('Error removing homepage portfolio:', err);
+      Alert.alert('Error', 'An unexpected error occurred while removing portfolio.');
+    } finally {
+      setIsDeletingPortfolio(false);
+      setSelectedPortfolioForDelete(null);
+    }
+  };
+
+  const handleOpenBatchPortfolios = () => {
+    const currentDealIds = homepagePortfolios.map((p) => p.deal_id);
+    setBatchSelectedDealIds(currentDealIds);
+    setBatchSearch('');
+    setBatchPortfolioModalVisible(true);
+  };
+
+  const handleToggleBatchDeal = (dealId) => {
+    setBatchSelectedDealIds((prev) => {
+      if (prev.includes(dealId)) {
+        return prev.filter((id) => id !== dealId);
+      } else {
+        if (prev.length >= 8) {
+          Alert.alert(
+            'Maximum Limit Reached',
+            'You can select a maximum of 8 portfolio companies for the homepage. Uncheck a company to select another.'
+          );
+          return prev;
+        }
+        return [...prev, dealId];
+      }
+    });
+  };
+
+  const handleConfirmBatchPortfolios = async () => {
+    if (!authToken || portfolioSaving) return;
+    setPortfolioSaving(true);
+    try {
+      const res = await syncAdminHomepagePortfolios(authToken, batchSelectedDealIds);
+      if (res.ok) {
+        setBatchPortfolioModalVisible(false);
+        if (Array.isArray(res.data)) {
+          setHomepagePortfolios(res.data);
+        } else {
+          loadHomepagePortfolios(authToken, { silent: true });
+        }
+        Alert.alert('Success', 'Homepage selections updated successfully.');
+      } else {
+        Alert.alert('Sync Failed', res.message || 'Could not update homepage selections.');
+      }
+    } catch (err) {
+      console.log('Error syncing homepage portfolios:', err);
+      Alert.alert('Error', 'An unexpected error occurred while saving selections.');
+    } finally {
+      setPortfolioSaving(false);
+    }
+  };
+
+  const handleOpenClearAllPortfolios = () => {
+    setClearAllPortfoliosModalVisible(true);
+  };
+
+  const handleConfirmClearAllPortfolios = async () => {
+    if (!authToken || isClearingAllPortfolios) return;
+    setIsClearingAllPortfolios(true);
+    try {
+      const res = await syncAdminHomepagePortfolios(authToken, []);
+      if (res.ok) {
+        setHomepagePortfolios([]);
+        setClearAllPortfoliosModalVisible(false);
+        Alert.alert(
+          'Reverted to Default',
+          'Custom selections cleared. The homepage will now show the latest 8 portfolio companies automatically.'
+        );
+      } else {
+        Alert.alert('Clear Failed', res.message || 'Could not clear selections.');
+      }
+    } catch (err) {
+      console.log('Error clearing homepage portfolios:', err);
+      Alert.alert('Error', 'An unexpected error occurred while clearing selections.');
+    } finally {
+      setIsClearingAllPortfolios(false);
     }
   };
 
@@ -5391,23 +5617,336 @@ export default function AdminScreen() {
           {/* TAB: HOMEPAGE PORTFOLIOS */}
           {activeTab === 'homepage-portfolios' && (
             <View style={styles.tabContent}>
+              {/* Header Row */}
               <View style={styles.sectionHeaderRow}>
-                <View>
-                  <Text style={styles.sectionHeading}>Featured Portfolios</Text>
-                  <Text style={styles.sectionSubheading}>Companies highlighted in the public showcase</Text>
+                <View style={{ flex: 1, marginRight: 8 }}>
+                  <Text style={styles.sectionHeading}>Homepage Portfolios</Text>
+                  <Text style={styles.sectionSubheading}>
+                    Curate and rank portfolio companies showcased on the landing page (up to 8)
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.statsRefreshBtn}
+                  onPress={() => loadHomepagePortfolios(authToken)}
+                  disabled={homepagePortfoliosLoading}
+                  accessibilityLabel="Refresh homepage portfolios"
+                  activeOpacity={0.8}
+                >
+                  <Ionicons
+                    name="refresh"
+                    size={18}
+                    color="#0A5554"
+                    style={homepagePortfoliosLoading ? { opacity: 0.5 } : null}
+                  />
+                </TouchableOpacity>
+              </View>
+
+              {/* KPI / Overview Summary Cards */}
+              <View style={styles.portfolioKpiContainer}>
+                {/* Card 1: Homepage Selections */}
+                <View style={styles.portfolioKpiCard}>
+                  <View style={styles.portfolioKpiHeader}>
+                    <Text style={styles.portfolioKpiLabel}>HOMEPAGE SELECTIONS</Text>
+                    <View
+                      style={
+                        homepagePortfolios.length > 0
+                          ? styles.portfolioActiveBadge
+                          : styles.portfolioDefaultBadge
+                      }
+                    >
+                      <Text
+                        style={
+                          homepagePortfolios.length > 0
+                            ? styles.portfolioActiveBadgeText
+                            : styles.portfolioDefaultBadgeText
+                        }
+                      >
+                        {homepagePortfolios.length > 0 ? 'Custom Active' : 'Default Mode'}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={styles.portfolioKpiValue}>
+                    {homepagePortfolios.length}{' '}
+                    <Text style={{ fontSize: 13, fontWeight: '500', color: '#64748B' }}>
+                      / 8 max
+                    </Text>
+                  </Text>
+
+                  {/* Progress Bar */}
+                  <View style={styles.portfolioProgressBar}>
+                    <View
+                      style={[
+                        styles.portfolioProgressFill,
+                        { width: `${Math.min(100, (homepagePortfolios.length / 8) * 100)}%` },
+                      ]}
+                    />
+                  </View>
+                  <Text style={styles.portfolioKpiSub}>
+                    {homepagePortfolios.length >= 8
+                      ? 'Maximum limit of 8 portfolios reached.'
+                      : homepagePortfolios.length > 0
+                      ? `You can add ${8 - homepagePortfolios.length} more ${
+                          8 - homepagePortfolios.length === 1 ? 'company' : 'companies'
+                        }.`
+                      : 'Showing latest 8 companies by default.'}
+                  </Text>
+                </View>
+
+                {/* Card 2: Display Mode */}
+                <View style={[styles.portfolioKpiCard, { borderLeftColor: '#2563EB' }]}>
+                  <Text style={styles.portfolioKpiLabel}>HOMEPAGE DISPLAY MODE</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                    <View
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: 4,
+                        backgroundColor: homepagePortfolios.length > 0 ? '#10B981' : '#94A3B8',
+                      }}
+                    />
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: '#0F172A' }}>
+                      {homepagePortfolios.length > 0
+                        ? 'Selected Portfolios'
+                        : 'Default (Latest Deals)'}
+                    </Text>
+                  </View>
+                  <Text style={styles.portfolioKpiSub}>
+                    {homepagePortfolios.length > 0
+                      ? `The homepage displays only these ${homepagePortfolios.length} custom companies in the exact rank order below.`
+                      : 'No custom selections active yet. The homepage automatically displays the latest 8 published portfolio deals.'}
+                  </Text>
+                </View>
+
+                {/* Card 3: Available Pool */}
+                <View style={[styles.portfolioKpiCard, { borderLeftColor: '#0D9488' }]}>
+                  <View style={styles.portfolioKpiHeader}>
+                    <Text style={styles.portfolioKpiLabel}>AVAILABLE DEALS POOL</Text>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748B' }}>
+                      {Math.max(0, allPortfolioDeals.length - homepagePortfolios.length)} unselected
+                    </Text>
+                  </View>
+                  <Text style={styles.portfolioKpiValue}>
+                    {allPortfolioDeals.length}{' '}
+                    <Text style={{ fontSize: 13, fontWeight: '500', color: '#64748B' }}>
+                      total in portfolio
+                    </Text>
+                  </Text>
+                  <Text style={styles.portfolioKpiSub}>
+                    Companies listed with type &ldquo;Portfolio only&rdquo; or &ldquo;Invest &amp; Portfolio&rdquo;.
+                  </Text>
                 </View>
               </View>
 
-              <View style={styles.cardsList}>
-                {deals.slice(0, 6).map((deal, idx) => (
-                  <View key={`hp-deal-${deal.id || idx}`} style={styles.cmsCard}>
-                    <Text style={styles.cmsCardTitle}>{deal.title || deal.company_name}</Text>
-                    <Text style={styles.cmsCardDesc}>
-                      {deal.sector || 'Technology'} • Stage: {deal.stage || 'Seed'}
-                    </Text>
-                  </View>
-                ))}
+              {/* Action Toolbar */}
+              <View style={styles.portfolioActionToolbar}>
+                <TouchableOpacity
+                  style={[
+                    styles.portfolioToolbarBtnPrimary,
+                    homepagePortfolios.length >= 8 && { opacity: 0.6 },
+                  ]}
+                  onPress={handleOpenAddPortfolio}
+                  disabled={portfolioSaving || homepagePortfolios.length >= 8}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="add-circle" size={16} color="#FFFFFF" />
+                  <Text style={styles.portfolioToolbarBtnPrimaryText}>
+                    {homepagePortfolios.length >= 8 ? 'Max Reached (8/8)' : '+ Add Portfolio'}
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.portfolioToolbarBtnSecondary}
+                  onPress={handleOpenBatchPortfolios}
+                  disabled={portfolioSaving}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="checkbox-outline" size={16} color="#0A5554" />
+                  <Text style={styles.portfolioToolbarBtnSecondaryText}>Batch Selection</Text>
+                </TouchableOpacity>
+
+                {homepagePortfolios.length > 0 && (
+                  <TouchableOpacity
+                    style={styles.portfolioToolbarBtnDanger}
+                    onPress={handleOpenClearAllPortfolios}
+                    disabled={portfolioSaving}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="refresh-outline" size={15} color="#DC2626" />
+                    <Text style={styles.portfolioToolbarBtnDangerText}>Revert to Default</Text>
+                  </TouchableOpacity>
+                )}
               </View>
+
+              {/* Curated Portfolios List */}
+              <View style={styles.cardsList}>
+                <View style={styles.formSectionHeaderRow}>
+                  <Text style={styles.formSectionHeader}>
+                    CURATED HOMEPAGE ORDER ({homepagePortfolios.length} OF 8)
+                  </Text>
+                  {homepagePortfolios.length > 0 && (
+                    <Text style={{ fontSize: 10, fontWeight: '700', color: '#64748B' }}>
+                      Use &#x25B2; / &#x25BC; to reorder
+                    </Text>
+                  )}
+                </View>
+
+                {homepagePortfoliosLoading && homepagePortfolios.length === 0 ? (
+                  <View style={styles.statsLoadingBox}>
+                    <ActivityIndicator size="large" color="#0A5554" />
+                    <Text style={styles.statsLoadingText}>Loading homepage portfolios...</Text>
+                  </View>
+                ) : homepagePortfolios.length === 0 ? (
+                  <View style={styles.portfolioEmptyBox}>
+                    <View style={styles.statsEmptyIconWrap}>
+                      <Ionicons name="briefcase-outline" size={30} color="#0A5554" />
+                    </View>
+                    <Text style={styles.portfolioEmptyTitle}>Default Display Mode Active</Text>
+                    <Text style={styles.portfolioEmptyDesc}>
+                      No custom portfolio companies have been selected yet. The homepage automatically showcases the latest 8 published companies from your portfolio library.
+                    </Text>
+                    <TouchableOpacity
+                      style={[styles.portfolioToolbarBtnPrimary, { marginTop: 6 }]}
+                      onPress={handleOpenBatchPortfolios}
+                      activeOpacity={0.8}
+                    >
+                      <Ionicons name="layers-outline" size={16} color="#FFFFFF" />
+                      <Text style={styles.portfolioToolbarBtnPrimaryText}>Select Companies to Feature</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  homepagePortfolios.map((item, idx) => {
+                    const deal = item.deal || {};
+                    const isFirst = idx === 0;
+                    const isLast = idx === homepagePortfolios.length - 1;
+                    return (
+                      <View key={`hp-portfolio-card-${item.id || idx}`} style={styles.portfolioCard}>
+                        {/* Top Info Row */}
+                        <View style={styles.portfolioCardTopRow}>
+                          {/* Rank badge */}
+                          <View style={styles.portfolioRankBadge}>
+                            <Text style={styles.portfolioRankBadgeText}>#{idx + 1}</Text>
+                          </View>
+
+                          {/* Logo or placeholder */}
+                          {deal.logo_url ? (
+                            <Image
+                              source={{ uri: deal.logo_url }}
+                              style={styles.portfolioLogoImage}
+                              resizeMode="contain"
+                            />
+                          ) : (
+                            <View style={styles.portfolioLogoPlaceholder}>
+                              <Text style={styles.portfolioLogoPlaceholderText}>
+                                {(deal.title || 'P').charAt(0).toUpperCase()}
+                              </Text>
+                            </View>
+                          )}
+
+                          {/* Title & Sector */}
+                          <View style={{ flex: 1, minWidth: 0 }}>
+                            <Text style={styles.portfolioCardTitle} numberOfLines={1}>
+                              {deal.title || 'Untitled Portfolio Deal'}
+                            </Text>
+                            <Text style={styles.portfolioCardSector} numberOfLines={1}>
+                              {deal.sector || 'Portfolio'}
+                            </Text>
+                          </View>
+
+                          {/* Type / Status badge */}
+                          <View style={styles.programCategoryBadge}>
+                            <Text style={styles.programCategoryBadgeText}>
+                              {deal.type === 'portfolio' ? 'Portfolio only' : 'Invest & Portfolio'}
+                            </Text>
+                          </View>
+                        </View>
+
+                        {/* Description */}
+                        {Boolean(deal.description) && (
+                          <Text style={styles.portfolioCardDesc} numberOfLines={2}>
+                            {deal.description}
+                          </Text>
+                        )}
+
+                        {/* Bottom Actions Row */}
+                        <View style={styles.portfolioCardBottomRow}>
+                          {/* Reordering Buttons */}
+                          <View style={styles.portfolioReorderButtonGroup}>
+                            <TouchableOpacity
+                              style={[
+                                styles.portfolioReorderBtn,
+                                (isFirst || portfolioSaving) && styles.portfolioReorderBtnDisabled,
+                              ]}
+                              onPress={() => handleMovePortfolio(item, 'up')}
+                              disabled={isFirst || portfolioSaving}
+                              accessibilityLabel={`Move ${deal.title} up`}
+                              activeOpacity={0.7}
+                            >
+                              <Ionicons
+                                name="chevron-up"
+                                size={18}
+                                color={isFirst ? '#94A3B8' : '#0A5554'}
+                              />
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                              style={[
+                                styles.portfolioReorderBtn,
+                                (isLast || portfolioSaving) && styles.portfolioReorderBtnDisabled,
+                              ]}
+                              onPress={() => handleMovePortfolio(item, 'down')}
+                              disabled={isLast || portfolioSaving}
+                              accessibilityLabel={`Move ${deal.title} down`}
+                              activeOpacity={0.7}
+                            >
+                              <Ionicons
+                                name="chevron-down"
+                                size={18}
+                                color={isLast ? '#94A3B8' : '#0A5554'}
+                              />
+                            </TouchableOpacity>
+
+                            <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748B', marginLeft: 4 }}>
+                              Position #{idx + 1}
+                            </Text>
+                          </View>
+
+                          {/* Remove Button */}
+                          <TouchableOpacity
+                            style={styles.portfolioDeleteBtn}
+                            onPress={() => handleOpenDeletePortfolio(item)}
+                            disabled={portfolioSaving}
+                            activeOpacity={0.8}
+                            accessibilityLabel={`Remove ${deal.title} from homepage`}
+                          >
+                            <Ionicons name="trash-outline" size={14} color="#DC2626" />
+                            <Text style={styles.portfolioDeleteBtnText}>Remove</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    );
+                  })
+                )}
+              </View>
+
+              {/* View on website link card */}
+              <TouchableOpacity
+                style={styles.statsExternalLinkCard}
+                onPress={() => {
+                  Linking.openURL('https://bdangels.co#portfolio').catch(() => {
+                    Alert.alert('Notice', 'Could not open https://bdangels.co#portfolio');
+                  });
+                }}
+                activeOpacity={0.8}
+              >
+                <View style={styles.statsExternalLinkLeft}>
+                  <Ionicons name="globe-outline" size={20} color="#0A5554" />
+                  <View>
+                    <Text style={styles.statsExternalLinkTitle}>View section on live site</Text>
+                    <Text style={styles.statsExternalLinkDesc}>bdangels.co/#portfolio section</Text>
+                  </View>
+                </View>
+                <Ionicons name="open-outline" size={18} color="#0A5554" />
+              </TouchableOpacity>
             </View>
           )}
 
@@ -8760,6 +9299,395 @@ export default function AdminScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* ADD HOMEPAGE PORTFOLIO MODAL */}
+      <Modal
+        visible={addPortfolioModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => !portfolioSaving && setAddPortfolioModalVisible(false)}
+      >
+        <SafeAreaView style={styles.editModalSafeArea}>
+          <View style={styles.editModalContainer}>
+            {/* Header */}
+            <View style={styles.editModalHeader}>
+              <View style={styles.editModalHeaderLeft}>
+                <View style={styles.editModalIconWrap}>
+                  <Ionicons name="briefcase" size={18} color="#0A5554" />
+                </View>
+                <View style={{ flex: 1, marginRight: 8 }}>
+                  <Text style={styles.editModalTitle}>Add Portfolio Company</Text>
+                  <Text style={styles.editModalSubtitle} numberOfLines={1}>
+                    Select a company to feature on homepage ({homepagePortfolios.length}/8 selected)
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                style={styles.modalCloseBtn}
+                onPress={() => !portfolioSaving && setAddPortfolioModalVisible(false)}
+                disabled={portfolioSaving}
+              >
+                <Ionicons name="close" size={22} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Filter Search */}
+            <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 6 }}>
+              <TextInput
+                style={styles.batchModalSearchBox}
+                value={addPortfolioSearch}
+                onChangeText={setAddPortfolioSearch}
+                placeholder="Search available portfolio companies..."
+                placeholderTextColor="#94A3B8"
+                autoCapitalize="none"
+              />
+            </View>
+
+            {/* Deals List */}
+            <ScrollView
+              style={styles.editModalScrollView}
+              contentContainerStyle={styles.editModalFormContent}
+              keyboardShouldPersistTaps="handled"
+            >
+              {(() => {
+                const selectedDealIds = homepagePortfolios.map((p) => p.deal_id);
+                const available = allPortfolioDeals.filter(
+                  (d) =>
+                    !selectedDealIds.includes(d.id) &&
+                    (addPortfolioSearch.trim() === '' ||
+                      (d.title || '').toLowerCase().includes(addPortfolioSearch.toLowerCase()) ||
+                      (d.sector || '').toLowerCase().includes(addPortfolioSearch.toLowerCase()))
+                );
+
+                if (available.length === 0) {
+                  return (
+                    <View style={styles.portfolioEmptyBox}>
+                      <Ionicons name="search-outline" size={26} color="#94A3B8" />
+                      <Text style={styles.portfolioEmptyTitle}>No Available Companies Found</Text>
+                      <Text style={styles.portfolioEmptyDesc}>
+                        {addPortfolioSearch.trim() !== ''
+                          ? 'No unselected portfolio deals match your search criteria.'
+                          : 'All published portfolio companies are already selected for the homepage.'}
+                      </Text>
+                    </View>
+                  );
+                }
+
+                return available.map((deal) => {
+                  const isChosen = selectedDealToAdd?.id === deal.id;
+                  return (
+                    <TouchableOpacity
+                      key={`avail-deal-${deal.id}`}
+                      style={[
+                        styles.batchDealItemCard,
+                        isChosen && styles.batchDealItemCardActive,
+                      ]}
+                      onPress={() => setSelectedDealToAdd(deal)}
+                      activeOpacity={0.8}
+                    >
+                      <View
+                        style={[
+                          styles.batchRadioCircle,
+                          isChosen && styles.batchRadioCircleActive,
+                        ]}
+                      >
+                        {isChosen && <View style={styles.batchRadioInnerDot} />}
+                      </View>
+
+                      {deal.logo_url ? (
+                        <Image
+                          source={{ uri: deal.logo_url }}
+                          style={styles.portfolioLogoImage}
+                          resizeMode="contain"
+                        />
+                      ) : (
+                        <View style={styles.portfolioLogoPlaceholder}>
+                          <Text style={styles.portfolioLogoPlaceholderText}>
+                            {(deal.title || 'P').charAt(0).toUpperCase()}
+                          </Text>
+                        </View>
+                      )}
+
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={styles.portfolioCardTitle} numberOfLines={1}>
+                          {deal.title}
+                        </Text>
+                        <Text style={styles.portfolioCardSector} numberOfLines={1}>
+                          {deal.sector || 'Portfolio'}
+                        </Text>
+                      </View>
+
+                      <View style={styles.programCategoryBadge}>
+                        <Text style={styles.programCategoryBadgeText}>
+                          {deal.type === 'portfolio' ? 'Portfolio only' : 'Invest & Portfolio'}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                });
+              })()}
+            </ScrollView>
+
+            {/* Modal Bottom Actions */}
+            <View style={styles.editModalFooter}>
+              <TouchableOpacity
+                style={styles.editModalCancelBtn}
+                onPress={() => setAddPortfolioModalVisible(false)}
+                disabled={portfolioSaving}
+              >
+                <Text style={styles.editModalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.editModalSaveBtn,
+                  (!selectedDealToAdd || portfolioSaving) && { opacity: 0.6 },
+                ]}
+                onPress={handleConfirmAddPortfolio}
+                disabled={!selectedDealToAdd || portfolioSaving}
+              >
+                {portfolioSaving ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.editModalSaveBtnText}>Add to Homepage</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      {/* BATCH HOMEPAGE PORTFOLIOS MODAL */}
+      <Modal
+        visible={batchPortfolioModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => !portfolioSaving && setBatchPortfolioModalVisible(false)}
+      >
+        <SafeAreaView style={styles.editModalSafeArea}>
+          <View style={styles.editModalContainer}>
+            {/* Header */}
+            <View style={styles.editModalHeader}>
+              <View style={styles.editModalHeaderLeft}>
+                <View style={styles.editModalIconWrap}>
+                  <Ionicons name="checkbox" size={18} color="#0A5554" />
+                </View>
+                <View style={{ flex: 1, marginRight: 8 }}>
+                  <Text style={styles.editModalTitle}>Batch Portfolio Selection</Text>
+                  <Text style={styles.editModalSubtitle} numberOfLines={1}>
+                    Toggle up to 8 companies ({batchSelectedDealIds.length}/8 selected)
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                style={styles.modalCloseBtn}
+                onPress={() => !portfolioSaving && setBatchPortfolioModalVisible(false)}
+                disabled={portfolioSaving}
+              >
+                <Ionicons name="close" size={22} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Filter Search */}
+            <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 6 }}>
+              <TextInput
+                style={styles.batchModalSearchBox}
+                value={batchSearch}
+                onChangeText={setBatchSearch}
+                placeholder="Search portfolio companies..."
+                placeholderTextColor="#94A3B8"
+                autoCapitalize="none"
+              />
+            </View>
+
+            {/* Deals List */}
+            <ScrollView
+              style={styles.editModalScrollView}
+              contentContainerStyle={styles.editModalFormContent}
+              keyboardShouldPersistTaps="handled"
+            >
+              {(() => {
+                const filtered = allPortfolioDeals.filter(
+                  (d) =>
+                    batchSearch.trim() === '' ||
+                    (d.title || '').toLowerCase().includes(batchSearch.toLowerCase()) ||
+                    (d.sector || '').toLowerCase().includes(batchSearch.toLowerCase())
+                );
+
+                if (filtered.length === 0) {
+                  return (
+                    <View style={styles.portfolioEmptyBox}>
+                      <Ionicons name="search-outline" size={26} color="#94A3B8" />
+                      <Text style={styles.portfolioEmptyTitle}>No Matching Companies</Text>
+                      <Text style={styles.portfolioEmptyDesc}>
+                        No portfolio deals match your search criteria.
+                      </Text>
+                    </View>
+                  );
+                }
+
+                return filtered.map((deal) => {
+                  const isChecked = batchSelectedDealIds.includes(deal.id);
+                  return (
+                    <TouchableOpacity
+                      key={`batch-deal-${deal.id}`}
+                      style={[
+                        styles.batchDealItemCard,
+                        isChecked && styles.batchDealItemCardActive,
+                      ]}
+                      onPress={() => handleToggleBatchDeal(deal.id)}
+                      activeOpacity={0.8}
+                    >
+                      <View
+                        style={[
+                          styles.batchCheckbox,
+                          isChecked && styles.batchCheckboxActive,
+                        ]}
+                      >
+                        {isChecked && (
+                          <Ionicons name="checkmark" size={14} color="#FFFFFF" />
+                        )}
+                      </View>
+
+                      {deal.logo_url ? (
+                        <Image
+                          source={{ uri: deal.logo_url }}
+                          style={styles.portfolioLogoImage}
+                          resizeMode="contain"
+                        />
+                      ) : (
+                        <View style={styles.portfolioLogoPlaceholder}>
+                          <Text style={styles.portfolioLogoPlaceholderText}>
+                            {(deal.title || 'P').charAt(0).toUpperCase()}
+                          </Text>
+                        </View>
+                      )}
+
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={styles.portfolioCardTitle} numberOfLines={1}>
+                          {deal.title}
+                        </Text>
+                        <Text style={styles.portfolioCardSector} numberOfLines={1}>
+                          {deal.sector || 'Portfolio'}
+                        </Text>
+                      </View>
+
+                      <View style={styles.programCategoryBadge}>
+                        <Text style={styles.programCategoryBadgeText}>
+                          {deal.type === 'portfolio' ? 'Portfolio only' : 'Invest & Portfolio'}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                });
+              })()}
+            </ScrollView>
+
+            {/* Modal Bottom Actions */}
+            <View style={styles.editModalFooter}>
+              <TouchableOpacity
+                style={styles.editModalCancelBtn}
+                onPress={() => setBatchPortfolioModalVisible(false)}
+                disabled={portfolioSaving}
+              >
+                <Text style={styles.editModalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.editModalSaveBtn}
+                onPress={handleConfirmBatchPortfolios}
+                disabled={portfolioSaving}
+              >
+                {portfolioSaving ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.editModalSaveBtnText}>
+                    Save Selections ({batchSelectedDealIds.length}/8)
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      {/* DELETE HOMEPAGE PORTFOLIO CONFIRMATION MODAL */}
+      <Modal
+        visible={deletePortfolioModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !isDeletingPortfolio && setDeletePortfolioModalVisible(false)}
+      >
+        <View style={styles.deleteModalOverlay}>
+          <View style={styles.deleteModalBox}>
+            <View style={[styles.deleteModalIconWrap, { backgroundColor: '#FEE2E2' }]}>
+              <Ionicons name="trash-outline" size={26} color="#DC2626" />
+            </View>
+            <Text style={styles.deleteModalTitle}>Remove from Homepage?</Text>
+            <Text style={styles.deleteModalMessage}>
+              Are you sure you want to remove &ldquo;{selectedPortfolioForDelete?.deal?.title}&rdquo; from the homepage selected portfolios? The deal will remain in the main portfolio directory.
+            </Text>
+            <View style={styles.deleteModalBtnRow}>
+              <TouchableOpacity
+                style={styles.deleteModalCancelBtn}
+                onPress={() => setDeletePortfolioModalVisible(false)}
+                disabled={isDeletingPortfolio}
+              >
+                <Text style={styles.deleteModalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.deleteModalConfirmBtn}
+                onPress={handleConfirmDeletePortfolio}
+                disabled={isDeletingPortfolio}
+              >
+                {isDeletingPortfolio ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.deleteModalConfirmBtnText}>Remove from Homepage</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* CLEAR ALL HOMEPAGE PORTFOLIOS CONFIRMATION MODAL */}
+      <Modal
+        visible={clearAllPortfoliosModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !isClearingAllPortfolios && setClearAllPortfoliosModalVisible(false)}
+      >
+        <View style={styles.deleteModalOverlay}>
+          <View style={styles.deleteModalBox}>
+            <View style={[styles.deleteModalIconWrap, { backgroundColor: '#FEF3C7' }]}>
+              <Ionicons name="refresh-outline" size={26} color="#D97706" />
+            </View>
+            <Text style={styles.deleteModalTitle}>Revert to Default Mode?</Text>
+            <Text style={styles.deleteModalMessage}>
+              This will clear all custom homepage portfolio selections. The homepage will automatically showcase the latest 8 published portfolio companies.
+            </Text>
+            <View style={styles.deleteModalBtnRow}>
+              <TouchableOpacity
+                style={styles.deleteModalCancelBtn}
+                onPress={() => setClearAllPortfoliosModalVisible(false)}
+                disabled={isClearingAllPortfolios}
+              >
+                <Text style={styles.deleteModalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.deleteModalConfirmBtn, { backgroundColor: '#D97706' }]}
+                onPress={handleConfirmClearAllPortfolios}
+                disabled={isClearingAllPortfolios}
+              >
+                {isClearingAllPortfolios ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.deleteModalConfirmBtnText}>Revert to Default</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -10770,6 +11698,328 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: Colors.muted,
     alignSelf: 'center',
+  },
+
+  // Homepage Selected Portfolios Management Styles
+  portfolioKpiContainer: {
+    gap: 10,
+    marginBottom: 16,
+  },
+  portfolioKpiCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: Radii.md,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 14,
+    borderLeftWidth: 4,
+    borderLeftColor: '#0A5554',
+  },
+  portfolioKpiHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  portfolioKpiLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+  portfolioKpiValue: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginTop: 4,
+  },
+  portfolioKpiSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 4,
+    lineHeight: 15,
+  },
+  portfolioProgressBar: {
+    width: '100%',
+    height: 6,
+    backgroundColor: '#E2E8F0',
+    borderRadius: 3,
+    marginTop: 8,
+    overflow: 'hidden',
+  },
+  portfolioProgressFill: {
+    height: 6,
+    backgroundColor: '#0A5554',
+    borderRadius: 3,
+  },
+  portfolioActiveBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: Radii.pill,
+    backgroundColor: '#E6F4F1',
+  },
+  portfolioActiveBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#0A5554',
+  },
+  portfolioDefaultBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: Radii.pill,
+    backgroundColor: '#FEF3C7',
+  },
+  portfolioDefaultBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#92400E',
+  },
+  portfolioActionToolbar: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 16,
+  },
+  portfolioToolbarBtnPrimary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#0A5554',
+    paddingHorizontal: 13,
+    paddingVertical: 8,
+    borderRadius: Radii.md,
+  },
+  portfolioToolbarBtnPrimaryText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  portfolioToolbarBtnSecondary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: Radii.md,
+  },
+  portfolioToolbarBtnSecondaryText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  portfolioToolbarBtnDanger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: Radii.md,
+  },
+  portfolioToolbarBtnDangerText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#DC2626',
+  },
+  portfolioCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: Radii.lg,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 14,
+    marginBottom: 12,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  portfolioCardTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 10,
+  },
+  portfolioRankBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#E6F4F1',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#0A5554',
+  },
+  portfolioRankBadgeText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0A5554',
+  },
+  portfolioLogoImage: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  portfolioLogoPlaceholder: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    backgroundColor: '#E6F4F1',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  portfolioLogoPlaceholderText: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0A5554',
+  },
+  portfolioCardTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  portfolioCardSector: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  portfolioCardDesc: {
+    fontSize: 12,
+    color: '#475569',
+    lineHeight: 17,
+    marginBottom: 10,
+  },
+  portfolioCardBottomRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  portfolioReorderButtonGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  portfolioReorderBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  portfolioReorderBtnDisabled: {
+    opacity: 0.35,
+  },
+  portfolioDeleteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FEE2E2',
+  },
+  portfolioDeleteBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#DC2626',
+  },
+  portfolioEmptyBox: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: Radii.lg,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 24,
+    alignItems: 'center',
+    gap: 10,
+    marginVertical: 12,
+  },
+  portfolioEmptyTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  portfolioEmptyDesc: {
+    fontSize: 12,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 18,
+    maxWidth: 300,
+  },
+  batchModalSearchBox: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+    fontSize: 12,
+    color: '#0F172A',
+  },
+  batchDealItemCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+    marginBottom: 8,
+  },
+  batchDealItemCardActive: {
+    borderColor: '#0A5554',
+    backgroundColor: '#F0F9F8',
+  },
+  batchCheckbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    borderColor: '#94A3B8',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  batchCheckboxActive: {
+    borderColor: '#0A5554',
+    backgroundColor: '#0A5554',
+  },
+  batchRadioCircle: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1.5,
+    borderColor: '#94A3B8',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  batchRadioCircleActive: {
+    borderColor: '#0A5554',
+    backgroundColor: '#FFFFFF',
+  },
+  batchRadioInnerDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#0A5554',
   },
 
   // Member Filter Tabs (matching web)
