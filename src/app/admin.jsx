@@ -39,6 +39,11 @@ import {
   fetchAdminBanWealthOrders,
   fetchHomePageData,
   fetchBlogsPageData,
+  fetchAdminBlogs,
+  createAdminBlog,
+  updateAdminBlog,
+  updateAdminBlogStatus,
+  deleteAdminBlog,
   fetchPublicationsPageData,
   fetchTeamPageData,
 } from '../services/api';
@@ -103,6 +108,14 @@ const COUNTRIES_LIST = [
   'Saudi Arabia',
   'Japan',
   'Other',
+];
+
+const BLOG_CATEGORIES = [
+  'Educational',
+  'Announcement',
+  'Media appearances',
+  'Investment',
+  'Misc',
 ];
 
 export default function AdminScreen() {
@@ -227,6 +240,47 @@ export default function AdminScreen() {
   const [founderPitches, setFounderPitches] = useState([]);
   const [academyApplications, setAcademyApplications] = useState([]);
   const [submissionsLoading, setSubmissionsLoading] = useState(false);
+
+  // Blogs Tab State
+  const [blogs, setBlogs] = useState([]);
+  const [blogsLoading, setBlogsLoading] = useState(false);
+  const [blogSearch, setBlogSearch] = useState('');
+  const [blogStatusFilter, setBlogStatusFilter] = useState('all'); // 'all' | 'published' | 'archived'
+  const [blogCounts, setBlogCounts] = useState({ all: 0, published: 0, archived: 0 });
+  const [blogPagination, setBlogPagination] = useState({
+    currentPage: 1,
+    lastPage: 1,
+    total: 0,
+    perPage: 15,
+    from: 0,
+    to: 0,
+  });
+
+  // Blog Modals
+  const [viewBlogModalVisible, setViewBlogModalVisible] = useState(false);
+  const [selectedBlogForView, setSelectedBlogForView] = useState(null);
+
+  const [createBlogModalVisible, setCreateBlogModalVisible] = useState(false);
+  const [editBlogModalVisible, setEditBlogModalVisible] = useState(false);
+  const [editingBlog, setEditingBlog] = useState(null);
+  const [blogSaving, setBlogSaving] = useState(false);
+  const [blogFormData, setBlogFormData] = useState({
+    title: '',
+    slug: '',
+    category: 'Educational',
+    excerpt: '',
+    content: '',
+    author_name: '',
+    author_role: '',
+    author_organization: 'Bangladesh Angels Network',
+    status: 'published',
+    published_at: '',
+  });
+
+  const [deleteBlogModalVisible, setDeleteBlogModalVisible] = useState(false);
+  const [selectedBlogForDelete, setSelectedBlogForDelete] = useState(null);
+  const [isDeletingBlog, setIsDeletingBlog] = useState(false);
+  const [updatingBlogStatusId, setUpdatingBlogStatusId] = useState(null);
 
   // Fetch Dashboard summary data
   const loadDashboard = useCallback(async (token = authToken) => {
@@ -466,6 +520,68 @@ export default function AdminScreen() {
     }
   }, [authToken]);
 
+  // Fetch Blogs
+  const loadBlogs = useCallback(
+    async (
+      token = authToken,
+      search = blogSearch,
+      status = blogStatusFilter,
+      page = 1,
+      options = {}
+    ) => {
+      if (!token) return;
+      const { silent = false } = options;
+      if (!silent) {
+        setBlogsLoading(true);
+      }
+      try {
+        const filterStatus = status === 'all' ? '' : status;
+        const res = await fetchAdminBlogs(token, {
+          search,
+          status: filterStatus,
+          page,
+          per_page: 15,
+        });
+        if (res) {
+          const paginator = res.data || res;
+          const list = Array.isArray(paginator) ? paginator : paginator.data || [];
+          setBlogs(list);
+
+          if (paginator.current_page !== undefined) {
+            setBlogPagination({
+              currentPage: paginator.current_page || 1,
+              lastPage: paginator.last_page || 1,
+              total: paginator.total || list.length,
+              perPage: paginator.per_page || 15,
+              from: paginator.from || (list.length > 0 ? (paginator.current_page - 1) * 15 + 1 : 0),
+              to: paginator.to || (list.length > 0 ? (paginator.current_page - 1) * 15 + list.length : 0),
+            });
+          } else {
+            setBlogPagination({
+              currentPage: 1,
+              lastPage: 1,
+              total: list.length,
+              perPage: 15,
+              from: list.length > 0 ? 1 : 0,
+              to: list.length,
+            });
+          }
+
+          if (res.counts) {
+            setBlogCounts(res.counts);
+          }
+        }
+      } catch (err) {
+        console.log('Error loading blogs:', err);
+      } finally {
+        if (!silent) {
+          setBlogsLoading(false);
+        }
+      }
+    },
+    [authToken, blogSearch, blogStatusFilter]
+  );
+
   // Handle Tab / Sidebar View Selection
   const handleTabChange = (tab) => {
     setActiveTab(tab);
@@ -473,6 +589,8 @@ export default function AdminScreen() {
       loadNotifications(authToken);
     } else if (tab === 'members') {
       if (members.length === 0) loadMembers(authToken);
+    } else if (tab === 'blogs') {
+      if (blogs.length === 0) loadBlogs(authToken);
     } else if (tab === 'deals') {
       if (deals.length === 0) loadDeals(authToken);
     } else if (tab === 'founder-pitches') {
@@ -491,7 +609,6 @@ export default function AdminScreen() {
       if (banWealthOrders.length === 0) loadBanWealthOrders(authToken);
     } else if (
       [
-        'blogs',
         'publications',
         'landing-stats',
         'landing-programs',
@@ -512,6 +629,7 @@ export default function AdminScreen() {
     await loadDashboard(authToken);
     await loadNotifications(authToken);
     if (activeTab === 'members') await loadMembers(authToken);
+    if (activeTab === 'blogs') await loadBlogs(authToken);
     if (activeTab === 'deals') await loadDeals(authToken);
     if (activeTab === 'submissions' || activeTab === 'founder-pitches' || activeTab === 'angel-academy') {
       await loadSubmissions(authToken);
@@ -523,7 +641,6 @@ export default function AdminScreen() {
     if (activeTab === 'ban-wealth-orders') await loadBanWealthOrders(authToken);
     if (
       [
-        'blogs',
         'publications',
         'landing-stats',
         'landing-programs',
@@ -979,6 +1096,271 @@ export default function AdminScreen() {
       Alert.alert('Error', 'An unexpected error occurred while creating member.');
     } finally {
       setAddSaving(false);
+    }
+  };
+
+  // Blog Handlers
+  const handleOpenViewBlog = (blog) => {
+    setSelectedBlogForView(blog);
+    setViewBlogModalVisible(true);
+  };
+
+  const handleOpenCreateBlog = () => {
+    setBlogFormData({
+      title: '',
+      slug: '',
+      category: 'Educational',
+      excerpt: '',
+      content: '',
+      author_name: currentUser?.name || 'Bangladesh Angels Network',
+      author_role: 'Investment Desk',
+      author_organization: 'Bangladesh Angels Network',
+      status: 'published',
+      published_at: new Date().toISOString().slice(0, 16),
+    });
+    setCreateBlogModalVisible(true);
+  };
+
+  const handleSaveCreateBlog = async () => {
+    if (!authToken) return;
+    if (!blogFormData.title.trim()) {
+      Alert.alert('Validation Error', 'Article title is required.');
+      return;
+    }
+    if (!blogFormData.content.trim()) {
+      Alert.alert('Validation Error', 'Article content is required.');
+      return;
+    }
+
+    setBlogSaving(true);
+    try {
+      const payload = {
+        title: blogFormData.title.trim(),
+        slug: blogFormData.slug.trim(),
+        category: blogFormData.category || 'Educational',
+        excerpt: blogFormData.excerpt.trim(),
+        content: blogFormData.content.trim(),
+        author_name: blogFormData.author_name.trim(),
+        author_role: blogFormData.author_role.trim(),
+        author_organization: blogFormData.author_organization.trim(),
+        status: blogFormData.status || 'published',
+        published_at: blogFormData.published_at || null,
+      };
+
+      const res = await createAdminBlog(authToken, payload);
+      if (res.ok) {
+        const words = payload.content.replace(/<[^>]*>/g, '').split(/\s+/).filter(Boolean).length;
+        const newPost = res.data || {
+          id: Date.now(),
+          ...payload,
+          reading_minutes: Math.max(1, Math.ceil(words / 220)),
+          created_at: new Date().toISOString(),
+        };
+        setBlogs((prev) => [newPost, ...prev]);
+        setBlogPagination((prev) => ({
+          ...prev,
+          total: (prev.total || 0) + 1,
+          to: (prev.to || 0) + 1,
+        }));
+        setBlogCounts((prev) => ({
+          ...prev,
+          all: (prev.all || 0) + 1,
+          published: payload.status === 'published' ? (prev.published || 0) + 1 : (prev.published || 0),
+          archived: payload.status === 'archived' ? (prev.archived || 0) + 1 : (prev.archived || 0),
+        }));
+
+        setCreateBlogModalVisible(false);
+        Alert.alert('Success', 'Blog post created successfully!');
+
+        // Silent background sync
+        loadBlogs(authToken, blogSearch, blogStatusFilter, 1, { silent: true });
+      } else {
+        const errorText = res.errors
+          ? Object.values(res.errors).flat().join('\n')
+          : res.message || 'Could not create blog post.';
+        Alert.alert('Creation Failed', errorText);
+      }
+    } catch (err) {
+      console.log('Error creating blog:', err);
+      Alert.alert('Error', 'An unexpected error occurred while creating blog post.');
+    } finally {
+      setBlogSaving(false);
+    }
+  };
+
+  const handleOpenEditBlog = (blog) => {
+    setEditingBlog(blog);
+    setBlogFormData({
+      title: blog.title || '',
+      slug: blog.slug || '',
+      category: blog.category || 'Educational',
+      excerpt: blog.excerpt || '',
+      content: blog.content || '',
+      author_name: blog.author_name || '',
+      author_role: blog.author_role || '',
+      author_organization: blog.author_organization || 'Bangladesh Angels Network',
+      status: blog.status || 'published',
+      published_at: blog.published_at ? blog.published_at.slice(0, 16) : '',
+    });
+    setEditBlogModalVisible(true);
+  };
+
+  const handleSaveEditBlog = async () => {
+    if (!editingBlog || !authToken) return;
+    if (!blogFormData.title.trim()) {
+      Alert.alert('Validation Error', 'Article title is required.');
+      return;
+    }
+    if (!blogFormData.content.trim()) {
+      Alert.alert('Validation Error', 'Article content is required.');
+      return;
+    }
+
+    setBlogSaving(true);
+    try {
+      const payload = {
+        title: blogFormData.title.trim(),
+        slug: blogFormData.slug.trim(),
+        category: blogFormData.category || 'Educational',
+        excerpt: blogFormData.excerpt.trim(),
+        content: blogFormData.content.trim(),
+        author_name: blogFormData.author_name.trim(),
+        author_role: blogFormData.author_role.trim(),
+        author_organization: blogFormData.author_organization.trim(),
+        status: blogFormData.status || 'published',
+        published_at: blogFormData.published_at || null,
+      };
+
+      const res = await updateAdminBlog(authToken, editingBlog.id, payload);
+      if (res.ok) {
+        const words = payload.content.replace(/<[^>]*>/g, '').split(/\s+/).filter(Boolean).length;
+        const updatedPost = res.data || {
+          ...editingBlog,
+          ...payload,
+          reading_minutes: Math.max(1, Math.ceil(words / 220)),
+        };
+        setBlogs((prev) =>
+          prev.map((b) => (b.id === editingBlog.id ? updatedPost : b))
+        );
+        if (selectedBlogForView?.id === editingBlog.id) {
+          setSelectedBlogForView(updatedPost);
+        }
+
+        setEditBlogModalVisible(false);
+        setEditingBlog(null);
+        Alert.alert('Success', 'Blog post updated successfully!');
+
+        // Silent background sync
+        loadBlogs(authToken, blogSearch, blogStatusFilter, blogPagination.currentPage, { silent: true });
+      } else {
+        const errorText = res.errors
+          ? Object.values(res.errors).flat().join('\n')
+          : res.message || 'Could not update blog post.';
+        Alert.alert('Update Failed', errorText);
+      }
+    } catch (err) {
+      console.log('Error updating blog:', err);
+      Alert.alert('Error', 'An unexpected error occurred while updating blog post.');
+    } finally {
+      setBlogSaving(false);
+    }
+  };
+
+  const handleToggleBlogStatus = async (blog) => {
+    if (!blog || !authToken) return;
+    const isCurrentlyPublished = blog.status === 'published';
+    const newStatus = isCurrentlyPublished ? 'archived' : 'published';
+    const actionLabel = isCurrentlyPublished ? 'Archive' : 'Publish';
+
+    Alert.alert(
+      `${actionLabel} Article`,
+      isCurrentlyPublished
+        ? `Archive "${blog.title}"? It will be hidden from the public blog.`
+        : `Publish "${blog.title}"? It will become visible on the public blog.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: actionLabel,
+          style: isCurrentlyPublished ? 'destructive' : 'default',
+          onPress: async () => {
+            setUpdatingBlogStatusId(blog.id);
+            // Optimistic update
+            setBlogs((prev) =>
+              prev.map((b) => (b.id === blog.id ? { ...b, status: newStatus } : b))
+            );
+            setBlogCounts((prev) => ({
+              ...prev,
+              published: newStatus === 'published' ? (prev.published || 0) + 1 : Math.max(0, (prev.published || 1) - 1),
+              archived: newStatus === 'archived' ? (prev.archived || 0) + 1 : Math.max(0, (prev.archived || 1) - 1),
+            }));
+            if (selectedBlogForView?.id === blog.id) {
+              setSelectedBlogForView((prev) => ({ ...prev, status: newStatus }));
+            }
+
+            try {
+              const res = await updateAdminBlogStatus(authToken, blog.id, newStatus);
+              if (!res.ok) {
+                Alert.alert('Status Change Failed', res.message || 'Could not update blog status.');
+              }
+              // Silent background sync
+              loadBlogs(authToken, blogSearch, blogStatusFilter, blogPagination.currentPage, { silent: true });
+            } catch (err) {
+              console.log('Error toggling blog status:', err);
+              Alert.alert('Error', 'An error occurred while changing blog status.');
+            } finally {
+              setUpdatingBlogStatusId(null);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleOpenDeleteBlogModal = (blog) => {
+    setSelectedBlogForDelete(blog);
+    setDeleteBlogModalVisible(true);
+  };
+
+  const handleConfirmDeleteBlog = async () => {
+    if (!selectedBlogForDelete || !authToken) return;
+    const blogId = selectedBlogForDelete.id;
+    setIsDeletingBlog(true);
+
+    try {
+      const res = await deleteAdminBlog(authToken, blogId);
+      if (res.ok) {
+        // Optimistic delete
+        setBlogs((prev) => prev.filter((b) => b.id !== blogId));
+        setBlogPagination((prev) => ({
+          ...prev,
+          total: Math.max(0, prev.total - 1),
+          to: Math.max(0, prev.to - 1),
+        }));
+        setBlogCounts((prev) => ({
+          ...prev,
+          all: Math.max(0, (prev.all || 1) - 1),
+          published: selectedBlogForDelete.status === 'published' ? Math.max(0, (prev.published || 1) - 1) : (prev.published || 0),
+          archived: selectedBlogForDelete.status === 'archived' ? Math.max(0, (prev.archived || 1) - 1) : (prev.archived || 0),
+        }));
+
+        setDeleteBlogModalVisible(false);
+        if (selectedBlogForView?.id === blogId) {
+          setViewBlogModalVisible(false);
+          setSelectedBlogForView(null);
+        }
+        setSelectedBlogForDelete(null);
+
+        // Silent background sync
+        loadBlogs(authToken, blogSearch, blogStatusFilter, blogPagination.currentPage, { silent: true });
+      } else {
+        Alert.alert('Delete Failed', res.message || 'Could not delete blog post.');
+      }
+    } catch (err) {
+      console.log('Error deleting blog post:', err);
+      Alert.alert('Error', 'An unexpected error occurred while deleting blog post.');
+    } finally {
+      setIsDeletingBlog(false);
+      setSelectedBlogForDelete(null);
     }
   };
 
@@ -2546,48 +2928,376 @@ export default function AdminScreen() {
             </View>
           )}
 
-          {/* TAB: BLOGS */}
+          {/* TAB: BLOGS MANAGEMENT */}
           {activeTab === 'blogs' && (
             <View style={styles.tabContent}>
+              {/* Header with Title and Pagination Summary */}
               <View style={styles.sectionHeaderRow}>
-                <View>
+                <View style={{ flex: 1, marginRight: 8 }}>
                   <Text style={styles.sectionHeading}>Editorial Blogs</Text>
-                  <Text style={styles.sectionSubheading}>Ecosystem insights, market analysis, and guides</Text>
+                  <Text style={styles.sectionSubheading}>
+                    {blogPagination.total > 0
+                      ? `Showing ${blogPagination.from}–${blogPagination.to} of ${blogPagination.total} articles`
+                      : 'Ecosystem insights, market analysis, and guides'}
+                  </Text>
                 </View>
-                <TouchableOpacity style={styles.refreshIconBtn} onPress={loadCmsData}>
-                  <Ionicons name="refresh" size={18} color={Colors.forest} />
-                </TouchableOpacity>
+                <View style={styles.sectionHeaderActions}>
+                  <TouchableOpacity
+                    style={styles.addMemberBtn}
+                    onPress={handleOpenCreateBlog}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="add-circle" size={15} color="#FFFFFF" />
+                    <Text style={styles.addMemberBtnText}>New Post</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.refreshIconBtn}
+                    onPress={() =>
+                      loadBlogs(authToken, blogSearch, blogStatusFilter, blogPagination.currentPage)
+                    }
+                    disabled={blogsLoading}
+                  >
+                    <Ionicons
+                      name="refresh"
+                      size={18}
+                      color={Colors.forest}
+                      style={blogsLoading ? { opacity: 0.5 } : {}}
+                    />
+                  </TouchableOpacity>
+                </View>
               </View>
 
-              {cmsLoading ? (
+              {/* Search Box */}
+              <View style={styles.searchBar}>
+                <Ionicons name="search" size={18} color={Colors.muted} style={styles.searchIcon} />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Search articles by title..."
+                  placeholderTextColor={Colors.mutedLight}
+                  value={blogSearch}
+                  onChangeText={(val) => {
+                    setBlogSearch(val);
+                    loadBlogs(authToken, val, blogStatusFilter, 1);
+                  }}
+                  autoCapitalize="none"
+                  returnKeyType="search"
+                />
+                {blogSearch.length > 0 && (
+                  <TouchableOpacity
+                    onPress={() => {
+                      setBlogSearch('');
+                      loadBlogs(authToken, '', blogStatusFilter, 1);
+                    }}
+                  >
+                    <Ionicons name="close-circle" size={18} color={Colors.muted} />
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* Filter Tabs (All / Published / Archived) */}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.memberFilterTabsContent}
+                style={styles.memberFilterTabsScroll}
+              >
+                {[
+                  { key: 'all', label: 'All Articles', count: blogCounts.all || blogPagination.total },
+                  { key: 'published', label: 'Published', count: blogCounts.published },
+                  { key: 'archived', label: 'Archived', count: blogCounts.archived },
+                ].map((tab) => {
+                  const isActive = blogStatusFilter === tab.key;
+                  return (
+                    <TouchableOpacity
+                      key={`blog-filter-${tab.key}`}
+                      style={[styles.memberFilterChip, isActive && styles.memberFilterChipActive]}
+                      onPress={() => {
+                        setBlogStatusFilter(tab.key);
+                        loadBlogs(authToken, blogSearch, tab.key, 1);
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Text
+                        style={[
+                          styles.memberFilterChipText,
+                          isActive && styles.memberFilterChipTextActive,
+                        ]}
+                      >
+                        {tab.label}
+                      </Text>
+                      <View
+                        style={[
+                          styles.memberFilterBadge,
+                          isActive ? styles.memberFilterBadgeActive : styles.memberFilterBadgeInactive,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.memberFilterBadgeText,
+                            isActive && styles.memberFilterBadgeTextActive,
+                          ]}
+                        >
+                          {tab.count !== undefined ? tab.count : 0}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+
+              {/* Blog List Content */}
+              {blogsLoading && blogs.length === 0 ? (
                 <View style={styles.listLoadingBox}>
                   <ActivityIndicator size="small" color={Colors.forest} />
-                  <Text style={styles.loadingText}>Fetching blogs...</Text>
+                  <Text style={styles.loadingText}>Fetching articles...</Text>
+                </View>
+              ) : blogs.length === 0 ? (
+                <View style={styles.emptyState}>
+                  <Ionicons name="newspaper-outline" size={44} color={Colors.mutedLight} />
+                  <Text style={styles.emptyTitle}>No blog posts found</Text>
+                  <Text style={styles.emptyText}>
+                    No articles match your current search query or filter scope.
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.emptyAddBtn}
+                    onPress={handleOpenCreateBlog}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="add-circle" size={15} color="#FFFFFF" />
+                    <Text style={styles.emptyAddBtnText}>Write New Article</Text>
+                  </TouchableOpacity>
                 </View>
               ) : (
                 <View style={styles.cardsList}>
-                  {(cmsData?.blogs?.blogs?.data || [
-                    {
-                      id: 7,
-                      title: 'Bangladesh Makes It Easier for Foreign Investors to Repatriate',
-                      author_name: 'Nadim Abrar',
-                      category: 'Educational',
-                      excerpt: 'Analysis of Bangladesh Bank FEID Circular No. 01 on transfer of shares.',
-                    },
-                  ]).map((blog, idx) => (
-                    <View key={`blog-${blog.id || idx}`} style={styles.cmsCard}>
-                      <View style={styles.cmsCardHeader}>
-                        <View style={styles.metaPill}>
-                          <Text style={styles.metaPillText}>{blog.category || 'Article'}</Text>
-                        </View>
-                        <Text style={styles.cmsCardAuthor}>By {blog.author_name || 'BAN Team'}</Text>
-                      </View>
-                      <Text style={styles.cmsCardTitle}>{blog.title}</Text>
-                      <Text style={styles.cmsCardDesc} numberOfLines={2}>
-                        {blog.excerpt || 'Insightful publication from the BAN investment desk.'}
-                      </Text>
+                  {blogsLoading && (
+                    <View style={styles.memberListUpdatingBar}>
+                      <ActivityIndicator size="small" color={Colors.forest} />
+                      <Text style={styles.memberListUpdatingText}>Syncing articles...</Text>
                     </View>
-                  ))}
+                  )}
+
+                  {blogs.map((blog) => {
+                    const isPublished = blog.status === 'published';
+                    const isUpdatingStatus = updatingBlogStatusId === blog.id;
+                    const cleanExcerpt = blog.excerpt
+                      ? blog.excerpt.replace(/<[^>]*>/g, '')
+                      : blog.content
+                      ? blog.content.replace(/<[^>]*>/g, '').slice(0, 140) + '...'
+                      : 'No summary provided.';
+                    const readingTime = blog.reading_minutes || (blog.content ? Math.max(1, Math.ceil(blog.content.replace(/<[^>]*>/g, '').split(/\s+/).filter(Boolean).length / 220)) : 3);
+                    const formattedDate = blog.published_at
+                      ? new Date(blog.published_at).toLocaleDateString('en-GB', {
+                          day: 'numeric',
+                          month: 'short',
+                          year: 'numeric',
+                        })
+                      : 'Draft';
+
+                    return (
+                      <View key={`blog-card-${blog.id}`} style={styles.blogCard}>
+                        {/* Badges Row */}
+                        <View style={styles.blogCardTop}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap', flex: 1 }}>
+                            <View style={styles.blogCategoryPill}>
+                              <Text style={styles.blogCategoryPillText}>{blog.category || 'Educational'}</Text>
+                            </View>
+                            <View
+                              style={[
+                                styles.blogStatusPill,
+                                isPublished ? styles.blogStatusPillPublished : styles.blogStatusPillArchived,
+                              ]}
+                            >
+                              <View
+                                style={[
+                                  styles.blogStatusDot,
+                                  { backgroundColor: isPublished ? '#059669' : '#D97706' },
+                                ]}
+                              />
+                              <Text
+                                style={[
+                                  styles.blogStatusPillText,
+                                  { color: isPublished ? '#065F46' : '#92400E' },
+                                ]}
+                              >
+                                {isPublished ? 'Published' : 'Archived'}
+                              </Text>
+                            </View>
+                          </View>
+
+                          <View style={styles.blogReadTimePill}>
+                            <Ionicons name="time-outline" size={12} color="#64748B" />
+                            <Text style={styles.blogReadTimeText}>{readingTime} min</Text>
+                          </View>
+                        </View>
+
+                        {/* Title */}
+                        <TouchableOpacity
+                          onPress={() => handleOpenViewBlog(blog)}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={styles.blogCardTitle}>{blog.title}</Text>
+                        </TouchableOpacity>
+
+                        {/* Excerpt */}
+                        <Text style={styles.blogCardExcerpt} numberOfLines={2}>
+                          {cleanExcerpt}
+                        </Text>
+
+                        {/* Author & Slug Details */}
+                        <View style={styles.blogMetaRow}>
+                          <View style={styles.blogMetaAuthorWrap}>
+                            <Ionicons name="person-outline" size={13} color="#64748B" />
+                            <Text style={styles.blogMetaAuthorText} numberOfLines={1}>
+                              {blog.author_name || 'BAN Editorial'}
+                            </Text>
+                          </View>
+                          <Text style={styles.blogMetaDot}>•</Text>
+                          <Text style={styles.blogMetaDateText}>{formattedDate}</Text>
+                        </View>
+                        <Text style={styles.blogSlugText} numberOfLines={1}>
+                          /{blog.slug}
+                        </Text>
+
+                        {/* Action Buttons Toolbar */}
+                        <View style={styles.blogActionsToolbar}>
+                          {/* Read / Preview */}
+                          <TouchableOpacity
+                            style={styles.blogActionBtn}
+                            onPress={() => handleOpenViewBlog(blog)}
+                            activeOpacity={0.7}
+                          >
+                            <Ionicons name="eye-outline" size={15} color="#0A5554" />
+                            <Text style={styles.blogActionBtnText}>Read</Text>
+                          </TouchableOpacity>
+
+                          {/* Edit */}
+                          <TouchableOpacity
+                            style={styles.blogActionBtn}
+                            onPress={() => handleOpenEditBlog(blog)}
+                            activeOpacity={0.7}
+                          >
+                            <Ionicons name="create-outline" size={15} color="#0A5554" />
+                            <Text style={styles.blogActionBtnText}>Edit</Text>
+                          </TouchableOpacity>
+
+                          {/* Publish / Archive Toggle */}
+                          <TouchableOpacity
+                            style={[
+                              styles.blogActionBtn,
+                              isPublished ? styles.blogActionBtnArchive : styles.blogActionBtnPublish,
+                            ]}
+                            onPress={() => handleToggleBlogStatus(blog)}
+                            disabled={isUpdatingStatus}
+                            activeOpacity={0.7}
+                          >
+                            {isUpdatingStatus ? (
+                              <ActivityIndicator size="small" color={isPublished ? '#B45309' : '#047857'} />
+                            ) : (
+                              <>
+                                <Ionicons
+                                  name={isPublished ? 'archive-outline' : 'checkmark-done-outline'}
+                                  size={15}
+                                  color={isPublished ? '#B45309' : '#047857'}
+                                />
+                                <Text
+                                  style={[
+                                    styles.blogActionBtnText,
+                                    { color: isPublished ? '#B45309' : '#047857' },
+                                  ]}
+                                >
+                                  {isPublished ? 'Archive' : 'Publish'}
+                                </Text>
+                              </>
+                            )}
+                          </TouchableOpacity>
+
+                          {/* Delete */}
+                          <TouchableOpacity
+                            style={styles.blogActionDeleteBtn}
+                            onPress={() => handleOpenDeleteBlogModal(blog)}
+                            activeOpacity={0.7}
+                          >
+                            <Ionicons name="trash-outline" size={16} color="#DC2626" />
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    );
+                  })}
+
+                  {/* Pagination Bar */}
+                  {blogPagination.lastPage > 1 && (
+                    <View style={styles.paginationContainer}>
+                      <TouchableOpacity
+                        style={[
+                          styles.paginationBtn,
+                          blogPagination.currentPage <= 1 && styles.paginationBtnDisabled,
+                        ]}
+                        onPress={() => {
+                          if (blogPagination.currentPage > 1) {
+                            loadBlogs(
+                              authToken,
+                              blogSearch,
+                              blogStatusFilter,
+                              blogPagination.currentPage - 1
+                            );
+                          }
+                        }}
+                        disabled={blogPagination.currentPage <= 1 || blogsLoading}
+                      >
+                        <Ionicons
+                          name="chevron-back"
+                          size={16}
+                          color={blogPagination.currentPage <= 1 ? '#9CA3AF' : '#0A5554'}
+                        />
+                        <Text
+                          style={[
+                            styles.paginationBtnText,
+                            blogPagination.currentPage <= 1 && styles.paginationBtnTextDisabled,
+                          ]}
+                        >
+                          Prev
+                        </Text>
+                      </TouchableOpacity>
+
+                      <View style={styles.paginationInfoBox}>
+                        <Text style={styles.paginationInfoText}>
+                          Page {blogPagination.currentPage} of {blogPagination.lastPage}
+                        </Text>
+                      </View>
+
+                      <TouchableOpacity
+                        style={[
+                          styles.paginationBtn,
+                          blogPagination.currentPage >= blogPagination.lastPage && styles.paginationBtnDisabled,
+                        ]}
+                        onPress={() => {
+                          if (blogPagination.currentPage < blogPagination.lastPage) {
+                            loadBlogs(
+                              authToken,
+                              blogSearch,
+                              blogStatusFilter,
+                              blogPagination.currentPage + 1
+                            );
+                          }
+                        }}
+                        disabled={blogPagination.currentPage >= blogPagination.lastPage || blogsLoading}
+                      >
+                        <Text
+                          style={[
+                            styles.paginationBtnText,
+                            blogPagination.currentPage >= blogPagination.lastPage && styles.paginationBtnTextDisabled,
+                          ]}
+                        >
+                          Next
+                        </Text>
+                        <Ionicons
+                          name="chevron-forward"
+                          size={16}
+                          color={blogPagination.currentPage >= blogPagination.lastPage ? '#9CA3AF' : '#0A5554'}
+                        />
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </View>
               )}
             </View>
@@ -2606,33 +3316,40 @@ export default function AdminScreen() {
                 </TouchableOpacity>
               </View>
 
-              <View style={styles.cardsList}>
-                {(cmsData?.publications?.publications?.data || [
-                  {
-                    id: 1,
-                    title: 'Bangladesh Startup Ecosystem Report 2024–2025',
-                    category: 'Market Research',
-                    excerpt: 'Comprehensive data on seed funding, deal sizes, active sectors, and exit horizons.',
-                  },
-                  {
-                    id: 2,
-                    title: 'Angel Investing in Bangladesh: A Legal & Regulatory Handbook',
-                    category: 'Legal Guide',
-                    excerpt: 'RJSC filings, foreign currency remittances, SPV formations, and investor rights.',
-                  },
-                ]).map((pub, idx) => (
-                  <View key={`pub-${pub.id || idx}`} style={styles.cmsCard}>
-                    <View style={styles.cmsCardHeader}>
-                      <View style={styles.metaPill}>
-                        <Text style={styles.metaPillText}>{pub.category || 'Research'}</Text>
+              {cmsLoading && !cmsData ? (
+                <View style={styles.listLoadingBox}>
+                  <ActivityIndicator size="small" color={Colors.forest} />
+                  <Text style={styles.loadingText}>Fetching publications...</Text>
+                </View>
+              ) : (
+                <View style={styles.cardsList}>
+                  {(cmsData?.publications?.publications?.data || [
+                    {
+                      id: 1,
+                      title: 'Bangladesh Startup Ecosystem Report 2024–2025',
+                      category: 'Market Research',
+                      excerpt: 'Comprehensive data on seed funding, deal sizes, active sectors, and exit horizons.',
+                    },
+                    {
+                      id: 2,
+                      title: 'Angel Investing in Bangladesh: A Legal & Regulatory Handbook',
+                      category: 'Legal Guide',
+                      excerpt: 'RJSC filings, foreign currency remittances, SPV formations, and investor rights.',
+                    },
+                  ]).map((pub, idx) => (
+                    <View key={`pub-${pub.id || idx}`} style={styles.cmsCard}>
+                      <View style={styles.cmsCardHeader}>
+                        <View style={styles.metaPill}>
+                          <Text style={styles.metaPillText}>{pub.category || 'Research'}</Text>
+                        </View>
+                        <Ionicons name="document-text-outline" size={18} color={Colors.forest} />
                       </View>
-                      <Ionicons name="document-text-outline" size={18} color={Colors.forest} />
+                      <Text style={styles.cmsCardTitle}>{pub.title}</Text>
+                      <Text style={styles.cmsCardDesc}>{pub.excerpt}</Text>
                     </View>
-                    <Text style={styles.cmsCardTitle}>{pub.title}</Text>
-                    <Text style={styles.cmsCardDesc}>{pub.excerpt}</Text>
-                  </View>
-                ))}
-              </View>
+                  ))}
+                </View>
+              )}
             </View>
           )}
 
@@ -4037,6 +4754,491 @@ export default function AdminScreen() {
             </View>
           </View>
         </SafeAreaView>
+      </Modal>
+
+      {/* VIEW / READ BLOG MODAL */}
+      <Modal
+        visible={viewBlogModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setViewBlogModalVisible(false)}
+      >
+        <SafeAreaView style={styles.editModalSafeArea}>
+          <View style={styles.editModalContainer}>
+            {/* Header */}
+            <View style={styles.editModalHeader}>
+              <View style={styles.editModalHeaderLeft}>
+                <View style={[styles.editModalIconWrap, { backgroundColor: '#E6F4F1' }]}>
+                  <Ionicons name="book-outline" size={18} color="#0A5554" />
+                </View>
+                <View style={{ flex: 1, marginRight: 8 }}>
+                  <Text style={styles.editModalTitle} numberOfLines={1}>Article Preview</Text>
+                  <Text style={styles.editModalSubtitle} numberOfLines={1}>
+                    {selectedBlogForView?.category || 'Editorial Publication'}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => setViewBlogModalVisible(false)}
+                style={styles.modalCloseBtn}
+              >
+                <Ionicons name="close" size={22} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Scrollable Reader Body */}
+            <ScrollView
+              style={styles.editModalScrollView}
+              contentContainerStyle={styles.blogReaderContent}
+            >
+              {/* Badges Row */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+                <View style={styles.blogCategoryPill}>
+                  <Text style={styles.blogCategoryPillText}>
+                    {selectedBlogForView?.category || 'Educational'}
+                  </Text>
+                </View>
+                <View
+                  style={[
+                    styles.blogStatusPill,
+                    selectedBlogForView?.status === 'published'
+                      ? styles.blogStatusPillPublished
+                      : styles.blogStatusPillArchived,
+                  ]}
+                >
+                  <View
+                    style={[
+                      styles.blogStatusDot,
+                      {
+                        backgroundColor:
+                          selectedBlogForView?.status === 'published' ? '#059669' : '#D97706',
+                      },
+                    ]}
+                  />
+                  <Text
+                    style={[
+                      styles.blogStatusPillText,
+                      {
+                        color:
+                          selectedBlogForView?.status === 'published' ? '#065F46' : '#92400E',
+                      },
+                    ]}
+                  >
+                    {selectedBlogForView?.status === 'published' ? 'Published' : 'Archived'}
+                  </Text>
+                </View>
+                <View style={styles.blogReadTimePill}>
+                  <Ionicons name="time-outline" size={12} color="#64748B" />
+                  <Text style={styles.blogReadTimeText}>
+                    {selectedBlogForView?.reading_minutes || 3} min read
+                  </Text>
+                </View>
+              </View>
+
+              {/* Title */}
+              <Text style={styles.blogReaderTitle}>{selectedBlogForView?.title}</Text>
+
+              {/* Author & Meta Box */}
+              <View style={styles.blogReaderAuthorBox}>
+                <View style={styles.blogReaderAvatarCircle}>
+                  <Text style={styles.blogReaderAvatarText}>
+                    {(selectedBlogForView?.author_name || 'B').charAt(0).toUpperCase()}
+                  </Text>
+                </View>
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={styles.blogReaderAuthorName}>
+                    {selectedBlogForView?.author_name || 'Bangladesh Angels Network'}
+                  </Text>
+                  <Text style={styles.blogReaderAuthorRole}>
+                    {[
+                      selectedBlogForView?.author_role,
+                      selectedBlogForView?.author_organization || 'Bangladesh Angels Network',
+                    ]
+                      .filter(Boolean)
+                      .join(' • ')}
+                  </Text>
+                  <Text style={styles.blogReaderDate}>
+                    {selectedBlogForView?.published_at
+                      ? new Date(selectedBlogForView.published_at).toLocaleDateString('en-GB', {
+                          day: 'numeric',
+                          month: 'long',
+                          year: 'numeric',
+                        })
+                      : 'Draft / Unpublished'} • /{selectedBlogForView?.slug}
+                  </Text>
+                </View>
+              </View>
+
+              {/* Excerpt Callout */}
+              {Boolean(selectedBlogForView?.excerpt) && (
+                <View style={styles.blogReaderExcerptBox}>
+                  <Text style={styles.blogReaderExcerptText}>
+                    {selectedBlogForView.excerpt.replace(/<[^>]*>/g, '')}
+                  </Text>
+                </View>
+              )}
+
+              {/* Content Body */}
+              <View style={styles.blogReaderBodyBox}>
+                {(selectedBlogForView?.content || '')
+                  .replace(/<br\s*\/?>/gi, '\n')
+                  .replace(/<\/p>/gi, '\n\n')
+                  .replace(/<\/h[1-6]>/gi, '\n\n')
+                  .replace(/<\/li>/gi, '\n')
+                  .replace(/<[^>]*>/g, '')
+                  .split('\n\n')
+                  .map((para, pIdx) => {
+                    const cleanPara = para.trim();
+                    if (!cleanPara) return null;
+                    return (
+                      <Text key={`reader-para-${pIdx}`} style={styles.blogReaderParagraph}>
+                        {cleanPara}
+                      </Text>
+                    );
+                  })}
+              </View>
+            </ScrollView>
+
+            {/* Footer Action Bar */}
+            <View style={styles.blogReaderFooter}>
+              <TouchableOpacity
+                style={styles.blogReaderBtnOutline}
+                onPress={() => {
+                  setViewBlogModalVisible(false);
+                  handleOpenEditBlog(selectedBlogForView);
+                }}
+              >
+                <Ionicons name="create-outline" size={16} color="#0A5554" />
+                <Text style={styles.blogReaderBtnOutlineText}>Edit</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.blogReaderBtnOutline,
+                  selectedBlogForView?.status === 'published'
+                    ? { borderColor: '#FDE68A' }
+                    : { borderColor: '#A7F3D0' },
+                ]}
+                onPress={() => handleToggleBlogStatus(selectedBlogForView)}
+              >
+                <Ionicons
+                  name={
+                    selectedBlogForView?.status === 'published'
+                      ? 'archive-outline'
+                      : 'checkmark-circle-outline'
+                  }
+                  size={16}
+                  color={selectedBlogForView?.status === 'published' ? '#B45309' : '#047857'}
+                />
+                <Text
+                  style={[
+                    styles.blogReaderBtnOutlineText,
+                    {
+                      color:
+                        selectedBlogForView?.status === 'published' ? '#B45309' : '#047857',
+                    },
+                  ]}
+                >
+                  {selectedBlogForView?.status === 'published' ? 'Archive' : 'Publish'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.blogReaderBtnClose}
+                onPress={() => setViewBlogModalVisible(false)}
+              >
+                <Text style={styles.blogReaderBtnCloseText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      {/* CREATE & EDIT BLOG MODAL */}
+      <Modal
+        visible={createBlogModalVisible || editBlogModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => {
+          if (!blogSaving) {
+            setCreateBlogModalVisible(false);
+            setEditBlogModalVisible(false);
+            setEditingBlog(null);
+          }
+        }}
+      >
+        <SafeAreaView style={styles.editModalSafeArea}>
+          <View style={styles.editModalContainer}>
+            {/* Header */}
+            <View style={styles.editModalHeader}>
+              <View style={styles.editModalHeaderLeft}>
+                <View style={[styles.editModalIconWrap, { backgroundColor: '#E6F4F1' }]}>
+                  <Ionicons
+                    name={editBlogModalVisible ? 'create' : 'add-circle'}
+                    size={18}
+                    color="#0A5554"
+                  />
+                </View>
+                <View>
+                  <Text style={styles.editModalTitle}>
+                    {editBlogModalVisible ? 'Edit Blog Post' : 'New Blog Post'}
+                  </Text>
+                  <Text style={styles.editModalSubtitle}>
+                    {editBlogModalVisible
+                      ? 'Update content and article metadata'
+                      : 'Publish or draft an article for the BAN library'}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => {
+                  if (!blogSaving) {
+                    setCreateBlogModalVisible(false);
+                    setEditBlogModalVisible(false);
+                    setEditingBlog(null);
+                  }
+                }}
+                style={styles.modalCloseBtn}
+                disabled={blogSaving}
+              >
+                <Ionicons name="close" size={22} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Scrollable Form Body */}
+            <ScrollView
+              style={styles.editModalScrollView}
+              contentContainerStyle={styles.editModalFormContent}
+              keyboardShouldPersistTaps="handled"
+            >
+              {/* Section 1: Article Info */}
+              <Text style={styles.formSectionHeader}>ARTICLE INFORMATION</Text>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>
+                  Article Title <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={blogFormData.title}
+                  onChangeText={(val) => setBlogFormData((prev) => ({ ...prev, title: val }))}
+                  placeholder="A clear, specific headline"
+                  placeholderTextColor="#94A3B8"
+                />
+              </View>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>URL Slug</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={blogFormData.slug}
+                  onChangeText={(val) => setBlogFormData((prev) => ({ ...prev, slug: val }))}
+                  placeholder="auto-generated-from-title"
+                  placeholderTextColor="#94A3B8"
+                  autoCapitalize="none"
+                />
+                <Text style={styles.fieldHint}>
+                  Lowercase letters, numbers, and hyphens. Leave blank to generate automatically.
+                </Text>
+              </View>
+
+              {/* Category Chips */}
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>
+                  Category <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={{ gap: 6, paddingVertical: 2 }}
+                >
+                  {BLOG_CATEGORIES.map((cat) => (
+                    <TouchableOpacity
+                      key={`cat-chip-${cat}`}
+                      style={[
+                        styles.chipBtnSmall,
+                        blogFormData.category === cat && styles.chipBtnSmallActive,
+                      ]}
+                      onPress={() => setBlogFormData((prev) => ({ ...prev, category: cat }))}
+                    >
+                      <Text
+                        style={[
+                          styles.chipBtnSmallText,
+                          blogFormData.category === cat && styles.chipBtnSmallTextActive,
+                        ]}
+                      >
+                        {cat}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>Summary / Excerpt</Text>
+                <TextInput
+                  style={[styles.fieldInput, { height: 75, textAlignVertical: 'top', paddingTop: 8 }]}
+                  value={blogFormData.excerpt}
+                  onChangeText={(val) => setBlogFormData((prev) => ({ ...prev, excerpt: val }))}
+                  placeholder="A concise introduction used on listings and in search results"
+                  placeholderTextColor="#94A3B8"
+                  multiline
+                />
+              </View>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>
+                  Article Content <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                <TextInput
+                  style={[styles.fieldInput, { height: 180, textAlignVertical: 'top', paddingTop: 8 }]}
+                  value={blogFormData.content}
+                  onChangeText={(val) => setBlogFormData((prev) => ({ ...prev, content: val }))}
+                  placeholder="Write the full article body..."
+                  placeholderTextColor="#94A3B8"
+                  multiline
+                />
+              </View>
+
+              {/* Section 2: Author & Attribution */}
+              <Text style={styles.formSectionHeader}>AUTHOR & ATTRIBUTION</Text>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>Author Name</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={blogFormData.author_name}
+                  onChangeText={(val) => setBlogFormData((prev) => ({ ...prev, author_name: val }))}
+                  placeholder="e.g. Nadim Abrar"
+                  placeholderTextColor="#94A3B8"
+                />
+              </View>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>Author Title / Role</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={blogFormData.author_role}
+                  onChangeText={(val) => setBlogFormData((prev) => ({ ...prev, author_role: val }))}
+                  placeholder="e.g. Investment Associate"
+                  placeholderTextColor="#94A3B8"
+                />
+              </View>
+
+              <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>Author Organization</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={blogFormData.author_organization}
+                  onChangeText={(val) =>
+                    setBlogFormData((prev) => ({ ...prev, author_organization: val }))
+                  }
+                  placeholder="e.g. Bangladesh Angels Network"
+                  placeholderTextColor="#94A3B8"
+                />
+              </View>
+
+              {/* Section 3: Visibility Status */}
+              <Text style={styles.formSectionHeader}>VISIBILITY & STATUS</Text>
+
+              <View style={styles.formField}>
+                <View style={styles.chipButtonGroup}>
+                  {[
+                    { key: 'published', label: 'Published (Public)' },
+                    { key: 'archived', label: 'Archived (Hidden)' },
+                  ].map((s) => (
+                    <TouchableOpacity
+                      key={`blog-status-opt-${s.key}`}
+                      style={[
+                        styles.chipBtn,
+                        blogFormData.status === s.key && styles.chipBtnActive,
+                      ]}
+                      onPress={() => setBlogFormData((prev) => ({ ...prev, status: s.key }))}
+                    >
+                      <Text
+                        style={[
+                          styles.chipBtnText,
+                          blogFormData.status === s.key && styles.chipBtnTextActive,
+                        ]}
+                      >
+                        {s.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            </ScrollView>
+
+            {/* Footer Buttons */}
+            <View style={styles.editModalFooter}>
+              <TouchableOpacity
+                style={styles.editModalCancelBtn}
+                onPress={() => {
+                  setCreateBlogModalVisible(false);
+                  setEditBlogModalVisible(false);
+                  setEditingBlog(null);
+                }}
+                disabled={blogSaving}
+              >
+                <Text style={styles.editModalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.editModalSaveBtn}
+                onPress={editBlogModalVisible ? handleSaveEditBlog : handleSaveCreateBlog}
+                disabled={blogSaving}
+              >
+                {blogSaving ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.editModalSaveBtnText}>
+                    {editBlogModalVisible ? 'Save Changes' : 'Publish Article'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      {/* DELETE BLOG CONFIRMATION MODAL */}
+      <Modal
+        visible={deleteBlogModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !isDeletingBlog && setDeleteBlogModalVisible(false)}
+      >
+        <View style={styles.deleteModalOverlay}>
+          <View style={styles.deleteModalBox}>
+            <View style={[styles.deleteModalIconWrap, { backgroundColor: '#FEE2E2' }]}>
+              <Ionicons name="trash-outline" size={26} color="#DC2626" />
+            </View>
+            <Text style={styles.deleteModalTitle}>Delete Blog Post?</Text>
+            <Text style={styles.deleteModalMessage}>
+              Are you sure you want to delete &ldquo;{selectedBlogForDelete?.title}&rdquo;? It will no longer appear in the active content library.
+            </Text>
+            <View style={styles.deleteModalBtnRow}>
+              <TouchableOpacity
+                style={styles.deleteModalCancelBtn}
+                onPress={() => setDeleteBlogModalVisible(false)}
+                disabled={isDeletingBlog}
+              >
+                <Text style={styles.deleteModalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.deleteModalConfirmBtn}
+                onPress={handleConfirmDeleteBlog}
+                disabled={isDeletingBlog}
+              >
+                {isDeletingBlog ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.deleteModalConfirmBtnText}>Delete Post</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
       </Modal>
     </SafeAreaView>
   );
@@ -6078,6 +7280,357 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   editModalSaveBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+
+  // ----------------------------------------------------
+  // Blog Management & Reader Styles
+  // ----------------------------------------------------
+  fieldHint: {
+    fontSize: 10,
+    color: '#94A3B8',
+    marginTop: 2,
+  },
+  blogCard: {
+    backgroundColor: '#FFFFFF',
+    padding: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  blogCardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  blogCategoryPill: {
+    backgroundColor: '#E6F4F1',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: Radii.pill,
+    borderWidth: 1,
+    borderColor: '#B4E6DA',
+  },
+  blogCategoryPillText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#0A5554',
+  },
+  blogStatusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: Radii.pill,
+    borderWidth: 1,
+  },
+  blogStatusPillPublished: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
+  blogStatusPillArchived: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FDE68A',
+  },
+  blogStatusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  blogStatusPillText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  blogReadTimePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: Radii.pill,
+  },
+  blogReadTimeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  blogCardTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0F172A',
+    lineHeight: 21,
+    marginBottom: 6,
+  },
+  blogCardExcerpt: {
+    fontSize: 12,
+    color: '#475569',
+    lineHeight: 18,
+    marginBottom: 10,
+  },
+  blogMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  blogMetaAuthorWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    maxWidth: '65%',
+  },
+  blogMetaAuthorText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  blogMetaDot: {
+    fontSize: 11,
+    color: '#94A3B8',
+  },
+  blogMetaDateText: {
+    fontSize: 11,
+    color: '#94A3B8',
+  },
+  blogSlugText: {
+    fontSize: 10,
+    color: '#94A3B8',
+    marginBottom: 12,
+  },
+  blogActionsToolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  blogActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#E6F4F1',
+    borderWidth: 1,
+    borderColor: '#B4E6DA',
+  },
+  blogActionBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0A5554',
+  },
+  blogActionBtnArchive: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FDE68A',
+  },
+  blogActionBtnPublish: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
+  blogActionDeleteBtn: {
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FEE2E2',
+    marginLeft: 'auto',
+  },
+
+  // Reader Modal Styles
+  blogReaderContent: {
+    padding: 16,
+    paddingBottom: 32,
+  },
+  blogReaderTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#0F172A',
+    lineHeight: 26,
+    marginBottom: 12,
+  },
+  blogReaderAuthorBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 14,
+  },
+  blogReaderAvatarCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#E6F4F1',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#B4E6DA',
+  },
+  blogReaderAvatarText: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0A5554',
+  },
+  blogReaderAuthorName: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  blogReaderAuthorRole: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  blogReaderDate: {
+    fontSize: 10,
+    color: '#94A3B8',
+    marginTop: 2,
+  },
+  blogReaderExcerptBox: {
+    backgroundColor: '#F0FDFA',
+    borderLeftWidth: 3,
+    borderLeftColor: '#0A5554',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+  },
+  blogReaderExcerptText: {
+    fontSize: 12,
+    fontStyle: 'italic',
+    color: '#134E4A',
+    lineHeight: 18,
+  },
+  blogReaderBodyBox: {
+    gap: 12,
+  },
+  blogReaderParagraph: {
+    fontSize: 13,
+    color: '#334155',
+    lineHeight: 22,
+  },
+  blogReaderFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+  },
+  blogReaderBtnOutline: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  blogReaderBtnOutlineText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0A5554',
+  },
+  blogReaderBtnClose: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+  },
+  blogReaderBtnCloseText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+
+  // Delete Blog Modal
+  deleteModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  deleteModalBox: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    alignItems: 'center',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  deleteModalIconWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  deleteModalTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  deleteModalMessage: {
+    fontSize: 12,
+    color: '#64748B',
+    lineHeight: 18,
+    textAlign: 'center',
+    marginBottom: 18,
+  },
+  deleteModalBtnRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    width: '100%',
+  },
+  deleteModalCancelBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+  },
+  deleteModalCancelBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  deleteModalConfirmBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: '#DC2626',
+    alignItems: 'center',
+  },
+  deleteModalConfirmBtnText: {
     fontSize: 12,
     fontWeight: '700',
     color: '#FFFFFF',

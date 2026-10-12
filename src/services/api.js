@@ -477,6 +477,143 @@ export async function fetchAdminBanWealthOrders(token) {
   return null;
 }
 
+/**
+ * Fetch Admin Blogs list from GET /api/admin/blogs
+ */
+export async function fetchAdminBlogs(
+  token,
+  { status = '', search = '', page = 1, per_page = 15 } = {}
+) {
+  try {
+    const params = new URLSearchParams();
+    if (status && status !== 'all') params.append('status', status);
+    if (search) params.append('search', search);
+    if (page) params.append('page', String(page));
+    if (per_page) params.append('per_page', String(per_page));
+
+    const path = `/admin/blogs${params.toString() ? '?' + params.toString() : ''}`;
+    const res = await fetchAdminWithFallback(path, token);
+    if (res && res.ok) {
+      const json = await res.json();
+      return json;
+    }
+  } catch (err) {
+    console.log('Admin blogs fetch error:', err);
+  }
+  return null;
+}
+
+/**
+ * Fetch single Admin Blog by ID from GET /api/admin/blogs/{id}
+ */
+export async function fetchAdminBlog(token, blogId) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/blogs/${blogId}`, token);
+    if (res && res.ok) {
+      const json = await res.json();
+      return json.data || json;
+    }
+  } catch (err) {
+    console.log('Admin blog show error:', err);
+  }
+  return null;
+}
+
+/**
+ * Create new blog post via POST /api/admin/blogs
+ */
+export async function createAdminBlog(token, blogData) {
+  try {
+    const res = await fetchAdminWithFallback('/admin/blogs', token, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(blogData),
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        data: json.data || null,
+        message: json.message || '',
+        errors: json.errors || null,
+      };
+    }
+  } catch (err) {
+    console.log('Admin create blog error:', err);
+  }
+  return { ok: false, message: 'Could not create blog post.' };
+}
+
+/**
+ * Update blog post via POST /api/admin/blogs/{id}
+ */
+export async function updateAdminBlog(token, blogId, blogData) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/blogs/${blogId}`, token, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(blogData),
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        data: json.data || null,
+        message: json.message || '',
+        errors: json.errors || null,
+      };
+    }
+  } catch (err) {
+    console.log('Admin update blog error:', err);
+  }
+  return { ok: false, message: 'Could not update blog post.' };
+}
+
+/**
+ * Toggle/Update blog status via PATCH /api/admin/blogs/{id}/status
+ */
+export async function updateAdminBlogStatus(token, blogId, status) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/blogs/${blogId}/status`, token, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        data: json.data || null,
+        message: json.message || '',
+      };
+    }
+  } catch (err) {
+    console.log('Admin update blog status error:', err);
+  }
+  return { ok: false, message: 'Could not update blog status.' };
+}
+
+/**
+ * Delete blog post via DELETE /api/admin/blogs/{id}
+ */
+export async function deleteAdminBlog(token, blogId) {
+  try {
+    const res = await fetchAdminWithFallback(`/admin/blogs/${blogId}`, token, {
+      method: 'DELETE',
+    });
+    if (res) {
+      const json = await res.json();
+      return {
+        ok: res.ok,
+        message: json.message || 'Blog post deleted successfully.',
+      };
+    }
+  } catch (err) {
+    console.log('Admin delete blog error:', err);
+  }
+  return { ok: false, message: 'Could not delete blog post.' };
+}
+
 
 // Embedded fallback data directly from live Laravel backend for 100% resilient rendering
 export const FALLBACK_HOME_DATA = {
