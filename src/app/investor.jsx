@@ -13,6 +13,7 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -23,6 +24,7 @@ import {
   fetchInvestorPortfolioInvestments,
   fetchInvestorOrders,
   fetchPublicDeals,
+  submitDealInvestmentInterest,
   updateInvestorProfile,
   updateInvestorPassword,
 } from '../services/api';
@@ -59,6 +61,12 @@ export default function InvestorScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [currencyFilter, setCurrencyFilter] = useState('All');
   const [selectedDeal, setSelectedDeal] = useState(null);
+
+  // Express Interest Modal State
+  const [interestModalVisible, setInterestModalVisible] = useState(false);
+  const [dealForInterest, setDealForInterest] = useState(null);
+  const [submittingInterest, setSubmittingInterest] = useState(false);
+  const [expressedDealIds, setExpressedDealIds] = useState(new Set());
 
   // Profile Form State
   const [profileName, setProfileName] = useState(user?.name || '');
@@ -112,7 +120,15 @@ export default function InvestorScreen() {
       }
 
       if (dealsRes.status === 'fulfilled' && dealsRes.value?.deals) {
-        setDeals(dealsRes.value.deals || []);
+        const fetchedDeals = dealsRes.value.deals || [];
+        setDeals(fetchedDeals);
+        const interestedSet = new Set();
+        fetchedDeals.forEach((d) => {
+          if (d.has_expressed_interest) {
+            interestedSet.add(d.id);
+          }
+        });
+        setExpressedDealIds(interestedSet);
       }
 
       if (ordersRes.status === 'fulfilled' && ordersRes.value?.data) {
@@ -160,7 +176,15 @@ export default function InvestorScreen() {
       }
 
       if (dealsRes.status === 'fulfilled' && dealsRes.value?.deals) {
-        setDeals(dealsRes.value.deals || []);
+        const fetchedDeals = dealsRes.value.deals || [];
+        setDeals(fetchedDeals);
+        const interestedSet = new Set();
+        fetchedDeals.forEach((d) => {
+          if (d.has_expressed_interest) {
+            interestedSet.add(d.id);
+          }
+        });
+        setExpressedDealIds(interestedSet);
       }
 
       if (ordersRes.status === 'fulfilled' && ordersRes.value?.data) {
@@ -184,6 +208,53 @@ export default function InvestorScreen() {
   const handleLogout = async () => {
     await logoutUser();
     router.replace('/');
+  };
+
+  const handleOpenInterestModal = (deal) => {
+    setDealForInterest(deal);
+    setInterestModalVisible(true);
+  };
+
+  const handleConfirmExpressInterest = async () => {
+    if (!dealForInterest || !token) return;
+    setSubmittingInterest(true);
+    try {
+      const res = await submitDealInvestmentInterest(token, dealForInterest.id, 'invest');
+      if (res.ok) {
+        setExpressedDealIds((prev) => new Set([...prev, dealForInterest.id]));
+        setDeals((prev) =>
+          prev.map((d) => (d.id === dealForInterest.id ? { ...d, has_expressed_interest: true } : d))
+        );
+        setInterestModalVisible(false);
+        Alert.alert(
+          'Interest Expressed',
+          `Your interest to invest in ${dealForInterest.title} has been recorded! Our lead investment team will follow up with direct deal room access and allocation details.`
+        );
+        // Refresh dashboard overview in background
+        fetchInvestorDashboard(token).then((dashRes) => {
+          if (dashRes.ok && dashRes.data) {
+            setSummary(dashRes.data.summary || null);
+            setRecentActivity(dashRes.data.recent_activity || []);
+          }
+        });
+      } else {
+        if (res.message && res.message.toLowerCase().includes('already')) {
+          setExpressedDealIds((prev) => new Set([...prev, dealForInterest.id]));
+          setDeals((prev) =>
+            prev.map((d) => (d.id === dealForInterest.id ? { ...d, has_expressed_interest: true } : d))
+          );
+          setInterestModalVisible(false);
+          Alert.alert('Notice', 'You have already recorded your interest for this deal.');
+        } else {
+          Alert.alert('Submission Notice', res.message || 'Unable to record investment interest.');
+        }
+      }
+    } catch (err) {
+      console.log('Express interest error:', err);
+      Alert.alert('Error', 'An error occurred while expressing investment interest.');
+    } finally {
+      setSubmittingInterest(false);
+    }
   };
 
   const handleSaveProfile = async () => {
@@ -242,12 +313,27 @@ export default function InvestorScreen() {
     }
   };
 
+  // Available currencies dynamically extracted from investments & summary
+  const availableCurrencies = useMemo(() => {
+    const set = new Set();
+    investments.forEach((item) => {
+      if (item.currency) set.add(item.currency.toUpperCase());
+    });
+    if (summary?.currency_totals) {
+      summary.currency_totals.forEach((ct) => {
+        if (ct.currency) set.add(ct.currency.toUpperCase());
+      });
+    }
+    const list = Array.from(set).sort();
+    return ['All', ...list];
+  }, [investments, summary]);
+
   // Filtered investments for Personal Ledger
   const filteredInvestments = useMemo(() => {
     return investments.filter((item) => {
-      const name = item.deal?.title || item.deal_name || item.title || item.company_name || '';
+      const name = item.startup_name || item.deal?.title || item.deal_name || item.title || item.company_name || '';
       const currency = item.currency || 'USD';
-      const matchesSearch = !searchQuery || name.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesSearch = !searchQuery || name.toLowerCase().includes(searchQuery.toLowerCase()) || currency.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesCurr = currencyFilter === 'All' || currency.toUpperCase() === currencyFilter.toUpperCase();
       return matchesSearch && matchesCurr;
     });
@@ -585,42 +671,49 @@ export default function InvestorScreen() {
                     </View>
                   ) : (
                     <View style={styles.ledgerList}>
-                      {(recentActivity.length > 0 ? recentActivity : investments.slice(0, 4)).map((item, idx) => (
-                        <View key={item.id || idx} style={styles.ledgerItemCard}>
-                          <View style={styles.ledgerItemLeft}>
-                            <View style={styles.ledgerAvatar}>
-                              <Text style={styles.ledgerAvatarText}>
-                                {(item.deal?.title || item.startup_name || 'BA').substring(0, 2).toUpperCase()}
-                              </Text>
+                      {(recentActivity.length > 0 ? recentActivity : investments.slice(0, 4)).map((item, idx) => {
+                        const title = item.startup_name || item.deal?.title || 'Portfolio Deal';
+                        const initials = (item.startup_name || item.deal?.title || 'BA').substring(0, 2).toUpperCase();
+                        const dateStr = item.completed_at || item.created_at;
+                        return (
+                          <View key={item.id || idx} style={styles.ledgerItemCard}>
+                            <View style={styles.ledgerItemLeft}>
+                              <View style={styles.ledgerAvatar}>
+                                <Text style={styles.ledgerAvatarText}>{initials}</Text>
+                              </View>
+                              <View style={styles.ledgerItemInfo}>
+                                <Text style={styles.ledgerItemTitle} numberOfLines={1}>
+                                  {title}
+                                </Text>
+                                <Text style={styles.ledgerItemDate}>
+                                  {dateStr
+                                    ? new Date(dateStr).toLocaleDateString('en-GB', {
+                                        day: '2-digit',
+                                        month: 'short',
+                                        year: 'numeric',
+                                      })
+                                    : 'Completed'}
+                                </Text>
+                              </View>
                             </View>
-                            <View style={styles.ledgerItemInfo}>
-                              <Text style={styles.ledgerItemTitle} numberOfLines={1}>
-                                {item.deal?.title || item.startup_name || 'Portfolio Deal'}
-                              </Text>
-                              <Text style={styles.ledgerItemDate}>
-                                {item.created_at || item.completed_at
-                                  ? new Date(item.created_at || item.completed_at).toLocaleDateString('en-GB', {
-                                      day: '2-digit',
-                                      month: 'short',
-                                      year: 'numeric',
-                                    })
-                                  : 'Completed'}
-                              </Text>
-                            </View>
-                          </View>
 
-                          <View style={styles.ledgerItemRight}>
-                            <View style={styles.statusBadgeCompleted}>
-                              <Text style={styles.statusBadgeText}>COMPLETED</Text>
+                            <View style={styles.ledgerItemRight}>
+                              <View style={styles.statusBadgeCompleted}>
+                                <Text style={styles.statusBadgeText}>COMPLETED</Text>
+                              </View>
+                              {item.amount != null ? (
+                                <Text style={styles.ledgerAmountText}>
+                                  {item.currency || 'USD'}{' '}
+                                  {Number(item.amount).toLocaleString('en-US', {
+                                    minimumFractionDigits: 2,
+                                    maximumFractionDigits: 2,
+                                  })}
+                                </Text>
+                              ) : null}
                             </View>
-                            {item.amount ? (
-                              <Text style={styles.ledgerAmountText}>
-                                {item.currency || 'USD'} {Number(item.amount).toLocaleString()}
-                              </Text>
-                            ) : null}
                           </View>
-                        </View>
-                      ))}
+                        );
+                      })}
                     </View>
                   )}
                 </View>
@@ -660,7 +753,7 @@ export default function InvestorScreen() {
                   </View>
 
                   <View style={styles.currencyPills}>
-                    {['All', 'USD', 'BDT'].map((curr) => (
+                    {availableCurrencies.map((curr) => (
                       <TouchableOpacity
                         key={curr}
                         style={[styles.currPill, currencyFilter === curr && styles.currPillActive]}
@@ -688,15 +781,16 @@ export default function InvestorScreen() {
                 ) : (
                   <View style={styles.investmentsList}>
                     {filteredInvestments.map((inv, idx) => {
-                      const title = inv.deal?.title || inv.startup_name || inv.title || 'Investment';
+                      const title = inv.startup_name || inv.deal?.title || inv.title || 'Investment';
+                      const dateStr = inv.completed_at || inv.created_at;
                       return (
                         <View key={inv.id || idx} style={styles.investmentCard}>
                           <View style={styles.investmentCardHeader}>
                             <View style={styles.investmentTitleCol}>
                               <Text style={styles.investmentTitle}>{title}</Text>
                               <Text style={styles.investmentDate}>
-                                {inv.completed_at || inv.created_at
-                                  ? new Date(inv.completed_at || inv.created_at).toLocaleDateString('en-GB', {
+                                {dateStr
+                                  ? new Date(dateStr).toLocaleDateString('en-GB', {
                                       day: '2-digit',
                                       month: 'short',
                                       year: 'numeric',
@@ -706,18 +800,29 @@ export default function InvestorScreen() {
                             </View>
                             <View style={styles.statusBadgeCompleted}>
                               <Text style={styles.statusBadgeText}>
-                                {inv.type?.toUpperCase() || 'INVESTED'}
+                                {inv.status?.toUpperCase() || 'COMPLETED'}
                               </Text>
                             </View>
                           </View>
 
                           <View style={styles.investmentCardDetails}>
-                            {inv.amount ? (
+                            {inv.amount != null ? (
                               <View style={styles.detailRow}>
                                 <Text style={styles.detailLabel}>Invested Amount:</Text>
                                 <Text style={styles.detailValBold}>
-                                  {inv.currency || 'USD'} {Number(inv.amount).toLocaleString()}
+                                  {inv.currency || 'USD'}{' '}
+                                  {Number(inv.amount).toLocaleString('en-US', {
+                                    minimumFractionDigits: 2,
+                                    maximumFractionDigits: 2,
+                                  })}
                                 </Text>
+                              </View>
+                            ) : null}
+
+                            {inv.currency ? (
+                              <View style={styles.detailRow}>
+                                <Text style={styles.detailLabel}>Currency:</Text>
+                                <Text style={styles.detailVal}>{inv.currency}</Text>
                               </View>
                             ) : null}
 
@@ -862,13 +967,21 @@ export default function InvestorScreen() {
                             <Text style={styles.dealDetailsBtnText}>View Memo & Deck</Text>
                           </TouchableOpacity>
 
-                          <TouchableOpacity
-                            style={styles.dealPledgeBtn}
-                            onPress={() => router.push({ pathname: '/startups', params: { deal: deal.slug } })}
-                          >
-                            <Text style={styles.dealPledgeBtnText}>Commit</Text>
-                            <Ionicons name="arrow-forward" size={13} color="#FFFFFF" />
-                          </TouchableOpacity>
+                          {expressedDealIds.has(deal.id) || deal.has_expressed_interest ? (
+                            <View style={styles.dealInterestBtnExpressed}>
+                              <Ionicons name="checkmark-circle" size={14} color="#005A36" />
+                              <Text style={styles.dealInterestBtnTextExpressed}>Interest Expressed</Text>
+                            </View>
+                          ) : (
+                            <TouchableOpacity
+                              style={styles.dealInterestBtn}
+                              activeOpacity={0.85}
+                              onPress={() => handleOpenInterestModal(deal)}
+                            >
+                              <Text style={styles.dealInterestBtnText}>Express interest to invest</Text>
+                              <Ionicons name="arrow-forward" size={13} color="#FFFFFF" />
+                            </TouchableOpacity>
+                          )}
                         </View>
                       </View>
                     ))}
@@ -1153,6 +1266,99 @@ export default function InvestorScreen() {
         visible={Boolean(selectedDeal)}
         onClose={() => setSelectedDeal(null)}
       />
+
+      {/* Express Interest Confirmation Modal */}
+      <Modal
+        visible={interestModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => {
+          if (!submittingInterest) setInterestModalVisible(false);
+        }}
+      >
+        <View style={styles.confirmModalOverlay}>
+          <TouchableOpacity
+            style={styles.confirmModalBackdrop}
+            activeOpacity={1}
+            onPress={() => {
+              if (!submittingInterest) setInterestModalVisible(false);
+            }}
+          />
+          <View style={styles.confirmModalCard}>
+            <View style={styles.confirmModalIconBox}>
+              <Ionicons name="trending-up" size={28} color="#005A36" />
+            </View>
+
+            <Text style={styles.confirmModalTitle}>Express Interest to Invest</Text>
+            <Text style={styles.confirmModalSubtitle}>
+              Are you interested in investing in this syndicate opportunity?
+            </Text>
+
+            {dealForInterest ? (
+              <View style={styles.confirmModalDealBox}>
+                <View style={styles.confirmModalDealHeader}>
+                  <Text style={styles.confirmModalDealTitle} numberOfLines={1}>
+                    {dealForInterest.title}
+                  </Text>
+                  {dealForInterest.sector ? (
+                    <View style={styles.confirmModalSectorBadge}>
+                      <Text style={styles.confirmModalSectorText}>{dealForInterest.sector}</Text>
+                    </View>
+                  ) : null}
+                </View>
+
+                {dealForInterest.amount_seeking_formatted || dealForInterest.amount_seeking ? (
+                  <View style={styles.confirmModalRow}>
+                    <Text style={styles.confirmModalLabel}>Target Seeking:</Text>
+                    <Text style={styles.confirmModalValue}>
+                      {dealForInterest.amount_seeking_formatted
+                        ? `$${dealForInterest.amount_seeking_formatted}`
+                        : `$${Number(dealForInterest.amount_seeking).toLocaleString()}`}
+                    </Text>
+                  </View>
+                ) : null}
+
+                {dealForInterest.investment_stage ? (
+                  <View style={styles.confirmModalRow}>
+                    <Text style={styles.confirmModalLabel}>Stage:</Text>
+                    <Text style={styles.confirmModalValue}>{dealForInterest.investment_stage}</Text>
+                  </View>
+                ) : null}
+
+                <Text style={styles.confirmModalNote}>
+                  By confirming, Bangladesh Angels investment management team will record your investment intent and follow up with data room access, terms, and syndicate allocation details.
+                </Text>
+              </View>
+            ) : null}
+
+            <View style={styles.confirmModalActions}>
+              <TouchableOpacity
+                style={styles.confirmModalCancelBtn}
+                disabled={submittingInterest}
+                onPress={() => setInterestModalVisible(false)}
+              >
+                <Text style={styles.confirmModalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.confirmModalConfirmBtn}
+                disabled={submittingInterest}
+                activeOpacity={0.88}
+                onPress={handleConfirmExpressInterest}
+              >
+                {submittingInterest ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <Text style={styles.confirmModalConfirmText}>Confirm Interest</Text>
+                    <Ionicons name="arrow-forward" size={15} color="#FFFFFF" />
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1971,17 +2177,168 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: Colors.ink,
   },
-  dealPledgeBtn: {
+  dealInterestBtn: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 6,
     paddingVertical: 9,
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     borderRadius: 10,
     backgroundColor: Colors.green,
   },
-  dealPledgeBtnText: {
+  dealInterestBtnText: {
     fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  dealInterestBtnExpressed: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    backgroundColor: '#DEF7EC',
+    borderWidth: 1,
+    borderColor: '#70D9A9',
+  },
+  dealInterestBtnTextExpressed: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#03543F',
+  },
+  confirmModalOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    backgroundColor: 'rgba(9, 47, 41, 0.65)',
+  },
+  confirmModalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  confirmModalCard: {
+    width: '100%',
+    maxWidth: 440,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 24,
+    ...Shadows.modal,
+    alignItems: 'center',
+  },
+  confirmModalIconBox: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#DEF7EC',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
+  },
+  confirmModalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#111827',
+    textAlign: 'center',
+    marginBottom: 6,
+  },
+  confirmModalSubtitle: {
+    fontSize: 13,
+    color: '#6B7280',
+    textAlign: 'center',
+    lineHeight: 18,
+    marginBottom: 16,
+  },
+  confirmModalDealBox: {
+    width: '100%',
+    backgroundColor: '#F9FAFB',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    padding: 14,
+    marginBottom: 20,
+    gap: 8,
+  },
+  confirmModalDealHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  confirmModalDealTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#111827',
+    flex: 1,
+    marginRight: 8,
+  },
+  confirmModalSectorBadge: {
+    backgroundColor: '#E8F5EE',
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+  },
+  confirmModalSectorText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#005A36',
+  },
+  confirmModalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  confirmModalLabel: {
+    fontSize: 12,
+    color: '#6B7280',
+  },
+  confirmModalValue: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  confirmModalNote: {
+    fontSize: 11,
+    color: '#6B7280',
+    lineHeight: 16,
+    marginTop: 4,
+    fontStyle: 'italic',
+  },
+  confirmModalActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    width: '100%',
+  },
+  confirmModalCancelBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  confirmModalCancelText: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: '#4B5563',
+  },
+  confirmModalConfirmBtn: {
+    flex: 1.5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: Colors.green,
+  },
+  confirmModalConfirmText: {
+    fontSize: 13.5,
     fontWeight: '700',
     color: '#FFFFFF',
   },

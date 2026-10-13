@@ -41,6 +41,8 @@ export default function RootLayout() {
         <Stack.Screen name="checkout" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="about-us" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="login" options={{ headerShown: false, animation: 'slide_from_right' }} />
+        <Stack.Screen name="register" options={{ headerShown: false, animation: 'slide_from_right' }} />
+        <Stack.Screen name="investor" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="admin" options={{ headerShown: false, animation: 'slide_from_right' }} />
       </Stack>
     </SafeAreaProvider>

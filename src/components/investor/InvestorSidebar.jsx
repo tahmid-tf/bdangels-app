@@ -245,7 +245,7 @@ export default function InvestorSidebar({
             activeOpacity={0.75}
           >
             <Ionicons name="home-outline" size={19} color="rgba(238, 251, 245, 0.72)" />
-            <Text style={styles.navText}>Back to Website</Text>
+            <Text style={styles.navText}>Back to App</Text>
           </TouchableOpacity>
         </ScrollView>
 
