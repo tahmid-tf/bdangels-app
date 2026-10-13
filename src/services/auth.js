@@ -1,5 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { API_BASE_URL } from './api';
+import * as WebBrowser from 'expo-web-browser';
+import * as Linking from 'expo-linking';
+import { API_BASE_URL, getWebBaseUrl } from './api';
 
 const TOKEN_KEY = '@bdangels_auth_token';
 const USER_KEY = '@bdangels_auth_user';
@@ -164,6 +166,11 @@ export async function loginUser(email, password) {
 export async function logoutUser() {
   const token = inMemoryToken;
   try {
+    try {
+      WebBrowser.dismissAuthSession();
+    } catch {
+      // ignore
+    }
     if (token) {
       const endpoints = getAuthEndpoints();
       await fetch(`${endpoints[0]}/auth/logout`, {
@@ -360,3 +367,223 @@ export async function submitInvestorSignup({
     errors: lastErrors,
   };
 }
+
+/**
+ * Parse query params from deep link callback URL
+ */
+function parseAuthUrlParams(url) {
+  const params = {};
+  if (!url) return params;
+
+  try {
+    const parsed = Linking.parse(url);
+    if (parsed.queryParams) {
+      Object.assign(params, parsed.queryParams);
+    }
+  } catch (err) {
+    console.log('Linking.parse notice:', err);
+  }
+
+  const questionIdx = url.indexOf('?');
+  const hashIdx = url.indexOf('#');
+  const queryStr = questionIdx !== -1
+    ? (hashIdx !== -1 && hashIdx > questionIdx
+        ? url.substring(questionIdx + 1, hashIdx)
+        : url.substring(questionIdx + 1))
+    : '';
+
+  if (queryStr) {
+    const pairs = queryStr.split('&');
+    for (const pair of pairs) {
+      const [k, v] = pair.split('=');
+      if (k && !(k in params)) {
+        try {
+          params[k] = decodeURIComponent(v || '');
+        } catch {
+          params[k] = v || '';
+        }
+      }
+    }
+  }
+
+  return params;
+}
+
+/**
+ * Parse user payload from Google auth response
+ */
+function parseUserPayload(rawUser) {
+  if (!rawUser) return null;
+  if (typeof rawUser === 'object') return rawUser;
+  if (typeof rawUser === 'string') {
+    try {
+      return JSON.parse(decodeURIComponent(rawUser));
+    } catch {
+      try {
+        return JSON.parse(rawUser);
+      } catch (e) {
+        console.log('Failed to parse user JSON payload:', e);
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Perform Google Authentication via browser OAuth session (matching web application flow)
+ *
+ * @param {object} [options]
+ * @param {'login'|'signup'} [options.intent='login']
+ * @returns {Promise<{ok: boolean, user?: object, token?: string, isNewUser?: boolean, isAdmin?: boolean, cancelled?: boolean, message?: string}>}
+ */
+export async function loginWithGoogle({ intent = 'login' } = {}) {
+  try {
+    try {
+      WebBrowser.dismissAuthSession();
+    } catch {
+      // ignore
+    }
+
+    const webBaseUrl = getWebBaseUrl();
+    const returnUrl = Linking.createURL('auth/google/callback');
+
+    // Trigger backend Google OAuth with mobile mode, explicit account selection prompt, and cache buster
+    const authUrl = `${webBaseUrl}/auth/google/${intent}?mode=mobile&prompt=select_account&_t=${Date.now()}&redirect_uri=${encodeURIComponent(returnUrl)}`;
+
+    const result = await WebBrowser.openAuthSessionAsync(authUrl, returnUrl, {
+      showInRecents: false,
+      preferEphemeralSession: false,
+    });
+
+    try {
+      WebBrowser.dismissAuthSession();
+    } catch {
+      // ignore
+    }
+
+    if (result.type === 'success' && result.url) {
+      const params = parseAuthUrlParams(result.url);
+
+      if (params.error) {
+        return {
+          ok: false,
+          message: params.error,
+        };
+      }
+
+      const token = params.token;
+      const user = parseUserPayload(params.user);
+
+      if (token && user) {
+        await saveAuthSession(user, token);
+        const isNewUser = params.is_new_user === '1' || params.is_new_user === true;
+        return {
+          ok: true,
+          user,
+          token,
+          isNewUser,
+          isAdmin: Boolean(
+            user.is_admin ||
+            user.role === 'admin' ||
+            user.role === 'superadmin'
+          ),
+          message: isNewUser
+            ? 'Account registered via Google successfully.'
+            : 'Google sign-in successful.',
+        };
+      }
+
+      return {
+        ok: false,
+        message: 'Could not extract authentication credentials from Google response.',
+      };
+    }
+
+    if (result.type === 'cancel' || result.type === 'dismiss') {
+      return {
+        ok: false,
+        cancelled: true,
+        message: 'Google sign-in was cancelled.',
+      };
+    }
+
+    return {
+      ok: false,
+      message: 'Google sign-in was not completed.',
+    };
+  } catch (err) {
+    console.log('Google login exception:', err);
+    return {
+      ok: false,
+      message: err.message || 'Unable to connect to Google authentication service.',
+    };
+  }
+}
+
+/**
+ * Authenticate or register directly via POST /auth/google endpoint (for ID token or access token)
+ */
+export async function loginWithGoogleApi(payload) {
+  const endpoints = getAuthEndpoints();
+  let lastErrorMessage = '';
+  let lastErrors = null;
+
+  for (const baseUrl of endpoints) {
+    try {
+      const res = await fetch(`${baseUrl}/auth/google`, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ...payload,
+          device_name: payload.device_name || 'mobile-app',
+        }),
+      });
+
+      const json = await res.json().catch(() => null);
+
+      if (res.ok && json?.data?.token) {
+        const user = json.data.user;
+        const token = json.data.token;
+        await saveAuthSession(user, token);
+        return {
+          ok: true,
+          user,
+          token,
+          isNewUser: Boolean(json.data.is_new_user),
+          isAdmin: Boolean(
+            user && (user.is_admin || user.role === 'admin' || user.role === 'superadmin')
+          ),
+          message: json.message || 'Google sign-in successful.',
+        };
+      }
+
+      if (res.status === 422 || res.status === 401 || res.status === 403) {
+        return {
+          ok: false,
+          message: json?.message || 'Google authentication could not be verified.',
+          errors: json?.errors || null,
+        };
+      }
+
+      if (res.status >= 500) {
+        continue;
+      }
+
+      lastErrorMessage = json?.message || `Authentication error (${res.status})`;
+      lastErrors = json?.errors || null;
+    } catch (err) {
+      console.log(`Google API login attempt at ${baseUrl} failed:`, err);
+      lastErrorMessage = 'Network error connecting to login service. Please check your connection.';
+    }
+  }
+
+  return {
+    ok: false,
+    message: lastErrorMessage || 'Unable to connect to Google authentication service.',
+    errors: lastErrors,
+  };
+}
+

@@ -18,6 +18,7 @@ import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Radii, Shadows, Spacing } from '../constants/theme';
 import { loginUser } from '../services/auth';
+import GoogleAuthButton from '../components/GoogleAuthButton';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -131,6 +132,31 @@ export default function LoginScreen() {
                 <Text style={styles.errorBannerText}>{generalError}</Text>
               </View>
             )}
+
+            {/* Google Authentication (matching web application) */}
+            <GoogleAuthButton
+              intent="login"
+              label="Continue with Google"
+              style={styles.googleButton}
+              onSuccess={(res) => {
+                if (res.isAdmin) {
+                  router.replace('/admin');
+                } else {
+                  router.replace('/investor');
+                }
+              }}
+              onError={(msg) => {
+                setGeneralError(msg);
+                Alert.alert('Google Sign-In Notice', msg);
+              }}
+            />
+
+            {/* Divider */}
+            <View style={styles.dividerRow}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>or sign in with email</Text>
+              <View style={styles.dividerLine} />
+            </View>
 
             {/* Email Input */}
             <View style={styles.inputGroup}>
@@ -324,6 +350,26 @@ const styles = StyleSheet.create({
     color: '#B91C1C',
     fontWeight: '600',
     lineHeight: 17,
+  },
+  googleButton: {
+    marginBottom: 16,
+  },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 20,
+    gap: 12,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#E5E7EB',
+  },
+  dividerText: {
+    fontSize: 12,
+    color: '#6B7280',
+    fontWeight: '500',
+    textTransform: 'lowercase',
   },
   inputGroup: {
     marginBottom: 18,

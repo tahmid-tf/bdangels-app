@@ -18,6 +18,7 @@ import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Radii, Shadows, Spacing } from '../constants/theme';
 import { submitInvestorSignup } from '../services/auth';
+import GoogleAuthButton from '../components/GoogleAuthButton';
 
 const TIERS = [
   { slug: 'free', name: 'Free', price: 0, description: 'Start with free tier to explore community deals.' },
@@ -221,6 +222,42 @@ export default function RegisterScreen() {
                 <Text style={styles.errorBannerText}>{generalError}</Text>
               </View>
             )}
+
+            {/* Google Quick Sign-Up (matching web application) */}
+            <View style={styles.googleSection}>
+              <GoogleAuthButton
+                intent="signup"
+                label="Sign up with Google"
+                onSuccess={(res) => {
+                  Alert.alert(
+                    'Welcome to BAN',
+                    res.isNewUser
+                      ? 'Your investor account has been created via Google. An administrator will review your account.'
+                      : 'Signed in with your Google account successfully.',
+                    [
+                      {
+                        text: 'Go to Dashboard',
+                        onPress: () => router.replace(res.isAdmin ? '/admin' : '/investor'),
+                      },
+                    ]
+                  );
+                }}
+                onError={(msg) => {
+                  setGeneralError(msg);
+                  Alert.alert('Google Sign-Up Notice', msg);
+                }}
+              />
+              <Text style={styles.googleHint}>
+                Use Google to create your angel investor account instantly or sign in.
+              </Text>
+            </View>
+
+            {/* Divider */}
+            <View style={styles.dividerRow}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>or fill application manually</Text>
+              <View style={styles.dividerLine} />
+            </View>
 
             {/* 1. Choose your tier */}
             <View style={styles.sectionBlock}>
@@ -715,6 +752,38 @@ const styles = StyleSheet.create({
     color: Colors.error,
     fontSize: 13,
     lineHeight: 18,
+  },
+  googleSection: {
+    backgroundColor: '#F9FAFB',
+    borderRadius: Radii.md,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    padding: 14,
+    marginBottom: Spacing.md,
+  },
+  googleHint: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 8,
+    textAlign: 'center',
+    lineHeight: 16,
+  },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.md,
+    gap: 12,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#E5E7EB',
+  },
+  dividerText: {
+    fontSize: 12,
+    color: '#6B7280',
+    fontWeight: '600',
+    textTransform: 'lowercase',
   },
   sectionBlock: {
     marginBottom: Spacing.lg,

@@ -3412,3 +3412,4 @@ export async function updateInvestorPassword(token, { current_password, password
   }
   return { ok: false, message: 'Could not connect to update password.' };
 }
+
