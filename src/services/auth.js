@@ -412,17 +412,18 @@ function parseAuthUrlParams(url) {
 /**
  * Parse user payload from Google auth response
  */
-function parseUserPayload(rawUser) {
+export function parseUserPayload(rawUser) {
   if (!rawUser) return null;
+  if (Array.isArray(rawUser)) return parseUserPayload(rawUser[0]);
   if (typeof rawUser === 'object') return rawUser;
   if (typeof rawUser === 'string') {
     try {
-      return JSON.parse(decodeURIComponent(rawUser));
+      return JSON.parse(rawUser);
     } catch {
       try {
-        return JSON.parse(rawUser);
-      } catch (e) {
-        console.log('Failed to parse user JSON payload:', e);
+        return JSON.parse(decodeURIComponent(rawUser));
+      } catch (err) {
+        console.log('Failed to parse user JSON payload:', err);
       }
     }
   }
@@ -454,12 +455,6 @@ export async function loginWithGoogle({ intent = 'login' } = {}) {
       showInRecents: false,
       preferEphemeralSession: false,
     });
-
-    try {
-      WebBrowser.dismissAuthSession();
-    } catch {
-      // ignore
-    }
 
     if (result.type === 'success' && result.url) {
       const params = parseAuthUrlParams(result.url);
@@ -517,6 +512,12 @@ export async function loginWithGoogle({ intent = 'login' } = {}) {
       ok: false,
       message: err.message || 'Unable to connect to Google authentication service.',
     };
+  } finally {
+    try {
+      WebBrowser.dismissAuthSession();
+    } catch {
+      // Auth sessions are not dismissible on every platform.
+    }
   }
 }
 

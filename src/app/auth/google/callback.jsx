@@ -3,7 +3,7 @@ import { View, Text, ActivityIndicator, Image, StyleSheet } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { Colors } from '../../../constants/theme';
-import { saveAuthSession } from '../../../services/auth';
+import { parseUserPayload, saveAuthSession } from '../../../services/auth';
 
 /**
  * Google OAuth deep link callback screen.
@@ -29,19 +29,7 @@ export default function GoogleCallbackScreen() {
     }
 
     if (token && user) {
-      let userObj = null;
-      try {
-        userObj =
-          typeof user === 'string'
-            ? JSON.parse(decodeURIComponent(user))
-            : user;
-      } catch {
-        try {
-          userObj = JSON.parse(user);
-        } catch {
-          userObj = null;
-        }
-      }
+      const userObj = parseUserPayload(Array.isArray(user) ? user[0] : user);
 
       if (userObj) {
         saveAuthSession(userObj, token).then(() => {
