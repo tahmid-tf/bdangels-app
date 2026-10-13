@@ -4,10 +4,10 @@ import {
   ScrollView,
   RefreshControl,
   StyleSheet,
-  SafeAreaView,
   StatusBar,
   Platform,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import Header from '../components/Header';
 import MobileMenuModal from '../components/MobileMenuModal';

@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -15,7 +16,7 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <>
+    <SafeAreaProvider>
       <StatusBar style="dark" />
       <Stack
         screenOptions={{
@@ -42,6 +43,6 @@ export default function RootLayout() {
         <Stack.Screen name="login" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="admin" options={{ headerShown: false, animation: 'slide_from_right' }} />
       </Stack>
-    </>
+    </SafeAreaProvider>
   );
 }

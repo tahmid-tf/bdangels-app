@@ -3339,3 +3339,76 @@ export async function fetchInvestorCommits(token, page = 1) {
   }
   return null;
 }
+
+/**
+ * Fetch investor membership receipts / orders from GET /api/membership/orders
+ */
+export async function fetchInvestorOrders(token, page = 1) {
+  try {
+    const res = await fetchAdminWithFallback(`/membership/orders?page=${page}`, token);
+    if (res && res.ok) {
+      const json = await res.json().catch(() => null);
+      return json?.data || json;
+    }
+  } catch (err) {
+    console.log('Investor orders fetch notice:', err);
+  }
+  return null;
+}
+
+/**
+ * Update investor profile from PUT /api/auth/profile
+ */
+export async function updateInvestorProfile(token, profileData) {
+  try {
+    const res = await fetchAdminWithFallback('/auth/profile', token, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(profileData),
+    });
+    if (res) {
+      const json = await res.json().catch(() => null);
+      return {
+        ok: res.ok,
+        data: json?.data?.user || json?.user || json?.data || null,
+        message: json?.message || (res.ok ? 'Profile updated successfully.' : 'Failed to update profile.'),
+        errors: json?.errors || null,
+      };
+    }
+  } catch (err) {
+    console.log('Update profile error:', err);
+  }
+  return { ok: false, message: 'Could not connect to update profile.' };
+}
+
+/**
+ * Update investor password from PUT /api/auth/password
+ */
+export async function updateInvestorPassword(token, { current_password, password, password_confirmation }) {
+  try {
+    const res = await fetchAdminWithFallback('/auth/password', token, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        current_password,
+        password,
+        password_confirmation,
+      }),
+    });
+    if (res) {
+      const json = await res.json().catch(() => null);
+      return {
+        ok: res.ok,
+        message: json?.message || (res.ok ? 'Password updated successfully.' : 'Failed to update password.'),
+        errors: json?.errors || null,
+      };
+    }
+  } catch (err) {
+    console.log('Update password error:', err);
+  }
+  return { ok: false, message: 'Could not connect to update password.' };
+}
