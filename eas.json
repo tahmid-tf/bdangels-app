@@ -14,6 +14,11 @@
       },
       "distribution": "internal"
     },
+    "preview-simulator": {
+      "ios": {
+        "simulator": true
+      }
+    },
     "release-apk": {
       "android": {
         "buildType": "apk"
